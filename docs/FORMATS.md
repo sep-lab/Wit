@@ -43,8 +43,9 @@ Element census from the real project: 17 audio tracks, 5 MIDI, 12 group, 1 retur
 audio clips, 16 MIDI clips; **5,112 warp markers**; 1,139 `FileRef`s; 60 automation
 envelopes.
 
-**IDs are stable** — verified across 10 consecutive saves. This is what makes diff and
-merge possible.
+**Track IDs are stable** — verified across 10 consecutive saves of one project: never
+renumbered, never recycled, and they survive a rename. This is what makes diff and merge
+possible. See EXPERIMENTS.md §2 for the exact scope of that claim.
 
 **Sample references** carry a built-in weak fingerprint:
 
@@ -68,19 +69,62 @@ directories, on a fourth person's machine. Absolute paths are the format's weake
 **Churn to normalise away:** `ScrollerPos`, `CurrentZoom`, `ClientSize`,
 `HighlightedTrackIndex`, `IsContentSelectedInDocument`, `SelectedEnvelope`, `CurrentTime`,
 `AnchorTime`, `LomId`, `PointeeId`, `NextPointeeId`, `OverwriteProtectionNumber`,
-`LastModDate`. Use a whitelist, not this blacklist — see EXPERIMENTS.md §3.
+`LastModDate`, and the positional `FileRef`/`AuPreset` `Id` counters. Use a whitelist, not
+this blacklist — see EXPERIMENTS.md §3.
 
-**Plugin state.** Third-party plugins serialise as base64 within the XML; stock devices
-expand to plain parameter elements (a single VST added ~256 `PluginFloatParameter`
-entries in one observed save). The test project used mostly stock devices, so its blob
-total was only 14 KB — **not representative** of a third-party-heavy session.
+⚠️ **`AudioTrack Id` and `FileRef Id` are different kinds of thing.** Track IDs are stable
+identities that survive renames and are never recycled. `FileRef`/`AuPreset` IDs are
+positional counters that shift by +1 when anything upstream is inserted — the cause of a
+measured 130-line diff containing zero semantic change. Key your model on track IDs only.
+
+**Plugin state — [verified], and not what you would guess.** Blobs are **uppercase
+hexadecimal**, not base64, wrapped at 80 characters per line:
+
+- `<Blob>` — Live-native device state (14 in the test file)
+- `<Buffer>` inside `<Preset><AuPreset>` — AU/VST plugin state (3 in the test file)
+
+And AU state is **double-encoded**: the hex decodes to an Apple XML plist, which itself
+contains base64 `<data>` elements. Decoding one gives
+`3C3F786D6C2076657273696F6E...` → `<?xml version=...`. A parser that assumes base64 at the
+outer layer gets nothing.
+
+Stock devices instead expand to plain parameter elements (a single VST added ~256
+`PluginFloatParameter` entries in one observed save). The test project used mostly stock
+devices, so its blob total was only ~16 KB — **not representative** of a third-party-heavy
+session.
+
+**Live ships its own machine-readable schema — [verified].**
+`/Applications/Ableton Live 12 Suite.app/Contents/App-Resources/Schema/*.txt` contains
+**173 files**, one per historical serialization version, from `8.1_220` to `12.0_12049`:
+
+```xml
+<AbletonSchema Version="4" TranslatorCount="327">
+  <AbletonDefaultPresetRef>
+    <FileRef Class="FileRef" Type="0" />
+    <DeviceId Class="ClassId" Type="-4" />
+```
+
+Every element and field, with its `Class` and `Type`. Critically, **the `MinorVersion` in a
+`.als` is exactly that `TranslatorCount`** — so version selection and migration are
+table-driven rather than guesswork.
+
+⚠️ But the tables **lag the shipping app**: the test project declares `12.0_12300` while
+the installed build ships schemas only to `12.0_12049`. So the schemas are the right asset
+for *validation and migration*, not a prerequisite for diffing — our semantic diff runs on
+those same 12.3 files with no schema access at all.
+
+**The gzip container is deterministic — [verified].** Header bytes are
+`1f 8b 08 00 00 00 00 00 00 13`: `FLG=0` (no embedded filename) and **`MTIME=0`** — Ableton
+deliberately zeroes the timestamp. So the container contributes no per-save byte churn;
+everything comes from the deflate stream. Convenient, but irrelevant in practice, because
+Wit gunzips before hashing anyway (see ADR-0002).
 
 **Interchange — [verified]** by scanning the Live 12 binary: **no dawproject, no AAF**.
 Live exports audio, MIDI files, and Live packs only.
 
 ---
 
-## Logic Pro — `.logicx` 🟢
+## Logic Pro — `.logicx` 🟡
 
 **[verified]** A macOS package (a directory), not a file:
 
@@ -172,7 +216,7 @@ Final Cut XML present, **no dawproject**.
 
 ---
 
-## GarageBand — `.band` 🟢
+## GarageBand — `.band` 🟡
 
 **[verified]** GarageBand writes **the same container format as Logic Pro**:
 

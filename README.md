@@ -67,8 +67,11 @@ Changed lines per Ableton save, out of 232,000:
  save 9→10  ▎ 517     0.22%
 ```
 
-And the content is not what you would guess: one 202-line diff was *entirely* a sample
-being renamed; a 170-line diff was *entirely* scroll position and zoom.
+And the content is not what you would guess. Across all 29 save-pairs, the **median
+incremental save changes 271 raw lines and 2 musically meaningful ones** — and 24% of
+saves contain no real change at all. The clearest case: two saves 56 seconds apart, both
+files identical in length, 130 changed lines, **zero** semantic change — every one of them
+an internal counter incrementing.
 
 **2. Version history is essentially free.**
 

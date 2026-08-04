@@ -51,6 +51,41 @@ totals:
 This is the core justification for semantic diff: the raw line count is dominated by
 noise, and the noise is structured and therefore removable.
 
+### Extended to the full corpus — 29 consecutive pairs
+
+A second pass measured all 29 pairs across the whole 30-file corpus, classifying each
+changed line as churn, sample-path rewrite, or genuinely musical.
+
+**The clearest single result** — two saves **56 seconds apart**, both files *identical in
+length*: **130 raw changed lines, and exactly zero semantic change**. The entire diff is
+`<FileRef Id="130">` → `"131"`, `<FileRef Id="131">` → `"132"`, and two `<AuPreset Id>`
+increments. Nothing else.
+
+Across the 20 realistic incremental saves (< 2,000 raw lines changed):
+
+| | Lines |
+|---|---|
+| Raw changed lines | 11,637 |
+| …after removing view/counter churn (44.9%) | |
+| …after removing project-folder path rewrites (44.0%) | |
+| **Genuinely musical** | **1,290 (11.1%)** |
+
+**Median incremental save: 271 raw changed lines → 2 musically meaningful ones.**
+And **7 of 29 pairs (24%) have zero real change** after normalisation.
+
+### Two kinds of ID, and only one of them is stable
+
+This distinction matters and it is easy to get wrong:
+
+- **Track IDs are stable identities.** They survive renames and are never recycled
+  (see §2).
+- **`<FileRef Id>` and `<AuPreset Id>` are positional counters.** They shift by +1 whenever
+  anything upstream is inserted — which is precisely what produced the 130-line
+  zero-change diff above.
+
+Key a semantic model on track IDs. Never key on `FileRef`/`AuPreset` IDs; treat those as
+churn in the diff view (but keep them in storage — see the display-vs-storage note in §3).
+
 ---
 
 ## 2. Are element IDs stable across saves?
