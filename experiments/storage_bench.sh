@@ -35,6 +35,9 @@ trap 'rm -rf "$WORK"' EXIT
 
 command -v zstd >/dev/null || { echo "zstd required"; exit 1; }
 
+# `stat` differs between BSD/macOS (-f%z) and GNU/Linux (-c%s).
+filesize() { stat -f%z "$1" 2>/dev/null || stat -c%s "$1"; }
+
 # --- collect versions in chronological order --------------------------------
 mkdir -p "$WORK/v"
 n=0
@@ -74,14 +77,16 @@ gitsz=$(du -sk "$G/.git" | cut -f1)
 printf "  %-26s %10.2f MB\n" "2. git (after gc)" "$(echo "scale=4; $gitsz/1024" | bc)"
 
 # --- 3. delta chain (Wit) ---------------------------------------------------
-first=$(ls "$WORK"/v/*.bin | head -1)
+# Version files are named %03d.bin by the collector above, so a sorted glob is
+# already chronological. Use an array rather than parsing `ls` output.
+versions=("$WORK"/v/*.bin)
+first="${versions[0]}"
 zstd -19 -q -f "$first" -o "$WORK/base.zst"
-total=$(stat -f%z "$WORK/base.zst" 2>/dev/null || stat -c%s "$WORK/base.zst")
+total=$(filesize "$WORK/base.zst")
 prev="$first"
-for f in $(ls "$WORK"/v/*.bin | tail -n +2); do
+for f in "${versions[@]:1}"; do
   zstd -19 --long=27 -q -f --patch-from="$prev" "$f" -o "$f.patch" 2>/dev/null
-  sz=$(stat -f%z "$f.patch" 2>/dev/null || stat -c%s "$f.patch")
-  total=$((total + sz))
+  total=$((total + $(filesize "$f.patch")))
   prev="$f"
 done
 printf "  %-26s %10.2f MB    <-- Wit\n" "3. delta chain (zstd)" "$(echo "scale=4; $total/1048576" | bc)"
