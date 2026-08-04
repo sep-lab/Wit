@@ -122,8 +122,8 @@ flowchart LR
     A --> R
     R -.->|"cache, not history"| X["🗑 prunable"]
 
-    style W fill:#0f766e22,stroke:#0f766e
-    style R fill:#b9121022,stroke:#b91210,stroke-dasharray: 4 3
+    style W fill:#d1faf3,stroke:#0f766e,color:#134e4a
+    style R fill:#fde2e1,stroke:#b91210,color:#7f1d1d
 ```
 
 Storage matches the content, because the two behave in opposite ways:

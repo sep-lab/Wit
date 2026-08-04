@@ -26,8 +26,8 @@ flowchart TD
     CL --> AU["audio object<br/><i>content-addressed, stored once</i>"]
     S --> P["project blob<br/><i>delta-chained</i>"]
 
-    style C fill:#0f766e22,stroke:#0f766e
-    style AU fill:#7c3aed22,stroke:#7c3aed
+    style C fill:#d1faf3,stroke:#0f766e,color:#134e4a
+    style AU fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
 ```
 
 **Hash: BLAKE3, with an algorithm tag in every object and pointer from day one.** This is
@@ -115,7 +115,7 @@ flowchart LR
     B --> C["Bob: vocals"]
     A --> M["merged"]
     C --> M
-    style M fill:#0f766e22,stroke:#0f766e
+    style M fill:#d1faf3,stroke:#0f766e,color:#134e4a
 ```
 
 **Conflict policy — three tiers:**
@@ -144,8 +144,8 @@ flowchart LR
     P --> D{"semantically<br/>different?"}
     D -->|no| Z["ignore"]
     D -->|yes| S["commit"]
-    style D fill:#b9121022,stroke:#b91210
-    style S fill:#0f766e22,stroke:#0f766e
+    style D fill:#fde2e1,stroke:#b91210,color:#7f1d1d
+    style S fill:#d1faf3,stroke:#0f766e,color:#134e4a
 ```
 
 v1 is a **filesystem watcher**, not a DAW plugin: it works across every DAW without SDK
