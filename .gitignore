@@ -1,0 +1,98 @@
+# ---------------------------------------------------------------------------
+# Wit — .gitignore
+#
+# Note the irony: this project exists because git is bad at audio. Until Wit
+# can host its own test fixtures, keep every byte of audio out of this repo.
+# ---------------------------------------------------------------------------
+
+# --- Audio: never commit. Use experiments/fixtures.toml to reference samples ---
+*.wav
+*.aif
+*.aiff
+*.caf
+*.flac
+*.mp3
+*.m4a
+*.ogg
+*.opus
+*.wv
+*.aac
+*.sd2
+*.rex
+*.rx2
+*.sf2
+*.sfz
+
+# --- DAW projects and their scratch data ---
+*.als
+*.alp
+*.asd
+*.flp
+*.logicx/
+*.band/
+*.ptx
+*.ptf
+*.cpr
+*.npr
+*.song
+*.rpp
+*.rpp-bak
+*.dawproject
+*.omf
+*.aaf
+Backup/
+"Ableton Project Info"/
+"Project File Backups"/
+"Undo Data.nosync"/
+Freeze/
+Consolidate/
+
+# --- macOS ---
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# --- Windows ---
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# --- Editors / IDEs ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.zed/
+
+# --- Rust ---
+/target/
+**/*.rs.bk
+Cargo.lock.orig
+
+# --- Python (research prototypes in experiments/) ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# --- Node (tooling only) ---
+node_modules/
+npm-debug.log*
+
+# --- Build / scratch ---
+/dist/
+/build/
+/out/
+*.log
+scratch/
+tmp/
+.wit-cache/

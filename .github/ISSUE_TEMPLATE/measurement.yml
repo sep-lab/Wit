@@ -1,0 +1,34 @@
+name: Measurement report
+description: You ran the experiments on your own sessions — share the numbers
+labels: ["measurement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is one of the most valuable contributions to Wit right now. Our findings come
+        from a handful of projects on one machine; **breadth is the biggest gap.**
+        Contradicting our published numbers is especially welcome.
+  - type: input
+    id: script
+    attributes:
+      label: Which experiment
+      placeholder: "experiments/storage_bench.sh"
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: material
+    attributes:
+      label: What material
+      description: >
+        Genre, track count, rough project size, how many versions, DAW version. No file
+        names needed. Context matters — sparse stems and dense masters behave completely
+        differently.
+    validations:
+      required: true

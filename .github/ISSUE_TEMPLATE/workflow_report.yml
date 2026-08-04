@@ -1,0 +1,28 @@
+name: Workflow report
+description: How your studio actually collaborates
+labels: ["workflow-report"]
+body:
+  - type: markdown
+    attributes:
+      value: "This shapes the roadmap more than feature requests do. Be concrete and unflattering."
+  - type: textarea
+    id: workflow
+    attributes:
+      label: What you actually do today
+      description: Who sends what to whom, in what format, using which tools.
+    validations:
+      required: true
+  - type: textarea
+    id: breaks
+    attributes:
+      label: Where it breaks
+      description: Missing plugins, wrong version, lost work, "which file is final" — specifics.
+    validations:
+      required: true
+  - type: dropdown
+    id: role
+    attributes:
+      label: Your role
+      options: [Producer, Mixing engineer, Mastering engineer, Composer, Artist / topliner, Band member, Sound designer, Educator / student, Other]
+    validations:
+      required: true

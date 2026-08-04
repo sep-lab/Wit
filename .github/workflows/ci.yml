@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  sanity:
+    name: Prototypes run & no audio committed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Prototypes are syntactically valid and self-documenting
+        run: |
+          for f in experiments/*.py; do
+            python3 -m py_compile "$f"
+            python3 "$f" --help >/dev/null
+          done
+
+      - name: Shell scripts pass shellcheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y shellcheck
+          shellcheck experiments/*.sh
+
+      - name: No audio or project files committed
+        run: |
+          if git ls-files | grep -Ei '\.(wav|aif|aiff|caf|flac|mp3|m4a|als|flp|ptx|cpr|song)$'; then
+            echo "::error::Audio or DAW project files must never be committed. See .gitignore"
+            exit 1
+          fi
+          echo "clean"
+
+      - name: Repository stays small
+        run: |
+          size=$(du -sk .git | cut -f1)
+          echo "repo: ${size} KB"
+          if [ "$size" -gt 51200 ]; then
+            echo "::error::Repository exceeds 50 MB — something large was committed."
+            exit 1
+          fi
+
+      - name: Docs links resolve
+        run: |
+          fail=0
+          while IFS= read -r f; do
+            while IFS= read -r link; do
+              case "$link" in http*|\#*|mailto:*) continue ;; esac
+              target="$(dirname "$f")/${link%%#*}"
+              [ -z "${link%%#*}" ] && continue
+              if [ ! -e "$target" ]; then echo "broken: $f -> $link"; fail=1; fi
+            done < <(grep -oE '\]\([^)]+\)' "$f" | sed 's/](//;s/)$//')
+          done < <(find . -name '*.md' -not -path './.git/*')
+          exit $fail

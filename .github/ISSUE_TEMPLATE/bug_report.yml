@@ -1,0 +1,46 @@
+name: Bug report
+description: Something behaved incorrectly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never attach audio or a full project.** Describe it, or share a minimal
+        synthetic reproduction. Project files can contain other people's copyrighted
+        material and personal filesystem paths.
+  - type: checkboxes
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - label: "A DAW rejected a file Wit produced (highest priority — please say so)"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. python3 experiments/als_semantic_diff.py a.als b.als
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: daw
+    attributes:
+      label: DAW and exact version
+      placeholder: "Ableton Live 12.3.5 Suite"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "macOS 15.6 (Apple Silicon)"
+    validations:
+      required: true
