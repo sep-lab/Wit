@@ -61,14 +61,30 @@ added".
 
 **Method.** Extract `<AudioTrack Id="...">` across the save chain and compare.
 
-**Result — measured.** Identical across all 10 saves:
+**Result — measured.** Identical across all 10 saves of the chain:
 
 ```
 153 154 147 148 141 110 100 119 145 128 143 114 122 106 112 142 152
 ```
 
-**Ableton track IDs are stable.** Clip and warp-marker IDs are likewise stable within a
-track. This is the single most important enabling fact for the whole project.
+Three follow-up checks make the claim precise, because "stable" is easy to overstate:
+
+**a. IDs come from a monotonic counter and deleted IDs are never recycled.** The chain's
+28 tracks occupy IDs 100–154 with **27 gaps** — every gap a track that once existed. A new
+track always takes a fresh number, so an ID never silently comes to mean something else.
+
+**b. The ID survives a rename.** Across a different chain, `Id 142` changed name from
+`Space Echo + 737 ret` to `RE201 + Avalon737 ret` while keeping its ID. That is exactly the
+desired behaviour and it proves the *ID*, not the name, is the identity to key on.
+
+**c. Across *different* projects the ID sets naturally differ**, and within a project the
+set changes whenever a track is added or removed — 2 of the 5 project chains in the corpus
+show this. That is not instability; it is a track being added or deleted. **The claim is
+scoped to: within one project's history, IDs are not renumbered or recycled.** Anyone
+re-testing this should compare within a chain, never across projects.
+
+This is the single most important enabling fact for the whole project. Without it you
+cannot distinguish "this track changed" from "one track deleted and another added".
 
 ---
 
@@ -93,6 +109,13 @@ editing different files.
 > Blacklists leak. The numbers above use an explicit exclusion set, and the production
 > approach should be a *whitelist* — name the fields that matter. This is recorded in
 > [AGENTS.md](../AGENTS.md) as a standing convention.
+
+> ⚠️ **Normalising for *display* is not the same as normalising for *storage*.** These
+> exclusions are safe for deciding "did the music change". They are **not** safe for
+> deciding what to keep. Example: `LomId` is usually 0 and was treated as pure churn — but
+> **264 of 7,135 `LomId` values in a real set are non-zero** and sit on real objects. Drop
+> them from the diff view; never drop them from the stored representation. Wit stores the
+> project verbatim and normalises only on the way to a diff.
 
 ---
 
@@ -262,6 +285,53 @@ producer who changes one plugin and re-bounces. A real session has 20–60 stems
 workflow happens daily.
 
 **This is why Wit versions the recipe, not the render.**
+
+---
+
+## 7b. The null test — an audible diff that needs no parser
+
+Everything else in this repo depends on parsing a DAW format. This does not, and that
+makes it strategically different: it works on **every DAW on day one**.
+
+Align two renders, invert one, sum them, and measure what is left. The residual tells you
+*what you can hear that changed, and where in the timeline* — for a bounce someone emailed
+you, from a DAW we cannot parse.
+
+**Method.** `experiments/null_diff.py`. Coarse-to-fine integer-sample alignment, then
+subtract, then compare residual RMS against source RMS.
+
+**Result — measured** on a real 24-bit/48 kHz stem:
+
+| Case | Residual vs source | Verdict |
+|---|---|---|
+| Identical files | **−∞ dB** | correctly reports no change |
+| Same audio, offset by **1 sample**, *no alignment* | **−3.7 dB** | ⚠️ "everything changed" |
+| Same audio, offset by 1 sample, *with alignment* | **−∞ dB** | correctly reports no change |
+| One 2-second section re-rendered | −18.7 dB | a clear, localised change |
+| Global −0.5 dB across the track | −25.0 dB | a clear change |
+
+**Alignment is the whole problem, and it is not optional.** A one-sample offset on
+*identical* audio produces a residual that looks **more different** (−3.7 dB) than any
+real edit does (−18.7, −25 dB). An unaligned null test is not merely imprecise — it is
+actively misleading. The search recovers the exact offset and restores a perfect null.
+
+**Render non-determinism does not break this.** The null does not need to reach zero; it
+needs the noise floor to sit well below the change signal. Render a project twice with no
+edits, null them, and that is the session's floor — pass it via `--floor`. Experiment 10's
+open question about determinism therefore constrains *caching*, not this.
+
+**Cost.** A full-length null is ~0.3 s per pair via one `ffmpeg` process (~1000× realtime).
+The alignment search in this pure-Python prototype takes ~30 s because it shells out
+hundreds of times; an FFT cross-correlation in the production core is sub-second.
+
+**Why this matters to the design.** It is the complement of the project diff, not a
+competitor:
+
+- **project diff** answers *why* it changed — a fader, a plugin, a clip moved
+- **null diff** answers *what you can hear* and *where* — cross-DAW, no parser
+
+It is also the honest answer to "my collaborator uses Pro Tools and we will never parse
+it": you still get a real diff of the bounces.
 
 ---
 

@@ -13,8 +13,8 @@ Claims are labelled **[verified]** (we parsed it ourselves on real files),
 | DAW | Container | Encoding | Semantic diff | v1 |
 |---|---|---|---|---|
 | Ableton Live | single `.als` | gzip → XML | **feasible today** | 🟢 |
-| Logic Pro | `.logicx` package | chunked binary | feasible at object level | 🟢 |
-| GarageBand | `.band` package | **same as Logic** | same as Logic | 🟢 |
+| Logic Pro | `.logicx` package | chunked binary | object inventory only, so far | 🟡 |
+| GarageBand | `.band` package | **same as Logic** | same as Logic | 🟡 |
 | FL Studio | single `.flp` | typed event stream | feasible ≤ v24 | 🟡 |
 | Studio One | `.song` | ZIP + XML | likely straightforward | 🟡 |
 | Pro Tools | `.ptx` | XOR-obfuscated TLV | partial (~35% of blocks) | 🔴 |
@@ -119,9 +119,12 @@ Region names are readable directly from `AuRg` payloads. `AuFl` payloads reveale
 semantic event: paths changed from absolute to package-relative between v00 and v09,
 i.e. the project was relocated and relinked.
 
-**Object-level semantic diff (tracks/regions/files/plugins added and removed, with names)
-is achievable from the container structure alone.** Parameter-level diff needs per-tag
-payload schemas — a large but tractable per-chunk effort.
+**What is demonstrated is an *object-inventory* diff, not a full semantic diff.** From
+the container structure alone you can say *"6 regions added, 4 tracks added, 189 plugin
+instances added"* and extract region names and audio paths. That is genuinely useful and
+it is real. What is **not** demonstrated — and is gated on per-tag payload schemas — is
+parameter-level diff: what a region's position actually became, what a fader moved to.
+Do not describe Logic support as "semantic diff" until that lands.
 
 ### Start from LogicProFormatWriter, not from scratch — [cited]
 

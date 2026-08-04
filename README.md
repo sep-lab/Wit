@@ -80,6 +80,11 @@ being renamed; a 170-line diff was *entirely* scroll position and zoom.
   Wit delta chain              ▏                               0.3 MB   ← 11 KB / save
 ```
 
+Read that honestly: the **901×** is against keeping every version, which is what Ableton's
+`Backup/` folder and every `Save As` habit actually do. Against *git* it is only **3×** —
+git deltas XML well. The win here is real but modest; the large win is in the audio, and
+in knowing what changed.
+
 **3. But versioning rendered audio is impossible — and this is the finding that
 determines the whole design.**
 
@@ -148,6 +153,14 @@ $ wit diff v3 v4
 That last line matters: one sample rename fans out to 418 clip changes in the raw file.
 Coalescing it turned a 425-line diff into 3 readable lines.
 
+**And a second diff that needs no parser at all.** Align two renders, invert one, sum
+them, and measure what is left — that tells you what you can *hear* changed, for any DAW,
+including ones we will never parse. Measured: identical files null to −∞ dB, a localised
+re-render to −18.7 dB, a global −0.5 dB change to −25.0 dB.
+
+The catch, and it is a sharp one: a **one-sample misalignment on identical audio** nulls
+to only −3.7 dB — it looks *more* different than any real edit. Alignment first, always.
+
 ## Quick start
 
 Nothing to install — the prototypes are Python 3.9+, standard library only, so you can
@@ -183,6 +196,12 @@ architecture, and it is worth running yourself:
 python3 experiments/cdc_dedup.py original.wav re_rendered.wav
 ```
 
+**Hear what changed between two bounces — works for _any_ DAW, no parser needed:**
+
+```bash
+python3 experiments/null_diff.py old_bounce.wav new_bounce.wav
+```
+
 ## Repo map
 
 ```
@@ -193,6 +212,7 @@ docs/
 experiments/
   als_semantic_diff.py  Ableton → readable diff
   cdc_dedup.py          chunking / dedup harness
+  null_diff.py          audible diff between two renders (any DAW)
   flp_parse.py          FL Studio event-stream survey
   storage_bench.sh      naive vs git vs delta chain
 ```
@@ -214,7 +234,7 @@ Gated by how open each format is:
 | DAW | Format | Status |
 |---|---|---|
 | **Ableton Live** | gzipped XML | 🟢 First target — stable IDs, diffs and merges cleanly |
-| **Logic Pro** | chunked binary | 🟢 Container decoded; ~0.3% delta per save |
+| **Logic Pro** | chunked binary | 🟡 Container decoded, object-inventory diff works; payload schemas pending |
 | **GarageBand** | *same container as Logic* | 🟢 One parser covers both |
 | **FL Studio** | typed event stream | 🟡 Good ≤ v24; v25 adds an obfuscation keystream |
 | **Studio One** | ZIP + XML | 🟡 Promising, unverified by us |

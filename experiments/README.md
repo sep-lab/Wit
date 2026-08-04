@@ -9,6 +9,7 @@ own sessions immediately. That constraint is deliberate; do not add dependencies
 |---|---|---|
 | `als_semantic_diff.py` | Ableton `.als` → a diff a musician can read | — |
 | `cdc_dedup.py` | Content-defined chunking / dedup harness | — |
+| `null_diff.py` | Audible diff between two renders — **any DAW, no parser** | `ffmpeg` |
 | `flp_parse.py` | FL Studio `.flp` event-stream survey | — |
 | `storage_bench.sh` | naive vs git vs delta chain | `zstd`, `git` |
 
@@ -32,6 +33,16 @@ python3 experiments/cdc_dedup.py original.wav re_rendered.wav
 
 Expect ~0% reuse. That result is the reason Wit versions project structure rather than
 audio — see [ADR-0001](../docs/decisions/0001-version-the-recipe-not-the-render.md).
+
+And the complement, which needs no format parser and therefore works for every DAW:
+
+```bash
+python3 experiments/null_diff.py old_bounce.wav new_bounce.wav
+```
+
+⚠️ Do not run a null test without alignment. A one-sample offset on *identical* audio
+produces a residual that looks more different than any real edit (measured: −3.7 dB versus
+−18.7 dB for a genuine localised change).
 
 ## Status of this code
 
