@@ -97,6 +97,24 @@ Two design rules learned from real output:
   musical content at all — pure scroll and zoom. Reporting that plainly builds more trust
   than inventing changes.
 
+### Visual diff — cheap, and worth building early
+
+8-bit min/max **peak data is 0.008%–0.13% of the source audio**, so showing two versions
+of a waveform side by side never touches the samples. This is the cheapest large win
+available: an audible/visible "what changed" without decoding anything. BBC's
+`audiowaveform` defines a good peak format (check its GPL-3.0 licence before linking).
+
+### Time representation
+
+Adopt **OpenTimelineIO's `RationalTime` / `TimeRange`** rather than inventing one.
+Verified drift-free at audio rates: one million sample-additions at 48 kHz accumulate zero
+error. Sample-accurate rational time is not a detail — floating-point positions silently
+drift and produce phasing.
+
+Adopt OTIO's time model and its reference-not-embed media model. Do **not** adopt its
+effects model: `Effect` is a near-empty stub, and the plugin chain is precisely where Wit
+has to be strong. Extend via registered schema definitions and namespaced metadata.
+
 ---
 
 ## 4. Merge

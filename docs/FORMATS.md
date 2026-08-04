@@ -123,6 +123,33 @@ i.e. the project was relocated and relinked.
 is achievable from the container structure alone.** Parameter-level diff needs per-tag
 payload schemas — a large but tractable per-chunk effort.
 
+### Start from LogicProFormatWriter, not from scratch — [cited]
+
+[`jonkubis/LogicProFormatWriter`](https://github.com/jonkubis/LogicProFormatWriter)
+(Python, **MIT**, ~4,100 LOC plus a ~1,000-line `PROJECTDATA_FORMAT.md`) is by a wide
+margin the most valuable Logic asset in the ecosystem. It does not merely read
+`ProjectData` — **it writes valid `.logicx` from scratch**, which is strictly harder and
+proves the container is tractable.
+
+What its spec already documents:
+
+- Root frame: 24-byte header, little-endian `u32` length at `+0x10`
+- **A universal 36-byte record header with the size field at `+0x1c`** — described as "the
+  size field everyone missed", and the key to walking records reliably
+- The reversed-FourCC tag table: `gnoS`, `karT`, `qeSM`, `qSvE`, `gRuA`, `lFuA`, `OgnS`, …
+- Tempo as `uint32` BPM × 10000; meter and marker maps; MIDI note encoding; sample rate
+- **Track names — solved.** `u16` length + ASCII at the paired `qeSM` payload `+0x34`.
+  This is the item other Logic projects list as their #1 unsolved problem.
+- **No absolute-offset pointers**, so records can be grown or inserted as long as the root
+  length is fixed up. This is precisely what makes writing feasible.
+
+It also ships **30 real Logic 11.2.2 fixtures**, which are arguably worth more than the
+code.
+
+⚠️ **Two time origins at 960 PPQ**, and confusing them silently corrupts arrangement
+placement: region placements use origin **34560** (9 bars); tempo, marker *and note*
+events use **38400**.
+
 ### Two cautions
 
 **Save churn is non-deterministic — [verified].** Saves 04, 05 and 06 have identical file
@@ -269,20 +296,35 @@ though it is the right model to *learn from*.
 **AAF/OMF** — post-production interchange. Logic supports both. Carries audio and edits,
 loses plugin state and DAW-specific behaviour.
 
-**DawVert** (SatyrDiamond/DawVert) — converts among ~40 formats. Reads FL, Ableton 11,
-Reaper, dawproject, LMMS and many trackers; writes 11. **No Logic, no Pro Tools.** Its
-internal representation is the most relevant prior art for Wit's object model: an
-ID-indexed graph rather than a nested tree, time as `(ppq, is_float)` with one global
-rescale, and a read → capability-negotiate → write pipeline.
+**DawVert** (SatyrDiamond/DawVert) — converts among ~45 input formats and writes 11.
+**No Logic, no Pro Tools.** Its internal representation (`cvpj`, ~7,500 LOC across 27
+modules) is the most relevant prior art for Wit's object model: an ID-indexed graph rather
+than a nested tree, time as `(ppq, is_float)` with one global rescale, and a
+read → capability-negotiate → write pipeline.
+
+> ⚠️ **Licensing:** DawVert is **GPL-3.0**. Wit is Apache-2.0. We may study the design;
+> we may **not** copy the code. Keep that boundary explicit in any PR that cites it.
 
 **logic2ableton** — worth a specific warning, since it is often cited as proof that
-Logic→Ableton conversion is solved. **It is not.** On inspection it is a `MetaData.plist`
-reader plus filename heuristics and two opportunistic byte-scrapes, not a `ProjectData`
-parser. Its MIDI extraction recovers **zero notes** from real Logic 11.2.2 projects — its
-hardcoded 15-byte signature does not occur once across 30 genuine fixtures — and its
-plugin scan looks for `<?xml` in files that now embed binary plists. Its tests against
-real projects auto-skip. The one sound idea worth borrowing: to *write* a `.als`, clone a
-real template set and reassign element IDs rather than synthesising Live's schema.
+Logic→Ableton conversion is solved. **It is not**, and the details are instructive:
+
+- It is a `MetaData.plist` reader plus audio-filename regexes and two opportunistic
+  byte-scrapes. It never walks Logic's record framing. Clip positions come from WAV `bext`
+  timestamps, not from `ProjectData`. Mixer state cannot be read at all — the user must
+  hand-write a `mixer_overrides.json`.
+- Its MIDI extraction recovers **zero notes** across all 30 real Logic 11.2.2 fixtures. Its
+  15-byte signature expects `00` where real events carry note-off-velocity `0x40`.
+- **The generalisable lesson:** even with that byte corrected, fixed-signature scanning
+  *structurally* cannot find the last note of a region, because a terminal flag bit inside
+  the signature window flips on the final event. **Wit must walk record framing, never
+  scan for magic signatures.**
+- Its plugin scan looks for `<?xml` in files that now embed binary plists (`bplist00`).
+- Its tests against real projects all auto-skip, and its synthetic test generator emits the
+  same wrong bytes the parser looks for — which is exactly why the bug survived. (This is
+  why `docs/TESTING.md` requires **loud** skips.)
+
+The one sound idea worth borrowing: to *write* a `.als`, clone a real template set and
+reassign element IDs rather than synthesising Live's schema from nothing.
 
 ---
 

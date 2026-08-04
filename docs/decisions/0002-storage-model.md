@@ -55,6 +55,24 @@ costs more than N patch applications.
 - Renders are stored in a **separate, prunable cache namespace**, not in history
   (see ADR-0001).
 
+### Rejected: audio-aware residual coding
+
+An appealing idea is to delta two renders by aligning them and coding the residual
+signal. **Do not ship this.** Measured across cases, the residual ranged from **4.7% to
+105%** of simply storing the new render — on a trim it was *worse than doing nothing*.
+Whether it wins depends on whether the edit is sparse or dense, which is not knowable in
+advance.
+
+The one instructive result: fitting the *operation* (a single gain parameter) collapsed
+the residual from 68.0% to 12.6%. That is not an argument for residual coding — it is a
+proof of the DAG thesis. Model the operation and you do not need the residual at all.
+
+### Audio is stored as FLAC, never zlib-compressed WAV
+
+Same losslessness, roughly **10× more bytes saved** on dense material (34.8% vs 3.6%
+measured on a dense mastered stem). Record bit depth, sample rate and channel layout as
+first-class metadata so the round-trip is verifiable.
+
 ### Normalise containers before hashing — highest-priority rule
 
 Hash the *content*, never the container. `.als` is gzip: hashing the gzip stream makes

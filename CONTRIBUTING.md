@@ -16,7 +16,10 @@ Read in this order. Each answers the question the next one assumes.
    method, and its limits.
 3. **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — how it fits together, and which of
    git's ideas we take and reject.
-4. **[docs/FORMATS.md](docs/FORMATS.md)** — what each DAW writes to disk. Read when you
+4. **[docs/PRIOR-ART.md](docs/PRIOR-ART.md)** — the ~20 products that tried this and
+   died, why, and what we are doing differently. Read this before deciding to invest
+   time; you should know the risk you are signing up for.
+5. **[docs/FORMATS.md](docs/FORMATS.md)** — what each DAW writes to disk. Read when you
    pick up format work.
 
 The one idea everything rests on: **Wit versions the recipe (project structure + immutable
@@ -83,21 +86,12 @@ Wit's documentation makes quantitative claims. They must be reproducible.
 If you cannot measure something yet, write down the experiment that would settle it. See
 the open questions at the end of [docs/DECISION-DOC.md](docs/DECISION-DOC.md).
 
-## Development setup
-
-The current prototypes are Python 3.9+ with no third-party dependencies, so that anyone
-can run them against their own sessions immediately.
-
-```bash
-git clone git@github.com:sep-lab/Wit.git
-cd Wit
-python3 experiments/als_semantic_diff.py <old.als> <new.als>
-```
+## About the prototypes
 
 Each script in `experiments/` documents its own usage and states what it does *not*
 handle. They are research instruments, not products — held to a lower bar than shipped
 code, but their **outputs** are held to a higher one, because design decisions rest on
-them.
+them. Read the module docstring before trusting a number.
 
 The production implementation language is tracked in
 [ADR-0004](docs/decisions/0004-implementation-stack.md).

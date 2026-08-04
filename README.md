@@ -17,6 +17,7 @@
   <a href="#what-we-proved">What we proved</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#quick-start">Quick start</a> ·
+  <a href="#has-this-been-tried">Prior art</a> ·
   <a href="#where-to-start-contributing">Contribute</a>
 </p>
 
@@ -222,6 +223,24 @@ Gated by how open each format is:
 
 Wit starts with Ableton because it enables the *best diff*, not because it is the biggest.
 Excellent for one DAW beats mediocre for five. Details: [docs/FORMATS.md](docs/FORMATS.md).
+
+## Has this been tried?
+
+Yes — repeatedly, since 2001, and almost all of it is dead. **Splice Studio** was
+literally "a GitHub for musicians": free forever, unlimited storage, $150M+ raised, best
+distribution in the category. Killed in 2023. Ohm Studio reached 330K users and shut down
+with an explicit "no market" obituary. Steinberg killed VST Transit as "no longer
+economically viable" *with a captive Cubase install base*.
+
+Anyone contributing deserves that context, so it has its own document:
+**[docs/PRIOR-ART.md](docs/PRIOR-ART.md)** — the full graveyard, the causes of death, and
+an honest account of what Wit does differently and what risk remains unanswered.
+
+The short version: Splice Studio was a folder-watcher and object store — it could tell you
+*that* a version existed, never *what changed*, and it could not merge. Every funded
+survivor in the category versions **bounces, not projects**. The gap is narrower and more
+specific than "cloud storage for sessions", and it is the one the prototype here already
+demonstrates.
 
 ## FAQ
 

@@ -145,7 +145,9 @@ parses as valid XML and re-packs to a valid 431 KB `.als`.
 **Limits — important.** This is line-based merge succeeding because the two edits were
 far apart in the file. It proves *disjoint edits are mergeable in principle*; it does not
 prove line-based merge is safe in general — it is not, and production merge must operate
-on the object model. **The merged file was not opened in Ableton Live**, so
+on the object model. Specifically [cited]: a line-based merger only auto-resolves when
+the two edits are **≥3 lines apart**, so adjacent parameters inside the same XML element
+will conflict spuriously. **The merged file was not opened in Ableton Live**, so
 DAW-acceptance is unverified. That verification is a release gate, not an optional extra.
 
 ---
@@ -374,8 +376,14 @@ bash    experiments/storage_bench.sh path/to/Backup
 
 1. **Does Ableton open a Wit-merged file?** Not tested — no DAW was launched. Blocking
    for any release.
-2. **Are DAW renders deterministic?** If bouncing the same project twice is not
-   bit-identical, "did the audio change" cannot be answered by hashing renders.
+2. ~~Are DAW renders deterministic?~~ **Answered — no, and it matters.** [cited]
+   Re-rendering is not reliably bit-identical: denormal handling differs across
+   architectures (x86 `MXCSR` vs aarch64 `FPCR`), and plugin versions drift. Two
+   consequences: (a) "did the audio change?" **cannot** be answered by hashing renders,
+   and (b) a render can never be treated as reliably regenerable — it must be kept as a
+   cache, not discarded on the assumption it can be rebuilt byte-identically. This is the
+   one place the pure "recipe" story would be dishonest if overstated, and ADR-0001 is
+   worded accordingly.
 3. **Do Ableton IDs stay stable across Live *versions*, and across
    duplicate/copy-paste?** Only within-version stability was measured.
 4. **FL Studio save locality under a controlled edit.** Requires launching FL to produce
