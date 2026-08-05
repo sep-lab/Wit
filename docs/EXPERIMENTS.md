@@ -426,25 +426,48 @@ exact duplicate audio:         5.38 GB   (24.5%)
 branching — `Pr0oject 5 DESERT` / `Pr0oject 5 SAD DESERT` / `Project 5 – Intro` are three
 copies of one song.
 
-Modelling the whole library under Wit's design:
+**Duplication is not uniform across formats**, which turns out to matter a lot:
+
+| Format | Files | Total | Exact duplicates | Unique |
+|---|---|---|---|---|
+| `.caf` | 401 | 11.50 GB | 4.12 GB | 7.38 GB |
+| `.wav` | 389 | 9.51 GB | 1.05 GB | 8.46 GB |
+| `.aif` | 92 | 0.94 GB | 0.21 GB | 0.73 GB |
+| **all** | **882** | **21.95 GB** | **5.38 GB** | **16.57 GB** |
+
+Modelling the library under Wit's design, **per format**:
 
 ```
-current on disk                          26.0 GB
-  of which audio                         21.9 GB
-  exact duplicate audio (measured)      - 5.4 GB
-  unique audio                           16.6 GB
-  after FLAC @47.2% (measured)            7.8 GB
-  + project files & full version history   0.3 GB
-  ----------------------------------------------
-  TOTAL with content-addressed store       8.1 GB   (3.2x smaller)
+audio today                              21.95 GB
+  exact duplicate audio (measured)       - 5.38 GB
+  ------------------------------------------------
+  unique PCM (.wav/.aif)                   9.19 GB  -> FLAC @47.2%  =  4.34 GB
+  unique .caf                              7.38 GB  -> already ALAC =  7.38 GB
+  + project files & full version history              0.30 GB
+  ------------------------------------------------
+  TOTAL with content-addressed store                 12.02 GB   (1.8x smaller)
 ```
 
 Wit is **smaller than the status quo while adding complete version history that does not
-exist today**. This is the strongest single argument for the design.
+exist today**.
 
-**Limits.** Exact-duplicate detection only; sub-file chunk dedup would find more. FLAC
-ratio is extrapolated from a 10-file sample to the whole library — the sample was random
-but small, so treat 3.2× as approximate.
+> **Correction — and a warning about the shape of this claim.** An earlier version of this
+> model reported **8.1 GB / 3.2×**. It was wrong: it applied the FLAC ratio to all 16.6 GB
+> of unique audio, but **7.38 GB of that is `.caf` which is already ALAC-compressed** —
+> `flac` cannot compress it and cannot even open it. The honest figure is **12.0 GB, 1.8×**.
+>
+> Also be precise about *what* delivers the win. **5.38 GB is exact-duplicate removal and
+> ~4.85 GB is FLAC on the PCM; version history contributes ~0.30 GB.** So this number is
+> overwhelmingly `dedupe + FLAC` — it needs no parser, no commit graph and no merge, and
+> it would work today. That is an argument for shipping that part first, not evidence that
+> version control produced it.
+
+**Limits.** Exact-duplicate detection only; sub-file chunk dedup would find more
+([issue #6](https://github.com/sep-lab/Wit/issues/6)). The FLAC ratio is extrapolated from
+a 10-file random sample, so treat 1.8× as approximate. Figures are decimal GB throughout;
+the same folder reads as 26.1 GiB in Finder. The library also holds 5.84 GB of `.zip`
+archives (one of them a 5.2 GB copy of a project sitting beside it) which are excluded
+from the audio totals above but are themselves evidence of branch-by-copy.
 
 ---
 

@@ -21,4 +21,5 @@ Design phase — no released artifact yet.
   (~11 KB per Ableton save)
 - Ableton track IDs are stable across saves, and a 3-way merge of disjoint edits is clean
 - GarageBand shares Logic's container format — one parser serves both
-- A real 26 GB Logic library models to **8.1 GB** *with* full version history
+- A real Logic library models from 21.9 GB of audio to **12.0 GB** *with* full version
+  history — though most of that win is dedupe + FLAC, not versioning

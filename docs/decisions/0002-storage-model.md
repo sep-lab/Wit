@@ -99,7 +99,8 @@ versions. Ableton has the same property in a milder form (view state churns cons
 - Unlimited project history costs ~11–19 KB per save. Auto-commit on every save becomes
   affordable, which is what makes Wit useful single-player.
 - Audio dedup is automatic and cross-project.
-- Real libraries get smaller (26 GB → 8.1 GB measured) while gaining full history.
+- Real libraries get smaller (measured: 21.9 GB of audio → 12.0 GB) while gaining full
+  history — though the bulk of that is dedupe + FLAC rather than versioning.
 
 **Bad, and accepted**
 

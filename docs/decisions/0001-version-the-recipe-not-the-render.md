@@ -56,7 +56,8 @@ the audio folder** was `Freeze/`, `Consolidate/` and `Crop/` output — regenera
 - Diffs become musically meaningful, because the thing being diffed is musical structure.
 - Merge becomes possible at all: you cannot merge two renders, but you can merge two
   edit graphs.
-- Storage shrinks on real libraries even while gaining history (measured 26 GB → 8.1 GB).
+- Storage shrinks on real libraries even while gaining history (measured: 21.9 GB of
+  audio → 12.0 GB, 1.8×). Note most of that is dedupe + FLAC, not versioning.
 
 **Bad, and accepted**
 
