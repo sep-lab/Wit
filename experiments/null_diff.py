@@ -55,12 +55,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import shutil
 import subprocess
-import sys
-import tempfile
-from pathlib import Path
 
 SEARCH_MS = 250  # +/- alignment search range
 

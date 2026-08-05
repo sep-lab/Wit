@@ -1,0 +1,62 @@
+# Ruff configuration for Wit.
+#
+# The point of this file is to keep the Python readable by the people who
+# contribute here — producers and engineers of very mixed programming
+# experience — without turning a first PR into a fight with a linter.
+#
+# So: a pragmatic ruleset. Real bugs and unused/undefined names are errors.
+# Style opinions that do not change whether the code is correct are not enabled.
+# If a rule here ever blocks a good contribution for a bad reason, delete it.
+
+target-version = "py39"   # experiments/ must run on a stock macOS Python. See AGENTS.md.
+line-length = 110         # generous: these files print wide measurement tables.
+extend-exclude = ["__pycache__", ".venv", "venv", "target"]
+
+[lint]
+select = [
+  "E",    # pycodestyle errors — real syntax-adjacent problems
+  "W",    # pycodestyle warnings — trailing whitespace and friends
+  "F",    # pyflakes — undefined names, unused imports, the bugs that matter
+  "I",    # import sorting — cheap, auto-fixable, ends the diff churn argument
+  "B",    # flake8-bugbear — mutable default args, silent except, real footguns
+  "C4",   # comprehension misuse
+  "RUF",  # ruff's own correctness lints
+]
+
+# Deliberately NOT enabled:
+#   UP  (pyupgrade) — it pushes `dict[str, int]` and `X | None` over `typing.Dict`
+#       and `Optional[X]`, which fights the Python 3.9 floor this project commits
+#       to so a musician with a stock macOS Python can run experiments/. A rule
+#       that argues with a documented constraint is a rule that gets ignored.
+#   D   (docstrings) — every prototype already documents itself where it counts,
+#       in its module docstring. Per-function docstring nagging is not the bar here.
+#   ANN (annotations) — would tax exactly the contributors this project most wants.
+
+ignore = [
+  "E501",    # line length: measurement scripts legitimately print wide tables,
+             # and reflowing them makes them harder to read, not easier
+  "B905",    # zip(strict=) does not exist on Python 3.9
+  "RUF022",  # __all__ sort order is not worth a red build
+  "RUF001",  # ambiguous unicode: docs and CLI output use → and × on purpose
+  "RUF002",
+  "RUF003",
+]
+
+[lint.per-file-ignores]
+# Prototypes are research instruments held to a lower bar than shipped code
+# (experiments/README.md, "Status of this code"). Their *outputs* are what is
+# held high. Do not let lint pedantry discourage someone from contributing a
+# measurement script.
+"experiments/*.py" = [
+  "T201",   # print() is the entire user interface here
+  "S101",
+  "B008",
+]
+# CI helpers import the prototypes after adjusting sys.path, which E402 dislikes.
+".github/workflows/scripts/*.py" = ["E402"]
+
+[lint.isort]
+known-first-party = ["experiments"]
+
+[format]
+quote-style = "double"

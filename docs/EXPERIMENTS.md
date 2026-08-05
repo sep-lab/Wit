@@ -43,10 +43,18 @@ XML; the change is a few kilobytes.
 **What the changes actually are.** Inspecting them by hand was more informative than the
 totals:
 
-- The 202-line diff (3 → 4) is **entirely one sample being renamed** — Ableton rewrote
-  the path in every `FileRef` that pointed at it.
-- The 170-line diff (6 → 7) is **entirely scroll position, zoom level and selection
-  state**. Nothing musical happened at all.
+- **The dominant component of both is a global `FileRef` ID renumbering** that Live
+  performs on every save: **126 of the 202 lines**, and **126 of the 170**.
+- The remainder of the 202-line diff is one sample rename (44 lines, or 66 counting
+  `LastModDate`) plus ~8 lines of view state.
+- The remainder of the 170-line diff is a project relocation/relink
+  (`RelativePathType` 1→3, 12 lines) plus ~26 lines of view state — so view state is
+  **15%** of it, not 100%.
+
+> **Correction.** An earlier version of this document described these as "entirely a
+> sample rename" and "entirely scroll position and zoom". Both were wrong; a tag census of
+> the actual diffs is above. The `FileRef` renumbering is in fact the better example of
+> removable structured noise, because it is present in *every* save.
 
 This is the core justification for semantic diff: the raw line count is dominated by
 noise, and the noise is structured and therefore removable.
@@ -137,6 +145,15 @@ bookkeeping tags, and compare hashes across saves.
 Edits are **local**. Most saves touch a handful of tracks, which is what makes
 track-granular merge viable — two people working on different tracks are, structurally,
 editing different files.
+
+> ⚠️ **This specific number is not currently reproducible, and should be treated as
+> provisional.** There is no script in `experiments/` implementing it, and the result is
+> highly sensitive to the exclusion set: an independent re-implementation using only the
+> exclusion list published in FORMATS.md gets **median 13, range 3–19** — which is the very
+> result this document elsewhere describes as the *discarded* first pass. Adding
+> `FileRef` moves it to median 11; adding view/selection extras moves it to median 3.
+> The qualitative finding (edits are local) is robust; the exact figure is not. Publishing
+> `experiments/track_locality.py` with a frozen exclusion set is tracked as an issue.
 
 > **Methodological note, and a correction.** A first pass at this used a *blacklist*
 > (hash everything, exclude known churn tags) and reported 3–19 changed tracks including
@@ -443,12 +460,12 @@ Summarised here; full detail in [FORMATS.md](FORMATS.md).
   `gnoS`, same package layout); only a version word differs (`cb09` vs `d009`). One
   parser serves both.
 - **FL Studio `.flp`** — `FLhd`/`FLdt` chunks then a typed event stream. Measured on the
-  real file: 1,491 events, 82 distinct IDs, and **92% of the file is opaque
+  real file: 1,491 events, 82 distinct IDs, and **96.7% of the file is opaque
   variable-length plugin state**. FL references samples with `%FLStudioData%` path
   tokens, which is more portable than Ableton's absolute paths.
 
 **Sample references — measured.** Ableton stores absolute paths. The test project
-contains **777 references to `/Users/nicklapien/...`**, 16 to `/Users/pma/...`, and 13
+contains **777 references to `/Users/<producer-a>/...`**, 16 to `/Users/<producer-b>/...`, and 13
 more — three different people's home directories baked into one file, on a fourth
 person's machine. It also stores `OriginalFileSize` and `OriginalCrc` per sample: a
 primitive content fingerprint already present in the format, and a usable hook for

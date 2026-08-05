@@ -109,11 +109,17 @@ shared byte sequence. Perceptual similarity is not byte similarity.
 **4. So: version the recipe, not the render.** And when you do, on a real 26 GB library:
 
 ```
-  today                        ████████████████████████████████  26.0 GB   no history
-  Wit (dedup + FLAC + deltas)  ██████████                         8.1 GB   full history
+  audio today                  ████████████████████████████████  21.9 GB   no history
+  dedupe + FLAC + deltas       ██████████████████                12.0 GB   full history
 ```
 
 **Smaller than what you have now, while adding the history you don't have.**
+
+Stated honestly: **5.4 GB of that is exact-duplicate removal and most of the rest is
+FLAC.** Version history itself is ~0.3 GB. This win needs no parser and no commit graph —
+which is an argument for shipping it early, not evidence that version control is what
+delivered it. (An earlier figure of 8.1 GB / 3.2× was wrong: it applied FLAC to 7.4 GB of
+`.caf` that is already ALAC-compressed.)
 
 ## How it works
 

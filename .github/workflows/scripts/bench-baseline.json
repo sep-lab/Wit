@@ -1,0 +1,28 @@
+{
+  "_comment": [
+    "Baseline for .github/workflows/scripts/bench_cdc.py.",
+    "This gate catches algorithmic regressions in the pure-Python chunker, not",
+    "microseconds. experiments/cdc_dedup.py explicitly says its timings are not",
+    "meaningful as absolute numbers; production chunking will be Rust (ADR-0004).",
+    "",
+    "chunk_throughput_mb_s below is a PROVISIONAL number taken on a developer",
+    "laptop, not on a CI runner, and is therefore optimistic. absolute_floor_mb_s",
+    "is what actually protects the gate until someone replaces this with a real",
+    "runner measurement via `bench_cdc.py --update` on ubuntu-latest.",
+    "",
+    "While baseline_is_provisional is true, ONLY absolute_floor_mb_s is enforced",
+    "— a laptop number must not gate a hosted runner. Once CI runs look stable,",
+    "re-baseline from a green run and set baseline_is_provisional to false; the",
+    "threshold then becomes max(chunk_throughput_mb_s * regression_tolerance,",
+    "absolute_floor_mb_s). Loosening a gate to make a red build green is how",
+    "gates die — move the number only with a reason in the commit message."
+  ],
+  "baseline_is_provisional": true,
+  "chunk_throughput_mb_s": 3.6,
+  "regression_tolerance": 0.4,
+  "absolute_floor_mb_s": 0.6,
+  "mean_chunk_bytes": 8000,
+  "buffer_mb": 4.0,
+  "measured_on": "PROVISIONAL: Darwin arm64, Python 3.13 (developer laptop, not a CI runner)",
+  "updated": "2026-08-05"
+}

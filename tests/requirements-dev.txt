@@ -1,0 +1,11 @@
+# Test-only dependencies.
+#
+# The prototypes in experiments/ are standard library ONLY and must stay that way
+# (AGENTS.md) — a musician with a stock Mac has to be able to run them with no
+# install step. That constraint applies to experiments/, not to tests/.
+#
+#   python3 -m pip install -r tests/requirements-dev.txt
+#   pytest tests/
+
+pytest>=7.0
+pytest-cov>=4.0

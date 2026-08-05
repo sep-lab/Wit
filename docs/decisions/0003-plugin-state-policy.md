@@ -18,7 +18,7 @@ editability has removed the reason it exists.
 
 Plugin state is also not a minor field. Measured on real projects:
 
-- **92%** of a real `.flp` is opaque variable-length plugin/channel state.
+- **96.7%** of a real `.flp` is opaque variable-length plugin/channel state.
 - In FL alone it appears in three forms with different properties: VST chunks inside a
   wrapper (9 KB for one instrument, containing an **absolute DLL path**), zlib streams
   for FL's own advanced synths (2 KB inflating to 65 KB), and plain fixed structs for

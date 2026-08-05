@@ -1,0 +1,9 @@
+# Personal filesystem paths that are permitted to appear in tracked files.
+#
+# This file should stay EMPTY. Real DAW projects embed absolute paths like
+# /Users/<someone>/Music/..., and pasting one into a doc publishes a stranger's
+# home directory and username. Redact to /Users/<producer-a>/ instead.
+#
+# Two such paths were allowlisted here during initial authoring and have since
+# been redacted. If you find yourself adding an entry, redact the document
+# instead — that is almost always the correct fix.

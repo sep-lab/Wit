@@ -53,7 +53,7 @@ possible. See EXPERIMENTS.md §2 for the exact scope of that claim.
 <SampleRef><FileRef>
   <RelativePathType Value="3"/>
   <RelativePath Value="Samples/Imported/221007 Dragonara Beach, Wood Hits.wav"/>
-  <Path Value="/Users/nicklapien/Downloads/.../Samples/Imported/...wav"/>
+  <Path Value="/Users/<producer-a>/Downloads/.../Samples/Imported/...wav"/>
   <OriginalFileSize Value="8303822"/>
   <OriginalCrc Value="46531"/>
 </FileRef><LastModDate Value="1777964370"/></SampleRef>
@@ -62,8 +62,8 @@ possible. See EXPERIMENTS.md §2 for the exact scope of that claim.
 `OriginalFileSize` + `OriginalCrc` is a content fingerprint Live already maintains — Wit
 should use it for sample resolution rather than inventing one.
 
-**The portability problem, measured.** The test project embeds **777 absolute paths under
-`/Users/nicklapien/`**, 16 under `/Users/pma/`, and 13 more — three people's home
+**The portability problem, measured.** The test project embeds **777 absolute paths under a
+collaborator's home directory**, 16 under `/Users/<producer-b>/`, and 13 more — three people's home
 directories, on a fourth person's machine. Absolute paths are the format's weakest point.
 
 **Churn to normalise away:** `ScrollerPos`, `CurrentZoom`, `ClientSize`,
@@ -244,7 +244,7 @@ Apple's on-ramp to Logic, so this single integration reaches the entire Apple ba
 | 128–191 | 4 bytes |
 | 192–255 | varint length, then that many bytes |
 
-Measured on the real FL 10-era file: **1,491 events, 82 distinct IDs, 92% of the file is
+Measured on the real FL 10-era file: **1,491 events, 82 distinct IDs, **96.7%** of the file is
 variable-length payload** — overwhelmingly opaque plugin/channel state.
 
 **Plugin state comes in three flavours with very different diff properties — [verified]:**

@@ -96,3 +96,9 @@ npm-debug.log*
 scratch/
 tmp/
 .wit-cache/
+
+# --- coverage ---
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/

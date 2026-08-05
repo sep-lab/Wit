@@ -1,59 +1,399 @@
+# CI for Wit
+#
+# What this pipeline is actually protecting, in priority order:
+#
+#   1. The promise that no audio, no DAW project and no other person's private
+#      paths ever enter this repository  ->  job: guardrails
+#   2. The promise that every published number is reproducible  ->  job: claims
+#   3. That the prototypes still run on a stock Mac Python with no install
+#      step, which is what makes (2) reproducible by someone who is not us
+#      ->  job: test (the 3.9 leg, and the --help smoke check)
+#   4. Ordinary correctness and hygiene  ->  jobs: lint, test, benchmark
+#
+# Contributors here are producers and engineers of very mixed programming
+# experience. Every failure message in this pipeline should say what to do next,
+# not just what went wrong. If a check ever fails for a reason a contributor
+# cannot act on, that is a bug in the check.
+
 name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+# Least privilege. Nothing here writes to the repository, publishes anything, or
+# needs a token beyond reading the checkout. Annotations and job summaries work
+# without extra scopes, which is why the docs-repro job annotates rather than
+# posting comments.
+permissions:
+  contents: read
+
+concurrency:
+  # A superseded push or PR update cancels its own earlier run. main is exempt:
+  # its history of green runs is worth more than the runner minutes.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  # ---------------------------------------------------------------------------
+  # THE COVERAGE FLOOR. One number, deliberately in one obvious place.
+  #
+  # Honest status when this pipeline was written (200 tests, CPython 3.13):
+  #
+  #     als_semantic_diff.py   86%      \
+  #     cdc_dedup.py           85%       > the three prototypes with tests
+  #     flp_parse.py           93%      /
+  #     null_diff.py            0%      <- added later, no tests yet
+  #     TOTAL                  65%
+  #
+  # So the floor is 60, not 85 and not 90. 85 would be a true statement about
+  # three files and a false one about experiments/, and a floor you have to
+  # argue with on your first PR is a floor that gets deleted.
+  #
+  # Raise it to ~85 as soon as every prototype has tests — the ones that do are
+  # already there. It is a ratchet against regression, not a target. Do not lower
+  # it to make a build green: if coverage dropped, that is the finding.
+  # ---------------------------------------------------------------------------
+  COVERAGE_FLOOR: "60"
+
+  # Pinned so a lint upgrade lands as a reviewable dependabot PR rather than as
+  # a surprise failure on someone else's unrelated change.
+  RUFF_VERSION: "0.16.1"
 
 jobs:
-  sanity:
-    name: Prototypes run & no audio committed
+  # ===========================================================================
+  lint:
+    name: Lint (ruff, shellcheck, stdlib-only)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.9"
+          python-version: "3.11"
 
-      - name: Prototypes are syntactically valid and self-documenting
+      - name: Install ruff
+        run: python -m pip install --disable-pip-version-check "ruff==${RUFF_VERSION}"
+
+      - name: ruff check
         run: |
-          for f in experiments/*.py; do
-            python3 -m py_compile "$f"
-            python3 "$f" --help >/dev/null
-          done
+          echo "Config: ruff.toml at the repo root. Rules are deliberately pragmatic —"
+          echo "correctness and unused/undefined names, not style opinions."
+          echo "Most findings are auto-fixable:  ruff check --fix ."
+          echo
+          ruff check --output-format=github .
+
+      - name: ruff format (advisory only, never fails)
+        continue-on-error: true
+        run: |
+          if ! ruff format --check . ; then
+            echo "::notice::Formatting differs from 'ruff format'. This is advisory."
+            echo "Run 'ruff format .' if you want it, or ignore this — it does not gate merge."
+          fi
 
       - name: Shell scripts pass shellcheck
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y shellcheck
-          shellcheck experiments/*.sh
+          command -v shellcheck >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y shellcheck; }
+          shellcheck --version
+          shellcheck experiments/*.sh .github/workflows/scripts/*.sh
 
-      - name: No audio or project files committed
+      - name: experiments/ imports only the standard library
+        run: python3 .github/workflows/scripts/check_stdlib_only.py experiments
+
+  # ===========================================================================
+  test:
+    name: Tests · ${{ matrix.os }} · Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.9", "3.11", "3.13"]
+        exclude:
+          # actions/setup-python has no arm64 macOS build of 3.9, and macos-latest
+          # is arm64. The 3.9 floor is still enforced — on the Linux 3.9 leg, and
+          # by the "runs on a bare interpreter" smoke step below, which runs on
+          # every leg. If an x64 macOS image becomes available again, add it back
+          # as an `include:` entry rather than pretending this gap is not there.
+          - os: macos-latest
+            python-version: "3.9"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # This step defends the project's central usability claim: "no install step
+      # — point it at your own sessions right now." It runs on every leg,
+      # including the oldest Python, before any dependency is installed.
+      - name: Prototypes run on a bare interpreter, and document themselves
         run: |
-          if git ls-files | grep -Ei '\.(wav|aif|aiff|caf|flac|mp3|m4a|als|flp|ptx|cpr|song)$'; then
-            echo "::error::Audio or DAW project files must never be committed. See .gitignore"
-            exit 1
+          set -e
+          for f in experiments/*.py; do
+            python3 -m py_compile "$f"
+            python3 "$f" --help > /dev/null
+          done
+          python3 -c "import platform; print('all prototypes compile and print usage on Python ' + platform.python_version())"
+
+      - name: Is there a test suite yet?
+        id: suite
+        shell: bash
+        run: |
+          if [ -d tests ] && ls tests/test_*.py >/dev/null 2>&1; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No tests/ directory with test_*.py yet — skipping pytest."
+            echo "No pytest suite found; the prototype smoke check above still ran." >> "$GITHUB_STEP_SUMMARY"
           fi
-          echo "clean"
+
+      - name: Install test dependencies
+        if: steps.suite.outputs.present == 'true'
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check --upgrade pip
+          if [ -f tests/requirements-dev.txt ]; then
+            python -m pip install -r tests/requirements-dev.txt
+          else
+            echo "::warning::tests/requirements-dev.txt missing — falling back to pytest + pytest-cov."
+            python -m pip install pytest pytest-cov
+          fi
+
+      - name: pytest with coverage
+        if: steps.suite.outputs.present == 'true'
+        shell: bash
+        env:
+          # The floor is enforced once, on one leg, so a coverage shortfall is a
+          # single clear signal instead of five identical red boxes.
+          IS_PRIMARY: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
+        run: |
+          set -o pipefail
+          extra=""
+          if [ "$IS_PRIMARY" = "true" ]; then
+            extra="--cov-fail-under=${COVERAGE_FLOOR}"
+            echo "This leg enforces the coverage floor of ${COVERAGE_FLOOR}%."
+          fi
+          python -m pytest tests/ \
+            --cov=experiments \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            --cov-report=html:htmlcov \
+            $extra \
+            2>&1 | tee pytest-output.txt
+
+      - name: Coverage summary
+        if: always() && steps.suite.outputs.present == 'true'
+        shell: bash
+        run: |
+          {
+            echo "### Tests — ${{ matrix.os }}, Python ${{ matrix.python-version }}"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -f coverage.xml ]; then
+            if ! python -m coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY" 2>/dev/null; then
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+              python -m coverage report >> "$GITHUB_STEP_SUMMARY" 2>/dev/null \
+                || echo "(coverage report unavailable)" >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+            fi
+            total=$(python -c "import xml.etree.ElementTree as E; print(round(float(E.parse('coverage.xml').getroot().get('line-rate')) * 100, 1))" 2>/dev/null || echo "?")
+            {
+              echo
+              echo "**Total line coverage: ${total}%** (floor ${COVERAGE_FLOOR}%, enforced on ubuntu-latest / Python 3.11)"
+              echo
+              echo "> The floor is a ratchet against regression, not a target. Coverage of"
+              echo "> \`experiments/\` says how much of the prototype code is exercised. It says"
+              echo "> nothing about whether the *numbers* those prototypes produce are right —"
+              echo "> that is what the \`claims\` job is for."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "_No coverage report produced._" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ -f pytest-output.txt ]; then
+            {
+              echo
+              echo "<details><summary>pytest output (tail)</summary>"
+              echo
+              echo '```'
+              tail -40 pytest-output.txt
+              echo '```'
+              echo
+              echo "</details>"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload coverage
+        if: always() && steps.suite.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: |
+            coverage.xml
+            htmlcov/
+            pytest-output.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ===========================================================================
+  guardrails:
+    name: Guardrails (no audio, no private paths, links resolve)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Needed for an honest history-size measurement; on a shallow clone the
+          # size check says so instead of passing quietly.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: No audio, no DAW projects, no oversized files
+        run: bash .github/workflows/scripts/check_no_binaries.sh
 
       - name: Repository stays small
-        run: |
-          size=$(du -sk .git | cut -f1)
-          echo "repo: ${size} KB"
-          if [ "$size" -gt 51200 ]; then
-            echo "::error::Repository exceeds 50 MB — something large was committed."
-            exit 1
-          fi
+        run: bash .github/workflows/scripts/check_repo_size.sh
 
-      - name: Docs links resolve
+      - name: No absolute personal paths committed
+        run: python3 .github/workflows/scripts/check_personal_paths.py
+
+      - name: Internal documentation links and anchors resolve
+        run: python3 .github/workflows/scripts/check_docs_links.py
+
+      - name: Why these checks exist
+        if: always()
         run: |
-          fail=0
-          while IFS= read -r f; do
-            while IFS= read -r link; do
-              case "$link" in http*|\#*|mailto:*) continue ;; esac
-              target="$(dirname "$f")/${link%%#*}"
-              [ -z "${link%%#*}" ] && continue
-              if [ ! -e "$target" ]; then echo "broken: $f -> $link"; fail=1; fi
-            done < <(grep -oE '\]\([^)]+\)' "$f" | sed 's/](//;s/)$//')
-          done < <(find . -name '*.md' -not -path './.git/*')
-          exit $fail
+          {
+            echo "### Guardrails"
+            echo
+            echo "The project-specific checks. These matter more here than generic ones do:"
+            echo
+            echo "| Check | Why it exists |"
+            echo "|---|---|"
+            echo "| no audio / DAW projects | Wit exists *because* git is bad at audio (ADR-0001). A repo full of stems would refute its own thesis — and would carry other people's copyrighted samples. |"
+            echo "| per-file + repo size ceiling | Catches the binary format nobody thought to blocklist. History size cannot be undone by a later delete. |"
+            echo "| no absolute personal paths | Real DAW files embed them: one project studied here held **three different people's** home directories (docs/EXPERIMENTS.md #10). Pasting one into a doc leaks a stranger's username and folder names. |"
+            echo "| docs links + README anchors | The docs are the product right now. README and CONTRIBUTING send new contributors down a reading chain; a dead link ends it. |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ===========================================================================
+  claims:
+    # The job name says what this does and does not prove, because a green check
+    # called "claims" would otherwise be read as "the published numbers were
+    # reproduced". They were not, and cannot be, in CI.
+    name: Claims — invariants on synthetic fixtures (NOT the published numbers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Ensure zstd and bc are present
+        run: |
+          # storage_bench.sh needs zstd (>= 1.4.4 for --patch-from) and bc.
+          # Both are normally on the runner image; install only if they are not.
+          updated=0
+          for pkg in zstd bc; do
+            if ! command -v "$pkg" >/dev/null; then
+              [ "$updated" -eq 1 ] || { sudo apt-get update -qq; updated=1; }
+              sudo apt-get install -y "$pkg"
+            fi
+          done
+          zstd --version
+          git --version
+
+      - name: Assert the invariants the published numbers depend on
+        run: python3 .github/workflows/scripts/check_claims.py
+
+      - name: What this job does not do
+        if: always()
+        run: |
+          {
+            echo
+            echo "> **Scope of this job.** Wit's published figures were measured on real"
+            echo "> commercial sessions (docs/EXPERIMENTS.md names the material). Those files"
+            echo "> cannot be committed — they carry audio, they are other people's work, and"
+            echo "> AGENTS.md forbids it. So CI cannot re-derive 901x, 0.00% or 24.5%."
+            echo ">"
+            echo "> What it can do, and does, is generate fixtures with the same structural"
+            echo "> shape and assert the **direction and order of magnitude** each documented"
+            echo "> claim rests on. If one of those flips, a published number is no longer safe"
+            echo "> to quote and somebody has to re-measure on real material."
+            echo ">"
+            echo "> Reproducing the real numbers is a human job, on real sessions:"
+            echo "> see \`docs/EXPERIMENTS.md\` → *Reproducing these*."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ===========================================================================
+  benchmark:
+    name: Benchmark — chunker throughput (regression gate only)
+    runs-on: ubuntu-latest   # one OS, one Python: a benchmark you cannot compare is noise
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Measure chunking throughput against the committed baseline
+        run: python3 .github/workflows/scripts/bench_cdc.py --mb 4 --repeat 3
+
+  # ===========================================================================
+  docs-repro:
+    # Best-effort reminder. Annotates, never blocks, never comments — a bot that
+    # re-comments on every push is how a good rule gets muted.
+    name: Docs numbers — is there a reproduction command?
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for new figures without a reproduction command
+        env:
+          # Passed via env, never interpolated into the shell: a PR body is
+          # attacker-controlled text.
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 .github/workflows/scripts/check_docs_repro.py
+
+  # ===========================================================================
+  ci-ok:
+    # One check to require in branch protection, so adding a matrix leg later does
+    # not mean editing repository settings.
+    name: CI
+    if: always()
+    needs: [lint, test, guardrails, claims, benchmark]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fail if any required job did not succeed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          for r in $RESULTS; do
+            if [ "$r" != "success" ]; then
+              echo "::error::A required job did not succeed ($RESULTS)."
+              exit 1
+            fi
+          done
+          echo "all required jobs succeeded"

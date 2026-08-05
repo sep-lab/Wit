@@ -65,8 +65,9 @@ history. ([ADR-0001](decisions/0001-version-the-recipe-not-the-render.md))
 Four results, each measured on real commercial-grade projects.
 
 **1. Saves are tiny.** Consecutive Ableton autosaves differ by **0.07–0.25%** of a
-232,000-line file. One 202-line diff was entirely a sample rename; one 170-line diff was
-entirely scroll position and zoom.
+232,000-line file, and the median save contains **2 musically meaningful changed lines**.
+The dominant component of every diff is a global `FileRef` ID renumbering Live performs on
+every save — 126 of 202 lines in one case, 126 of 170 in another.
 
 **2. Identifiers are stable.** Ableton track IDs were identical across all 10 saves. This
 is the precondition for everything — without it you cannot distinguish "this track
@@ -76,12 +77,16 @@ changed" from "one track deleted, another added".
 A three-way merge of two disjoint edits produced a clean, valid `.als` containing both.
 
 **4. History is nearly free.** 29 versions of a real project: 283 MB logical XML →
-**314 KB** stored, ~11 KB per save. And on a real 26 GB, 30-project library — of which
-**24.5% is byte-identical duplicate audio** created by `Save As` branching — the modelled
-result is **8.1 GB with full history**.
+**314 KB** stored, ~11 KB per save.
 
-That last number is the strongest single argument: **Wit is smaller than the status quo
-while adding history that does not exist today.**
+On a real 30-project library, 21.9 GB of audio models to **12.0 GB (1.8×)** with full
+history — of which **5.4 GB is exact-duplicate removal** and most of the rest is FLAC on
+the PCM. Version history itself contributes ~0.3 GB.
+
+> **Be honest about what that number is.** It is overwhelmingly `dedupe + FLAC`, not
+> version control. It needs no parser, no commit graph, no merge, and no Rust — and it
+> would work today. That is a point in favour of *shipping it first*, not evidence that
+> version control is valuable.
 
 ---
 
@@ -91,7 +96,7 @@ while adding history that does not exist today.**
 |---|---|---|
 | [0001](decisions/0001-version-the-recipe-not-the-render.md) | Version the recipe, not the render | 0% byte reuse on global re-render |
 | [0002](decisions/0002-storage-model.md) | Delta chains for projects; content addressing for audio | Delta chains beat CDC **29×** on project history |
-| [0003](decisions/0003-plugin-state-policy.md) | Track plugin state opaquely; never interpret or port | 92% of an `.flp` is opaque state; cross-DAW porting is ill-posed |
+| [0003](decisions/0003-plugin-state-policy.md) | Track plugin state opaquely; never interpret or port | 96.7% of an `.flp` is opaque state; cross-DAW porting is ill-posed |
 | [0004](decisions/0004-implementation-stack.md) | Rust core; Python for research | GB-scale hashing, single binary, safe binary parsing |
 | [0005](decisions/0005-first-daw-target.md) | Ableton first | Only format where the full chain is demonstrated |
 
@@ -130,15 +135,50 @@ Honest list — none of these are settled, and the first two are the ones that m
 
 1. **Does a Wit-produced project open in the DAW?** No DAW was launched during this work.
    Blocking for any release.
-2. **Are DAW renders deterministic?** If bouncing twice is not bit-identical, "did the
-   audio change" cannot be answered by hashing renders — which affects cache invalidation
-   and any future audible-diff feature.
+2. ~~Are DAW renders deterministic?~~ **Answered: no.** Denormal handling differs by
+   architecture and plugin versions drift, so a render can never be assumed reproducible
+   byte-for-byte. Renders are therefore cache to be *kept*, not regenerated on demand.
+   (The null test in EXPERIMENTS.md §7b is unaffected — it needs a floor, not a zero.)
 3. **Are Ableton IDs stable across Live *versions*, and across duplicate/copy-paste?**
    Only within-version stability was verified.
 4. **Logic `ProjectData` payload schemas.** The container is decoded; the payloads are not.
 5. **Breadth.** Every number here comes from a handful of projects on one machine. This is
    the single biggest weakness of this document, and the easiest one for contributors to
    fix.
+6. **Does anyone want it?** See the section below. This is now the largest open risk, and
+   it is not a technical one.
+
+---
+
+## The evidence that most challenges this project
+
+Added after an adversarial review, because it is the strongest counter-evidence found and
+it was sitting on the same disk as everything else.
+
+**Logic ships free, one-click, media-sharing branching — "Alternatives". Across 30 real
+projects it has been used _zero_ times.** Measured: every project has exactly one
+alternative. A branch would have cost ~1 MB because alternatives share the media pool.
+
+The same producer instead branched by `Save As` into 500–700 MB copies (`Pr0oject 5
+DESERT`, `Pr0oject 5 SAD DESERT`, `Project 5 – Intro`) and kept a **5.2 GB ZIP** beside the
+project it duplicates.
+
+The README opens by citing those filenames as evidence of unmet need. Read strictly, they
+are evidence of a **declined offer**: this user was handed branching by their DAW vendor,
+for free, in a menu, and did not take it.
+
+Two things temper that, and neither erases it:
+
+- **Passive tooling _is_ used.** 93 automatic Project File Backups have accumulated across
+  the library without anyone asking for them. What went unused was the feature requiring a
+  deliberate act. That is an argument for auto-commit and against branch-and-merge.
+- **Nothing on the market offers "what changed?"** Alternatives gives you branches with no
+  way to compare them. So this is evidence about demand for *branching*, not about demand
+  for *comprehension* — which remains untested rather than refuted.
+
+**What this changes:** the diff/comprehension wedge survives; branch-and-merge as a
+headline feature does not. Phase 1 needs a non-engineering exit criterion — *people who
+are not contributors use it more than once* — and ROADMAP.md now carries one.
 
 ---
 

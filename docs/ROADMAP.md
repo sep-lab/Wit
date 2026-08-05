@@ -21,7 +21,7 @@ Establish whether this is possible at all, on real projects.
 - [x] Settle the storage question — delta chains beat CDC by 29× on project files
 - [x] Establish that byte-level versioning of rendered audio cannot work (0% reuse on
       global re-render) — the finding that determines the architecture
-- [x] Model a real 26 GB library: 8.1 GB with full history
+- [x] Model a real library: 21.9 GB audio → 12.0 GB with full history (mostly dedupe + FLAC)
 
 Output: [EXPERIMENTS.md](EXPERIMENTS.md), [FORMATS.md](FORMATS.md),
 [decisions/](decisions/), `experiments/`.
@@ -52,6 +52,13 @@ it is not useful alone, nothing later matters.
 2. Full history of a real project costs < 50 KB per save.
 3. The differ agrees with subtree hashing on which saves are musically empty — closing
    the known device-parameter gap.
+4. **Five producers who are not contributors run `wit diff` twice in a week, unprompted.**
+
+Criterion 4 is not decoration. Every other exit criterion here would pass even if nobody
+wanted the product — and the strongest counter-evidence we have is precisely about
+adoption: Logic ships free one-click branching and, across 30 real projects, it has been
+used **zero** times. See "The evidence that most challenges this project" in
+[DECISION-DOC.md](DECISION-DOC.md).
 
 ---
 
