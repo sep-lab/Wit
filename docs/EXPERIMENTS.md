@@ -363,9 +363,25 @@ subtract, then compare residual RMS against source RMS.
 | Global −0.5 dB across the track | −25.0 dB | a clear change |
 
 **Alignment is the whole problem, and it is not optional.** A one-sample offset on
-*identical* audio produces a residual that looks **more different** (−3.7 dB) than any
-real edit does (−18.7, −25 dB). An unaligned null test is not merely imprecise — it is
-actively misleading. The search recovers the exact offset and restores a perfect null.
+*identical* audio produces a residual that looks **more different** (−3.7 dB below source)
+than any real edit does (−18.7, −25 dB). An unaligned null test is not merely imprecise —
+it is actively misleading. The search recovers the exact offset and restores a perfect null.
+
+**How bad misalignment is depends entirely on spectral content — measured.** A one-sample
+shift is a phase rotation proportional to frequency, so bright material suffers far more:
+
+| Material, shifted 1 sample | Residual vs source |
+|---|---|
+| 440 Hz sine | **−24.8 dB** — barely visible (1 sample = 3.3° of phase) |
+| Real music (3 s excerpt) | −10.2 dB |
+| 8 kHz sine | **0.0 dB** — residual equals the source |
+| White noise (broadband) | **+3.0 dB** — residual is *louder than the source* |
+
+Two consequences. **A pure tone cannot be used to test this** — it under-reports the effect
+by ~25 dB, and an early version of the test suite used one and passed for the wrong reason
+(the fixture is now broadband, with the reason recorded in the test). And **a bass-heavy
+stem tolerates misalignment while a bright or percussive one is destroyed by it**, so the
+alignment step cannot be skipped as an optimisation on "simple" material.
 
 **Render non-determinism does not break this.** The null does not need to reach zero; it
 needs the noise floor to sit well below the change signal. Render a project twice with no
