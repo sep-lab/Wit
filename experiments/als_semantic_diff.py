@@ -37,11 +37,15 @@ from __future__ import annotations
 import argparse
 import glob
 import gzip
+import re
 import sys
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 
 TRACK_TAGS = ("AudioTrack", "MidiTrack", "GroupTrack", "ReturnTrack")
+
+# Live's autosave filename: "<Project> [YYYY-MM-DD HHMMSS].als"
+AUTOSAVE_NAME = re.compile(r" \[\d{4}-\d{2}-\d{2} \d{6}\]\.als$")
 
 
 def _val(node, path, attr="Value", default=None):
@@ -226,10 +230,42 @@ def main() -> None:
         files = sorted(glob.glob(args.chain))
         if len(files) < 2:
             sys.exit(f"need at least 2 files matching {args.chain!r}, found {len(files)}")
-        for older, newer in zip(files, files[1:]):
-            print(f"### {older.split('/')[-1]}  ->  {newer.split('/')[-1]}")
-            report(older, newer, args.limit)
+
+        # Live names autosaves "<Project> [YYYY-MM-DD HHMMSS].als", and a Backup/
+        # folder accumulates every project ever saved into that set. Diffing across
+        # two different songs produces a technically-correct, entirely meaningless
+        # wall of changes. Split by project name rather than silently emitting nonsense.
+        #
+        # Only files that follow that convention are grouped. Anything else was named
+        # deliberately by the user (v1.als, mix_final.als), so respect the order given
+        # and treat it as one chain.
+        autosaves = [p for p in files if AUTOSAVE_NAME.search(p.split("/")[-1])]
+        if len(autosaves) == len(files):
+            lineages = {}
+            for path in files:
+                stem = path.split("/")[-1]
+                lineages.setdefault(stem.split(" [")[0], []).append(path)
+        else:
+            lineages = {"": files}
+
+        if len(lineages) > 1:
+            print(f"  note: {len(lineages)} different projects matched this glob:")
+            for name, group in sorted(lineages.items()):
+                print(f"          {len(group):>3} save(s)  {name}")
+            print("        Diffing across two different songs is meaningless, so each")
+            print("        project is chained separately below.")
             print()
+
+        for name, group in sorted(lineages.items()):
+            if len(group) < 2:
+                print(f"### {name}  — only 1 save, nothing to compare\n")
+                continue
+            if len(lineages) > 1:
+                print(f"########## {name} ({len(group)} saves) ##########\n")
+            for older, newer in zip(group, group[1:]):
+                print(f"### {older.split('/')[-1]}  ->  {newer.split('/')[-1]}")
+                report(older, newer, args.limit)
+                print()
         return
 
     if not (args.old and args.new):

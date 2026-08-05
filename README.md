@@ -345,8 +345,25 @@ No. Wit is the version control layer — local-first, no account, no server.
 Genuinely open problems, roughly by size. Full guide in
 **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
+**The fastest way in: [issue #10](https://github.com/sep-lab/Wit/issues/10).** The test
+suite carries **21 `xfail` cases documenting 13 real bugs** — each with the root cause
+located, the damage measured, and the fix named. For example:
+
+> *DoS in `flp_parse.parse`'s varint loop: 50 KB of `0xFF` takes 0.24 s, 100 KB takes
+> 0.91 s, 200 KB takes 3.6 s — 4× the input for 15× the time. Fix: refuse a varint longer
+> than 5 bytes.*
+
+The hard half is done and the easy half is deliberately left on the table. The markers are
+`strict`, so fixing a bug turns its test from `XPASS` into a failure until you flip the
+marker — the suite walks you through the contribution protocol on its own.
+
+```bash
+python3 -m pytest tests/ -q -rx     # read the 21 bug reports
+```
+
 | | Task | Why it matters |
 |---|---|---|
+| 🟢 | **Fix one of the 13 documented bugs** ([#10](https://github.com/sep-lab/Wit/issues/10)) | Reproduction and fix already written. Some are two-line changes. |
 | 🟢 | **Run the experiments on your own sessions** and report numbers | Everything so far is measured on a handful of projects. Breadth is the gap. |
 | 🟢 | **Write up how your studio actually collaborates** | Shapes the roadmap more than feature requests do |
 | 🟡 | **Model device *parameters* in the Ableton extractor** | Biggest known gap — the differ currently misses knob-only changes |

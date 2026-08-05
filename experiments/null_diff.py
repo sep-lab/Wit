@@ -195,11 +195,25 @@ def main() -> None:
     delta = res - src
     print(f"  residual - source: {delta:+.1f} dB")
 
-    floor = args.floor if args.floor is not None else -70.0
     print()
-    if res <= floor:
-        print(f"  => IDENTICAL within the noise floor ({floor:.0f} dBFS).")
-        print("     Nothing audible changed.")
+
+    # The verdict is driven by the RELATIVE figure (residual vs source), never by an
+    # absolute dBFS threshold.
+    #
+    # An earlier version compared the residual against a fixed -70 dBFS floor. That
+    # was wrong, and wrong in a way that mattered: the same +3 dB EQ change reported
+    # "A CLEAR change" on material at -37 dBFS and "IDENTICAL, nothing audible
+    # changed" on the identical edit at -62 dBFS. Both had delta = -17 dB. Quiet
+    # music is not unchanged music.
+    #
+    # An absolute floor is only meaningful when the user supplies a MEASURED one via
+    # --floor (null two unedited re-renders of their own project), because that
+    # number describes their render chain rather than an arbitrary constant.
+    if res == float("-inf") or delta < -80:
+        print("  => IDENTICAL. The renders null to silence.")
+    elif args.floor is not None and res <= args.floor:
+        print(f"  => IDENTICAL within your measured noise floor ({args.floor:.1f} dBFS).")
+        print("     The residual is below what your own render chain reproduces.")
     elif delta < -40:
         print("  => A SMALL, LOCALISED change. The two renders are substantially the same.")
     elif delta < -12:
@@ -207,6 +221,13 @@ def main() -> None:
     else:
         print("  => LARGE change, OR the files never aligned (different arrangement,")
         print("     different sample rate lineage, or time-stretched). Treat with suspicion.")
+
+    if args.floor is None and delta > -80 and res < -70:
+        print()
+        print("  note: this is quiet material. Verdicts here are relative, so the answer")
+        print("        does not change with program level — but to call something")
+        print("        'unchanged' with confidence, measure your own floor: render the")
+        print("        project twice with no edits, null those, and pass --floor.")
 
     if shift != 0 and abs(shift) > 1:
         print()

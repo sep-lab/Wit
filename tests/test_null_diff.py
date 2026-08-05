@@ -152,7 +152,7 @@ def test_the_cli_runs_and_states_a_verdict(tmp_path):
         capture_output=True, text=True, timeout=120,
     )
     assert proc.returncode == 0, proc.stderr
-    assert "IDENTICAL within the noise floor" in proc.stdout
+    assert "IDENTICAL" in proc.stdout
 
 
 def test_ffmpeg_absence_is_loud_not_silent():
@@ -166,3 +166,34 @@ def test_ffmpeg_absence_is_loud_not_silent():
             "run. Install ffmpeg to get real coverage of experiments/null_diff.py."
         )
     assert HAVE_FFMPEG
+
+
+# --------------------------------------------------------------------------- #
+# regression: the verdict must not depend on program level
+# --------------------------------------------------------------------------- #
+
+
+@needs_ffmpeg
+def test_the_verdict_does_not_depend_on_how_loud_the_material_is(tmp_path, capsys, monkeypatch):
+    """
+    Regression. An earlier version compared the residual against a fixed -70 dBFS
+    floor, so the SAME edit reported "A CLEAR change" at -37 dBFS and "IDENTICAL,
+    nothing audible changed" at -62 dBFS. Quiet music is not unchanged music.
+
+    Same relative change, two program levels, one verdict.
+    """
+    verdicts = []
+    for amp in (0.30, 0.02):  # ~24 dB apart
+        a = write_tone(tmp_path / ("a%.2f.wav" % amp), amp=amp, seed=7)
+        b = write_tone(tmp_path / ("b%.2f.wav" % amp), amp=amp * 0.87, seed=7)
+        monkeypatch.setattr(
+            sys, "argv", ["null_diff.py", str(a), str(b), "--no-align"]
+        )
+        null_diff.main()
+        out = capsys.readouterr().out
+        verdicts.append(next(ln for ln in out.splitlines() if "=>" in ln).strip())
+
+    assert verdicts[0] == verdicts[1], (
+        "the same edit gave different verdicts at different program levels:\n"
+        "  loud : %s\n  quiet: %s" % (verdicts[0], verdicts[1])
+    )
