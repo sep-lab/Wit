@@ -7,6 +7,7 @@ own sessions immediately. That constraint is deliberate; do not add dependencies
 
 | Script | What it does | Extra tools |
 |---|---|---|
+| `demo.py` | **Start here** — zero-input demo, no DAW required | — |
 | `als_semantic_diff.py` | Ableton `.als` → a diff a musician can read | — |
 | `cdc_dedup.py` | Content-defined chunking / dedup harness | — |
 | `null_diff.py` | Audible diff between two renders — **any DAW, no parser** | `ffmpeg` |

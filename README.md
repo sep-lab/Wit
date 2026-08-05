@@ -49,6 +49,52 @@ Sep Kevin Stuff on Joana I don't ...   236M   ← a collaborator's edit, as a fu
 **5.38 GB of it (24.5%) is byte-for-byte duplicate audio** — measured. That is what
 branching-by-`Save As` costs, and nobody gets version history in return.
 
+## See it in ten seconds
+
+No DAW, no project of your own, nothing to install:
+
+```bash
+git clone https://github.com/sep-lab/Wit.git && cd Wit
+python3 experiments/demo.py
+```
+
+It synthesises a Live set, applies edits a producer would actually make, writes each
+version as a real gzipped `.als`, and runs the **same differ that produced every number
+below** over the chain:
+
+```
+  save 0 -> 1   (you scrolled around and hit save)
+  ----------------------------------------------------------------------
+  no musical change detected (view / bookkeeping only)
+
+  save 1 -> 2   (turned the stem bus down)
+  ----------------------------------------------------------------------
+    MIX~    [Stem-mixing] volume: 0.794 -> 0.525
+
+  save 3 -> 4   (added a filter to the pad, muted its clip)
+  ----------------------------------------------------------------------
+    FX+     [Pad] added: AutoFilter
+    CLIP~   [Pad] 'pad swell' muted
+
+  save 4 -> 5   (renamed the kick sample in Finder)
+  ----------------------------------------------------------------------
+    SAMPLE~ 'kick_old.wav' -> 'kick_FINAL.wav'  (1 clip reference(s))
+
+  save 6 -> 7   (pushed the tempo, cut a percussion track)
+  ----------------------------------------------------------------------
+    TEMPO   122.0 -> 124.0 BPM
+    TRACK-  removed 'Corpus metal'
+```
+
+That first save is the point as much as the rest: **you scrolled, and it says so.** On a
+real 30-save chain, 24% of saves contain no musical change at all.
+
+Then point it at your own work — Live keeps autosaves in `<YourProject>/Backup/`:
+
+```bash
+python3 experiments/als_semantic_diff.py --chain '<YourProject>/Backup/*.als'
+```
+
 ## What we proved
 
 Before writing a line of product code, we measured whether this is even possible — on
@@ -220,6 +266,7 @@ docs/
   decisions/          ADRs — the design, and what would overturn it
 experiments/
   als_semantic_diff.py  Ableton → readable diff
+  demo.py               zero-input demo — start here
   cdc_dedup.py          chunking / dedup harness
   null_diff.py          audible diff between two renders (any DAW)
   flp_parse.py          FL Studio event-stream survey

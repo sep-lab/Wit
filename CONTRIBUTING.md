@@ -34,7 +34,7 @@ No install step. Python 3.9+, standard library only.
 
 ```bash
 git clone https://github.com/sep-lab/Wit.git && cd Wit
-python3 experiments/als_semantic_diff.py --help
+python3 experiments/demo.py          # see the whole idea, no DAW needed
 ```
 
 Now point it at your own work. Ableton keeps timestamped autosaves in your project's
