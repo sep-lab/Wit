@@ -16,8 +16,11 @@ The audio-file check duplicates CI on purpose: a fixture accidentally saved into
 from __future__ import annotations
 
 import ast
+import importlib.util
+import os
 import re
 import sys
+import sysconfig
 from pathlib import Path
 
 import pytest
@@ -85,15 +88,31 @@ def test_gitignore_covers_the_formats_ci_rejects(repo_root):
 # --------------------------------------------------------------------------- #
 
 
-def stdlib_names():
+def is_stdlib(name):
+    """True if `name` is a standard-library module.
+
+    `sys.stdlib_module_names` is 3.10+. The 3.9 fallback used to be a hand-listed
+    set of "modules the prototypes happen to use", which went stale the moment a
+    prototype imported something new — it failed CI on the 3.9 leg only, flagging
+    json/shutil/subprocess as third-party. Resolve the module and look at where it
+    actually lives instead, so this cannot rot.
+    """
+    if name in sys.builtin_module_names:
+        return True
     names = getattr(sys, "stdlib_module_names", None)
-    if names:
-        return set(names)
-    # Python 3.9 fallback: only the modules the prototypes actually use.
-    return {
-        "argparse", "collections", "glob", "gzip", "hashlib", "random", "struct",
-        "sys", "zlib", "xml", "__future__", "os", "io", "re", "time", "pathlib",
-    }
+    if names is not None:
+        return name in names
+    try:
+        spec = importlib.util.find_spec(name)
+    except (ImportError, ValueError):
+        return False
+    if spec is None or spec.origin is None:
+        return False
+    if spec.origin in ("built-in", "frozen"):
+        return True
+    stdlib_dir = os.path.realpath(sysconfig.get_paths()["stdlib"])
+    origin = os.path.realpath(spec.origin)
+    return origin.startswith(stdlib_dir) and "site-packages" not in origin
 
 
 def imported_top_level_modules(path: Path):
@@ -113,9 +132,8 @@ def test_experiments_import_only_the_standard_library(repo_root):
     so a musician with a stock Mac can run them against their own session with no
     setup. Do not add dependencies there."
     """
-    allowed = stdlib_names()
     for script in experiment_scripts(repo_root):
-        outside = sorted(imported_top_level_modules(script) - allowed)
+        outside = sorted(m for m in imported_top_level_modules(script) if not is_stdlib(m))
         assert outside == [], (
             "%s imports non-stdlib module(s) %s — experiments/ must run with no "
             "install step" % (script.name, outside)
