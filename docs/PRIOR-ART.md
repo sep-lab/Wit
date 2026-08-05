@@ -122,7 +122,7 @@ Honestly, and with the failures above in view:
 | Failure mode | Wit's answer | Confidence |
 |---|---|---|
 | Storage + timeline is not a product | **Semantic diff.** Nobody has shipped `volume 0.794 → 0.525` instead of "something changed". This is the wedge, and the prototype does it today. | High — demonstrated |
-| No meaningful merge | Track-granular merge on the object model. Measured: a median of 3 of 28 tracks change per save, so real edits are disjoint. | Medium — proven on one file pair, not in the wild |
+| No meaningful merge | Track-granular merge on the object model. Edits are localised — though the specific median-3 figure is provisional (issue #11). | Medium — proven on one file pair, not in the wild |
 | The plugin wall | We surrender too, but *explicitly and usefully*: content-address plugin state, report "the compressor changed", tell you which plugins you're missing **before** you open the session. | High — no reverse engineering needed |
 | DAW fragmentation | Refuse to fight it. Be excellent for one DAW. Do **not** attempt cross-DAW conversion. | High as a scoping decision |
 | Versioning is a free feature | **Unresolved.** See below. | — |

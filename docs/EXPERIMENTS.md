@@ -180,7 +180,7 @@ device chains, clips with positions and sample references) and diffs the models.
 
 ```
 3 semantic change(s)
-  SAMPLE~ '735987__maslovytygr__manual-air-pump.wav' -> 'Manual Air Pump.wav'  (418 clip reference(s))
+  SAMPLE~ '735987__<uploader>__manual-air-pump.wav' -> 'Manual Air Pump.wav'  (418 clip reference(s))
   SAMPLE~ '221007 Athens, National Garden, Dried twig shaker 3.wav' -> '221007 ... Twig Shaker.wav'  (6 clip reference(s))
   CLIP~   [Source material] '...twig shaker 3' 68.0-96.0 -> 68.0-92.0
 ```

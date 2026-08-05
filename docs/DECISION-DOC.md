@@ -73,7 +73,7 @@ every save — 126 of 202 lines in one case, 126 of 170 in another.
 is the precondition for everything — without it you cannot distinguish "this track
 changed" from "one track deleted, another added".
 
-**3. Edits are local, so merge is real.** A median of **3 of 28 tracks** change per save.
+**3. Edits are local, so merge is real.** A median of **3 of 28 tracks** change per save (**provisional** — this figure is not currently reproducible; see [EXPERIMENTS.md §3](EXPERIMENTS.md#3-how-localized-is-an-edit) and [issue #11](https://github.com/sep-lab/Wit/issues/11)).
 A three-way merge of two disjoint edits produced a clean, valid `.als` containing both.
 
 **4. History is nearly free.** 29 versions of a real project: 283 MB logical XML →

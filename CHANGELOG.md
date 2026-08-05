@@ -15,7 +15,7 @@ Design phase — no released artifact yet.
   policy, issue/PR templates, CI
 
 ### Findings that shaped the design
-- Byte-level versioning of rendered audio is not viable: a global EQ change leaves
+- Byte-level versioning of rendered audio is not viable: a global gain change leaves
   **0.00%** of bytes reusable, and costs git a full extra copy
 - Delta chains beat content-defined chunking **29×** on project-file history
   (~11 KB per Ableton save)

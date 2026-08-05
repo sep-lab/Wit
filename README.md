@@ -137,15 +137,16 @@ in knowing what changed.
 **3. But versioning rendered audio is impossible — and this is the finding that
 determines the whole design.**
 
-A producer changes one EQ band and re-renders a stem. It still *sounds* 95% the same.
-But every sample value is now a different number, so there is nothing to reuse:
+A producer makes a change that touches the whole track — a gain move, an EQ, a bus
+compressor — and re-renders. It still *sounds* almost the same. But every sample value is
+now a different number, so there is nothing to reuse:
 
 ```
 Bytes reusable from the previous render of the same 19.6 MB stem
 
   moved in time (+250ms)      ███████████████████████████████████  99.6%
   one 5s section re-rendered  ██████████████████████████████████   93.0%
-  EQ changed, whole track     ▏                                     0.00%   ← the wall
+  gain changed, whole track   ▏                                     0.00%   ← the wall
 ```
 
 Git agrees: it deltas the localized edit for **+1.1 MB**, and the global one for

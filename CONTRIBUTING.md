@@ -24,7 +24,7 @@ Read in this order. Each answers the question the next one assumes.
 
 The one idea everything rests on: **Wit versions the recipe (project structure + immutable
 source audio), not the render.** Rendered audio cannot be versioned at the byte level — a
-global EQ change leaves 0% of bytes reusable. If a proposal starts with "just diff the WAV
+global gain change leaves 0% of bytes reusable. If a proposal starts with "just diff the WAV
 bytes", that is already answered in
 [ADR-0001](docs/decisions/0001-version-the-recipe-not-the-render.md).
 

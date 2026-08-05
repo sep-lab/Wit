@@ -125,7 +125,7 @@ ours, `%B` theirs; exit 0 = clean, non-zero = conflict).
 This matters more than it sounds. Without a driver, two people editing *different tracks*
 of the same session get `Cannot merge binary files` and somebody loses work. With
 track-aware merge, it resolves cleanly — and edits really are localized: measured, a
-median of **3 of 28 tracks** change per save.
+median of **3 of 28 tracks** change per save (**provisional** — this figure is not currently reproducible; see [EXPERIMENTS.md §3](EXPERIMENTS.md#3-how-localized-is-an-edit) and [issue #11](https://github.com/sep-lab/Wit/issues/11)).
 
 ```mermaid
 flowchart LR

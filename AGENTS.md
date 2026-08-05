@@ -14,7 +14,7 @@ If a task seems to require building any of those, stop and ask.
 **Wit versions the recipe, not the render.**
 
 Audio is already binary, and byte-level versioning of rendered audio does not work.
-Measured: re-rendering a stem after a global EQ change leaves **0.00%** of bytes reusable,
+Measured: re-rendering a stem after a global gain change (−0.5 dB, measured) leaves **0.00%** of bytes reusable,
 because every sample value changes even though it sounds nearly identical. Git stores a
 full new copy of a 20 MB stem per version.
 
@@ -65,7 +65,7 @@ This repository's credibility rests on its numbers being real.
 | Decision | Where |
 |---|---|
 | Version the recipe, not the render | ADR-0001 |
-| Content-addressed store with content-defined chunking | ADR-0002 |
+| Delta chains for project files, content addressing for audio | ADR-0002 |
 | Plugin state is tracked opaquely, never interpreted or ported | ADR-0003 |
 | Ableton is the first DAW target | ADR-0005 |
 
@@ -73,10 +73,19 @@ Each ADR lists what evidence would overturn it. Bring that evidence, or leave th
 
 ## Testing
 
-There is no product test suite yet. For now, a change to an experiment is validated by
-re-running it on the fixture chain described in `experiments/README.md` and confirming
-the documented numbers still reproduce. If a number moves, that is the finding — report
-it, do not quietly update the doc.
+`tests/` holds **266 tests** (pytest, run with `python3 -m pytest tests/ -q`). CI runs them
+on Python 3.9/3.11/3.13 across ubuntu and macOS with a coverage floor.
+
+Two rules specific to this suite:
+
+- **The 21 `xfail`s are strict and deliberate.** Each documents a real prototype bug with
+  its reproduction and fix. If you fix one, the test turns `XPASS` → failure until you
+  remove the marker in the same commit. That is the intended workflow, not a problem.
+- **Fixtures are generated in code**, never committed — no audio or project file may enter
+  this repo. Tests against real material are opt-in and skip **loudly**.
+
+If a documented number moves, that is the finding — report it, do not quietly update the
+doc.
 
 ## When to stop and ask
 

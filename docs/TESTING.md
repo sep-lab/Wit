@@ -1,9 +1,14 @@
 # Testing strategy
 
-**Status: none of this exists yet.** Wit has zero tests. CI checks that the prototypes
-compile, that no audio is committed, and that doc links resolve — nothing about
-correctness. This document is the plan, and it is written in the order the failure modes
-deserve, not in the order a testing pyramid is usually drawn.
+**Status: partially built.** The suite now exists — **266 tests, 21 strict `xfail`s
+documenting real prototype bugs, and 12 opt-in real-fixture skips** — behind a 7-job CI
+pipeline. What is *not* built is most of what this document argues for: no property-based
+tests, no fuzzing, no round-trip serialisation tests, and no DAW-acceptance checklist has
+ever been executed.
+
+This document is the plan, written in the order the failure modes deserve rather than the
+order a testing pyramid is usually drawn. Sections marked **built** are done; the rest is
+the roadmap.
 
 Labels follow the repo convention: **measured** (we ran it), **cited**, **inferred**.
 
@@ -590,7 +595,8 @@ first, fuzzing for the second.
 
 ## 12. Order of implementation
 
-There are zero tests, so sequencing matters more than completeness. Build in this order,
+The unit and golden layers are built; the rest is not. Sequencing still matters more
+than completeness, so build in this order,
 because it is descending order of what it defends:
 
 1. **The synthetic fixture generator.** Nothing else can be built without it, and it is
