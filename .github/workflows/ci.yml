@@ -43,21 +43,24 @@ env:
   # ---------------------------------------------------------------------------
   # THE COVERAGE FLOOR. One number, deliberately in one obvious place.
   #
-  # Honest status when this pipeline was written (200 tests, CPython 3.13):
+  # Honest status as of the M0.5 truth-up (266 tests, CPython 3.13; reproduce
+  # with `pytest --cov=experiments --cov-report=term-missing tests/`):
   #
-  #     als_semantic_diff.py   86%      \
-  #     cdc_dedup.py           85%       > the three prototypes with tests
-  #     flp_parse.py           93%      /
-  #     null_diff.py            0%      <- added later, no tests yet
-  #     TOTAL                  65%
+  #     flp_parse.py           95%
+  #     cdc_dedup.py            85%
+  #     als_semantic_diff.py    75%
+  #     null_diff.py            65%      <- has tests now; still the thinnest
+  #     demo.py                 64%
+  #     TOTAL                   75%
   #
-  # So the floor is 60, not 85 and not 90. 85 would be a true statement about
-  # three files and a false one about experiments/, and a floor you have to
-  # argue with on your first PR is a floor that gets deleted.
+  # The floor is 60, not 75. A floor you have to argue with on your first PR is
+  # a floor that gets deleted, and demo.py/null_diff.py are the ones dragging
+  # the total down — raising the floor to match today's total would fail the
+  # next PR that touches either honestly, not because coverage regressed.
   #
-  # Raise it to ~85 as soon as every prototype has tests — the ones that do are
-  # already there. It is a ratchet against regression, not a target. Do not lower
-  # it to make a build green: if coverage dropped, that is the finding.
+  # Raise it in steps as the thinnest files gain tests. It is a ratchet against
+  # regression, not a target. Do not lower it to make a build green: if
+  # coverage dropped, that is the finding.
   # ---------------------------------------------------------------------------
   COVERAGE_FLOOR: "60"
 

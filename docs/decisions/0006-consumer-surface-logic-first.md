@@ -6,7 +6,7 @@
 ## Context
 
 Phase 0 (research) is complete: measured diff/dedup/ID-stability facts, five ADRs, a
-prior-art graveyard, six Python prototypes, 266 tests, and CI that machine-enforces the
+prior-art graveyard, five Python prototypes and a shell harness, 266 tests, and CI that machine-enforces the
 repo's own honesty rules. What does not exist is any product — no Rust, no `wit` binary,
 no interface a musician can touch. Engagement is nil.
 
@@ -139,7 +139,7 @@ does exist today.
 - A Logic `ProjectData` payload map lands (issue #3) and Logic reaches the Semantic tier
   — the honesty-tier distinction between Logic and Ableton in this ADR would collapse,
   though the Logic-first *consumer* choice would likely still stand on cohort grounds.
-- The hands-off-week experiment (ROADMAP exit criterion 4) comes back negative — a clean
+- The hands-off-week experiment (ROADMAP's "The metric that matters") comes back negative — a clean
   negative on comprehension redirects investment to Logic payload schemas before more
   product, per the plan; it would not automatically revive branch-and-merge as the
   headline, since the zero-Alternatives-uses datum is unaffected by a comprehension
