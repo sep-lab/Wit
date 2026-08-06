@@ -26,7 +26,7 @@ Building the 0.0 pilot — no released artifact yet.
   alignment with a confidence gate (refuses below 1.5 rather than returning a
   low-confidence shift); and the null-diff verdict ladder ported verbatim from
   `experiments/null_diff.py` (−80/−40/−12 dB thresholds, relative-not-absolute
-  reasoning) — [PR #TBD](https://github.com/sep-lab/Wit/pull/TBD)
+  reasoning) — [PR #27](https://github.com/sep-lab/Wit/pull/27)
 - Research findings across Ableton `.als`, Logic `ProjectData`, GarageBand `.band` and
   FL Studio `.flp`, measured on real projects ([docs/EXPERIMENTS.md](docs/EXPERIMENTS.md))
 - Working prototypes: Ableton semantic differ, CDC dedup harness, FLP parser, storage bench
