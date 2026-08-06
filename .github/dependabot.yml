@@ -40,6 +40,12 @@ updates:
 
   # tests/requirements-dev.txt — test tooling only. Security updates matter here
   # because CI installs it; feature updates do not, so keep the cadence low.
+  #
+  # pytest is ignored above major: pytest>=9 requires Python >=3.10, and CI keeps
+  # a deliberate 3.9 leg (see .github/workflows/ci.yml, and PR #9 which hit this
+  # exact break). requirements-dev.txt already floor-splits by python_version
+  # marker, so a major-version PR here would just get closed again — this rule
+  # stops it from being re-proposed on every cadence run.
   - package-ecosystem: pip
     directory: "/tests"
     schedule:
@@ -49,6 +55,9 @@ updates:
       test-tooling:
         patterns:
           - "*"
+    ignore:
+      - dependency-name: "pytest"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "test"
     labels:

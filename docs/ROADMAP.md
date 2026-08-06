@@ -33,9 +33,10 @@ Output: [EXPERIMENTS.md](EXPERIMENTS.md), [FORMATS.md](FORMATS.md),
 **[ADR-0006](decisions/0006-consumer-surface-logic-first.md) changed the plan.** The first
 *shipped product* is not the write-path roadmap below — it's a Logic/GarageBand-first,
 **read-only** macOS app: passive auto-history over backups Logic already keeps, plus a
-readable "what changed" comparison. No project-file write-path, so blocker #1 (below)
-does not gate it. Full rationale, the adoption counter-evidence that drove the pivot, and
-what would overturn it are in the ADR.
+readable "what changed" comparison. No project-file write-path, so [issue #1](https://github.com/sep-lab/Wit/issues/1)
+(byte-faithful round-trip) does not gate it — that blocker applies to the write-path
+roadmap below, not this slice. Full rationale, the adoption counter-evidence that drove
+the pivot, and what would overturn it are in the ADR.
 
 **Goal: install Wit, point it at a Logic library, and read a comparison a musician can
 understand — without ever risking a project file.**
@@ -43,16 +44,19 @@ understand — without ever risking a project file.**
 | Milestone | Tracking | What it delivers | Exit criterion |
 |---|---|---|---|
 | M0 ✅ | [PR #13](https://github.com/sep-lab/Wit/pull/13) | ADR-0006, Rust workspace scaffolding, CI (`rust` + `licenses` jobs) | Landed |
-| M2 | [#3](https://github.com/sep-lab/Wit/issues/3), [#5](https://github.com/sep-lab/Wit/issues/5) | Logic/GarageBand `ProjectData` walker (`wit-logic`) | Census matches published `AuRg`/`Trak`/`AuFl` trajectories; identical-save pair → `NoStructuralChange`; 30 real fixtures walk clean |
+| M1 | [#21](https://github.com/sep-lab/Wit/issues/21) | Ableton `.als` parity port (`wit-als`) — Rust port of the working Python differ | `wit diff-als` prints the golden byte-for-byte; a real `Backup/` pair (via `WIT_FIXTURES`) shows tempo on Live 12.3; corpus-agreement gate holds |
+| M2 | [#3](https://github.com/sep-lab/Wit/issues/3), [#5](https://github.com/sep-lab/Wit/issues/5), [#20](https://github.com/sep-lab/Wit/issues/20) | Logic/GarageBand `ProjectData` walker (`wit-logic`) | Census matches published `AuRg`/`Trak`/`AuFl` trajectories; identical-save pair → `NoStructuralChange`; 30 real fixtures walk clean |
 | M2.5 | [#15](https://github.com/sep-lab/Wit/issues/15) | **Reality gate** — measure the empty-verdict rate on a real Logic library | Published finding in EXPERIMENTS.md; if >50% of saves show no visible structural change, the next work is mapping Logic's volume-fader field, not the GUI |
-| M3 | [#16](https://github.com/sep-lab/Wit/issues/16) | Index, content-addressed store, CLI (`wit-index`, `wit-cli`) | `wit scan` lists every project with sane version counts; `wit dupes` reproduces the ~5.4 GB figure; rescan idempotent |
+| M3 | [#16](https://github.com/sep-lab/Wit/issues/16) | Index, content-addressed store, CLI (`wit-index`, `wit-cli`) — covers Logic, GarageBand, and Ableton discovery | `wit scan` lists every project with sane version counts; `wit dupes` reproduces the ~5.4 GB figure; rescan idempotent |
 | M4 | [#17](https://github.com/sep-lab/Wit/issues/17) | Audio engine — decode, peaks, alignment, null-diff (`wit-audio`) | Injected sample shifts recovered exactly; two 5-min bounces diff in < 10 s |
-| M5 | [#18](https://github.com/sep-lab/Wit/issues/18) | Tauri app alpha — Shelf, Story, Compare, watcher | Installs on a second Mac, reads a diff on the demo library and a real Logic folder, clicks Reveal |
-| M7-lite | [#19](https://github.com/sep-lab/Wit/issues/19) | Unsigned pilot package + PILOT.md | Clean Mac installs from the release link using only PILOT.md |
+| M5 | [#18](https://github.com/sep-lab/Wit/issues/18) | Tauri app alpha — Shelf, Story, Compare, watcher | Installs on a second Mac, reads a diff on the demo library, a real Logic folder, **and one Ableton `.als` lineage**, clicks Reveal |
+| M6 | [#22](https://github.com/sep-lab/Wit/issues/22) | Share bundle + zero-install viewer (`wit-share`, `viewer/`) | AirDrop the `.html` to another Mac **and** open it on a physical iPhone via iMessage/Quick Look — sentences, waveform, and audio all render with JS off; zero network requests |
+| M7-lite | [#19](https://github.com/sep-lab/Wit/issues/19) | **Unsigned** pilot package + PILOT.md | Clean Mac installs from the release link using only PILOT.md — recipients will see macOS's unsigned-app warning and use System Settings → Privacy & Security → "Open Anyway"; PILOT.md walks through it. Notarized distribution (Apple Developer ID) is a 0.1 upgrade, not a 0.0 blocker |
 
-Deferred to 0.1: the Ableton parity port (M1) and the zero-install share-HTML viewer (M6).
 Full milestone detail lives outside this repo per ADR-0006's evidence trail; see
-`AGENTS.md`'s settled-decisions table for what's locked.
+`AGENTS.md`'s settled-decisions table for what's locked. (The Ableton port and share
+viewer were briefly deferred to 0.1 in an earlier pass of this table; both are back in
+the 0.0 pilot as of the M0.5 truth-up.)
 
 **The metric that matters:** five friends who are not contributors open a comparison twice
 in a hands-off week, unprompted. Every other criterion here would pass even if nobody

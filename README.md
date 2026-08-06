@@ -272,6 +272,11 @@ experiments/
   null_diff.py          audible diff between two renders (any DAW)
   flp_parse.py          FL Studio event-stream survey
   storage_bench.sh      naive vs git vs delta chain
+crates/                 the Rust core (ADR-0004) — no musician-facing behavior yet
+  wit-model/            the session model (M0 skeleton: tempo, track add/remove)
+  wit-diff/             semantic diff over two models (M0 skeleton)
+Cargo.toml              workspace root — crates/* only, forever
+justfile                 dev/build/release recipes
 ```
 
 ## Status
