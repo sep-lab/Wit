@@ -179,38 +179,26 @@ def test_the_heuristic_is_what_distinguishes_the_two(flp):
 
 
 @pytest.mark.parametrize("name", ["Hat", "Kik", "Clp", "Bss", "Ldr"])
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG in flp_parse.decode_text: a 3-character latin-1 name plus its NUL "
-        "terminator is 4 bytes — an even length, so UTF-16LE decodes it without "
-        "error into two code points, one of which is the trailing ASCII char. "
-        "The heuristic accepts a result with >= 50% printable-ASCII characters, "
-        "and 1 of 2 is exactly 50%, so the mojibake wins: b'Hat\\x00' decodes to "
-        "'\u6148t'. Three-letter channel names (Hat, Kik, Clp) are ordinary in FL "
-        "projects. Fix: score on the fraction of NON-ASCII code points instead, "
-        "or require the UTF-16 reading to contain no characters above U+00FF "
-        "unless the payload also has a plausible BOM/odd-byte pattern."
-    ),
-)
 def test_three_letter_latin1_names_survive(flp, name):
+    """
+    Fixed: a 3-character latin-1 name plus its NUL terminator is 4 bytes -- an
+    even length that used to decode as UTF-16LE into mojibake (b'Hat\\x00'
+    used to decode to a CJK-looking codepoint followed by 't') under the old
+    printable-ASCII-ratio heuristic. decode_text now keys off whether the
+    payload ends with the UTF-16 NUL terminator (two zero bytes) rather than
+    one, which a latin-1 string essentially never does by accident.
+    """
     assert flp.decode_text(latin1_text(name)) == name
 
 
 @pytest.mark.parametrize("text", ["キック", "Кик", "鼓组"])
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG in flp_parse.decode_text, the other direction: the heuristic demands "
-        "that a successful UTF-16 decode be >= 50% printable ASCII, so genuinely "
-        "non-Latin text — Japanese, Cyrillic, Chinese channel names, which FL "
-        "supports and writes as UTF-16LE — is rejected and re-read as latin-1 "
-        "mojibake. Fix: prefer UTF-16 when the payload length is even AND the "
-        "odd-indexed bytes are predominantly 0x00 (ASCII-in-UTF-16), else when "
-        "the decode yields no unpaired surrogates and no C0 controls."
-    ),
-)
 def test_non_latin_utf16_names_survive(flp, text):
+    """
+    Fixed: the old heuristic demanded >= 50% printable ASCII from a successful
+    UTF-16 decode, so genuinely non-Latin text was rejected and re-read as
+    latin-1 mojibake. The new heuristic does not look at the decoded
+    characters at all, so it has no bias against non-Latin scripts.
+    """
     assert flp.decode_text(utf16_text(text)) == text
 
 

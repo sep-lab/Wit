@@ -27,7 +27,8 @@ WHAT THIS DOES NOT HANDLE
       gap and the main reason this is a prototype, not a product.
     - MIDI note-level diffs are not produced (note counts only).
     - Automation is compared by lane count, not by breakpoint.
-    - Live-version schema drift is not handled; tested against Live 12.x.
+    - Live-version schema drift is not handled beyond MasterTrack/MainTrack
+      (Live <= 12.2 vs 12.3); tested against Live 12.x.
     - Robustness (this section added when the DoS/crash bugs below were fixed):
       a document with a DOCTYPE internal subset containing only internal
       entities (the "billion laughs" shape) is refused outright, since Ableton
@@ -210,7 +211,12 @@ def build_model(path: str) -> dict:
         "samples": {},  # sample basename -> set of track names using it
     }
 
+    # Live <= 12.2 writes LiveSet/MasterTrack; Live 12.3 renamed it to
+    # LiveSet/MainTrack. `find(...) or find(...)` would be wrong here — an
+    # Element with no children is falsy — so check `is not None` explicitly.
     master = live_set.find("MasterTrack")
+    if master is None:
+        master = live_set.find("MainTrack")
     if master is not None:
         tempo = master.find(".//Tempo/Manual")
         if tempo is not None:
@@ -270,13 +276,22 @@ def diff_models(a: dict, b: dict) -> list[str]:
     # it. On real material one rename produced 425 clip-level changes. Detect
     # the rename once and suppress the fan-out, or the diff is unreadable.
     #
+    # A rename is only real when the old name has actually disappeared from
+    # the new state — otherwise this is a swap or a partial reassignment, not
+    # a rename, and reporting it as one describes a filesystem event that
+    # never happened. b["samples"] already indexes every sample name still in
+    # use in b, so consult it instead of comparing clips in isolation.
     renames: dict[tuple[str, str], int] = defaultdict(int)
     for tid in set(a["tracks"]) & set(b["tracks"]):
         ca, cb = a["tracks"][tid]["clips"], b["tracks"][tid]["clips"]
         for cid in set(ca) & set(cb):
-            if ca[cid]["sample"] != cb[cid]["sample"] and ca[cid]["sample"] and cb[cid]["sample"]:
-                renames[(ca[cid]["sample"], cb[cid]["sample"])] += 1
-    for (old, new), count in sorted(renames.items(), key=lambda kv: -kv[1]):
+            old, new = ca[cid]["sample"], cb[cid]["sample"]
+            if old != new and old and new and old not in b["samples"]:
+                renames[(old, new)] += 1
+    # Sort by count, then by name, so ties do not depend on set/dict iteration
+    # order — which varies with PYTHONHASHSEED and would otherwise make `wit
+    # diff` output non-reproducible across processes.
+    for (old, new), count in sorted(renames.items(), key=lambda kv: (-kv[1], kv[0][0], kv[0][1])):
         out.append(f"SAMPLE~ '{old}' -> '{new}'  ({count} clip reference(s))")
 
     ka, kb = set(a["tracks"]), set(b["tracks"])

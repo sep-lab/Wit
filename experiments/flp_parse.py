@@ -124,20 +124,27 @@ def decode_varint(data: bytes, pos: int, path: str) -> "tuple[int, int]":
 def decode_text(payload: bytes) -> str:
     """
     Decode a NUL-terminated FL text payload: UTF-16LE in modern files, latin-1
-    in older ones. There is no encoding flag in the format, so this guesses.
+    in older ones. There is no encoding flag in the format, so this guesses —
+    but on the file's own terms rather than the string's shape.
 
-    NOTE: this heuristic mis-decodes some inputs in both directions (see
-    tests/test_flp_parse.py's xfails) — fixed in a follow-up commit. Left
-    unchanged here so this commit is robustness-only.
+    UTF-16LE text always ends with a two-byte NUL terminator (0x00 0x00),
+    because the terminating NUL character is itself encoded as two bytes.
+    Latin-1 text always ends with a *single* zero byte. That is a reliable,
+    length-independent signal: a 3-character latin-1 name like "Hat" plus its
+    terminator happens to be 4 bytes (even), but its last two bytes are
+    ('t', 0x00), never (0x00, 0x00), so it is never mistaken for UTF-16 no
+    matter how short it is. Genuinely non-Latin UTF-16 text (Japanese,
+    Cyrillic, Chinese channel names) decodes cleanly and is accepted on the
+    same signal, regardless of how few of its characters are ASCII.
     """
-    try:
-        s = payload.decode("utf-16-le")
-        # Heuristic: ASCII-era files decode to CJK-looking mojibake via UTF-16.
-        if sum(ch.isprintable() and ord(ch) < 128 for ch in s) < len(s) * 0.5:
-            raise UnicodeDecodeError("utf-16-le", payload, 0, 1, "looks like ascii")
-        return s.rstrip("\x00")
-    except (UnicodeDecodeError, ValueError):
-        return payload.decode("latin-1").rstrip("\x00")
+    if not payload:
+        return ""
+    if len(payload) % 2 == 0 and payload[-2:] == b"\x00\x00":
+        try:
+            return payload.decode("utf-16-le").rstrip("\x00")
+        except UnicodeDecodeError:
+            pass
+    return payload.decode("latin-1").rstrip("\x00")
 
 
 def parse(path: str) -> None:
