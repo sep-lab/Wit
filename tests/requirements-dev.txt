@@ -6,6 +6,11 @@
 #
 #   python3 -m pip install -r tests/requirements-dev.txt
 #   pytest tests/
+#
+# CI runs a deliberate Python 3.9 leg (see .github/workflows/ci.yml), and pytest 9.x
+# requires Python >=3.10 — a single unconditional `pytest>=9` floor breaks that leg
+# (see PR #9). Split by environment marker instead of dropping 3.9.
 
-pytest>=7.0
-pytest-cov>=4.0
+pytest>=8.4,<9; python_version < "3.10"
+pytest>=9.1.1; python_version >= "3.10"
+pytest-cov>=7.1.0

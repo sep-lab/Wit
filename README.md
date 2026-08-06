@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
-  <img alt="Status: design phase" src="https://img.shields.io/badge/status-design%20phase-orange.svg">
+  <img alt="Status: pre-release, building the 0.0 pilot" src="https://img.shields.io/badge/status-pre--release-orange.svg">
   <a href="docs/EXPERIMENTS.md"><img alt="Findings: measured" src="https://img.shields.io/badge/findings-measured%2C%20reproducible-brightgreen.svg"></a>
   <a href="CONTRIBUTING.md"><img alt="PRs welcome" src="https://img.shields.io/badge/PRs-welcome-blueviolet.svg"></a>
 </p>
@@ -276,30 +276,40 @@ experiments/
 
 ## Status
 
-**Design phase.** There is no installable `wit` binary yet — do not point this at work you
-care about. What exists is the research, the measurements, and the architecture decisions
-they justify, plus the prototypes that produced every number above.
+**Building the 0.0 pilot — not downloadable yet.** [ADR-0006](docs/decisions/0006-consumer-surface-logic-first.md)
+set the first *shipped product*: a Logic/GarageBand-first, **read-only** macOS app —
+passive auto-history over the backups Logic already keeps on disk, plus a readable "what
+changed" comparison. No project-file write-path in this slice, so it never risks a DAW
+project. There is no installable app or `wit` binary yet — do not point this at work you
+care about. What exists today is the research below, the architecture decisions it
+justifies, the Python prototypes that produced every number, and an early Rust workspace
+(`crates/`) that does not yet do anything a musician could use.
 
-Production core will be Rust ([ADR-0004](docs/decisions/0004-implementation-stack.md));
+Production core is Rust ([ADR-0004](docs/decisions/0004-implementation-stack.md));
 `experiments/` stays dependency-free Python on purpose, so musicians and engineers can
-both run it. Next steps: [docs/ROADMAP.md](docs/ROADMAP.md).
+both run it. Progress and exit criteria: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## DAW support
 
-Gated by how open each format is:
+Two different questions, two different answers — see
+[ADR-0006](docs/decisions/0006-consumer-surface-logic-first.md) for why they diverge:
+*which format parses best* (research target, [ADR-0005](docs/decisions/0005-first-daw-target.md))
+and *whose users get the first app* (0.0 pilot, Logic-first).
 
-| DAW | Format | Status |
-|---|---|---|
-| **Ableton Live** | gzipped XML | 🟢 First target — stable IDs, diffs and merges cleanly |
-| **Logic Pro** | chunked binary | 🟡 Container decoded, object-inventory diff works; payload schemas pending |
-| **GarageBand** | *same container as Logic* | 🟢 One parser covers both |
-| **FL Studio** | typed event stream | 🟡 Good ≤ v24; v25 adds an obfuscation keystream |
-| **Studio One** | ZIP + XML | 🟡 Promising, unverified by us |
-| **Cubase** | MFC object stream | 🔴 No parser reads modern files |
-| **Pro Tools** | obfuscated TLV | 🔴 Legal risk; storage-only support at most |
+| DAW | Format | Parser status | 0.0 pilot app |
+|---|---|---|---|
+| **Ableton Live** | gzipped XML | 🟢 Best diff — stable IDs, diffs and merges cleanly | Not in 0.0; Ears tier (bounce compare) works regardless |
+| **Logic Pro** | chunked binary | 🟡 Container decoded, object-inventory diff works; payload schemas pending | 🟢 First target — Structure tier (tracks/regions/files, tempo) |
+| **GarageBand** | *same container as Logic* | 🟢 One parser covers both | 🟢 Same app, thinner day-one history (no rotating backups) |
+| **FL Studio** | typed event stream | 🟡 Good ≤ v24; v25 adds an obfuscation keystream | Not in 0.0; Ears tier only |
+| **Studio One** | ZIP + XML | 🟡 Promising, unverified by us | Not in 0.0; Ears tier only |
+| **Cubase** | MFC object stream | 🔴 No parser reads modern files | Not in 0.0; Ears tier only |
+| **Pro Tools** | obfuscated TLV | 🔴 Legal risk; storage-only support at most | Not in 0.0; Ears tier only |
 
-Wit starts with Ableton because it enables the *best diff*, not because it is the biggest.
-Excellent for one DAW beats mediocre for five. Details: [docs/FORMATS.md](docs/FORMATS.md).
+Ableton has the best *parser* — it enables the fullest diff of any format here. Logic
+leads the *consumer app* because that's where the first cohort (and 9–10 backups already
+on disk) is. The "Ears" tier — bounce-vs-bounce audio compare — needs no parser and works
+for every DAW. Format details: [docs/FORMATS.md](docs/FORMATS.md).
 
 ## Has this been tried?
 
