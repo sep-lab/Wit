@@ -237,9 +237,38 @@ consequential correction in the project.
 | Material | Result |
 |---|---|
 | 29 Ableton versions (283 MB logical XML) | 66.9 MB unique chunks → **9.1 MB** after zlib (~310 KB/save) |
-| 10 Logic `ProjectData` versions | only **2–87%** reuse per pair (mean ~46%) |
+| 10 Logic `ProjectData` versions | only **2.19–86.63%** reuse per pair (mean **46.3%**) |
 
 CDC looked adequate for Ableton and poor for Logic.
+
+> **Correction (bug fix, re-measured).** `cdc_dedup.pairwise()` had an accounting bug:
+> it summed each *distinct* chunk digest once (`chunk_map` is `digest -> length`) while
+> dividing by every byte of the target file, so any chunk that repeats *within* the
+> target file was undercounted — most visibly, comparing a file against itself used to
+> report ~19% reusable instead of 100%. This is a bug in the measurement tool, not a new
+> finding about Logic; it is fixed in `experiments/cdc_dedup.py` (count by chunk
+> *occurrence*, not by distinct digest) and pinned by
+> `tests/test_cdc_dedup.py::test_self_comparison_is_always_100_percent`.
+>
+> **Re-measured** on the same shape of material — 10 versions of a real Logic project's
+> `ProjectData` (one autosave/backup chain, consecutive pairs compared in save order) —
+> the corrected per-pair range is **2.19–86.63%, mean 46.3%**, indistinguishable in
+> practice from the number the buggy code produced (2–87%, mean ~46%). That is a real
+> result, not a rounding coincidence: the bug only bites when a *single* `ProjectData`
+> file contains internally duplicated chunks, and on this material it apparently does
+> not, much. The bug was still real — it silently mis-scores any material that *does*
+> have internal repetition (a Cubase sample file measured 89.3% zero bytes elsewhere in
+> this suite would be exactly such a case) — so the fix stands, it simply does not move
+> this particular headline number.
+>
+> Reproduced with:
+> ```bash
+> prev=""
+> for f in $(ls -tr "path/to/ProjectData/backups"/*/ProjectData "path/to/current/ProjectData"); do
+>   [ -n "$prev" ] && python3 experiments/cdc_dedup.py "$prev" "$f"
+>   prev="$f"
+> done
+> ```
 
 **6b. Copy/insert delta chains (`zstd -19 --patch-from`).**
 
