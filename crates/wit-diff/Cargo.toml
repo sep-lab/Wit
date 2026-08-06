@@ -1,0 +1,13 @@
+[package]
+name = "wit-diff"
+version = "0.0.0"
+description = "Model x Model -> Vec<ChangeRecord>. Depends only on wit-model, so diff logic is testable without any parser."
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+wit-model = { path = "../wit-model" }

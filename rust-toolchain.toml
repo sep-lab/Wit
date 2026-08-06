@@ -1,0 +1,9 @@
+# Pinned so a toolchain bump lands as a reviewable dependabot/PR change rather
+# than as a surprise failure on someone else's unrelated commit — same
+# philosophy as RUFF_VERSION in .github/workflows/ci.yml.
+#
+# NOTE for CI: dtolnay/rust-toolchain@stable does not read this file — the
+# `rust` CI job must still pass `toolchain: "1.97"` explicitly.
+[toolchain]
+channel = "1.97"
+components = ["rustfmt", "clippy"]

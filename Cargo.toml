@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+# Root workspace members are `crates/*` ONLY, forever — see ADR-0006 and
+# docs/decisions/README.md. `app/src-tauri` gets its own Cargo workspace when it
+# is scaffolded at M5 (path-deps on these crates): a root member that doesn't
+# exist yet breaks every `cargo` command, and Tauri does not compile on the
+# ubuntu CI leg without webkit2gtk system deps, so the app must stay out of this
+# workspace's default `--workspace` scope.
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "deny"

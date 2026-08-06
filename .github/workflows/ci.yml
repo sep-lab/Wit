@@ -9,6 +9,9 @@
 #      step, which is what makes (2) reproducible by someone who is not us
 #      ->  job: test (the 3.9 leg, and the --help smoke check)
 #   4. Ordinary correctness and hygiene  ->  jobs: lint, test, benchmark
+#   5. That the shipped `wit` binary (crates/, from ADR-0006) is real Rust —
+#      fmt/clippy-clean, tested, and free of copyleft dependencies
+#      ->  jobs: rust, licenses
 #
 # Contributors here are producers and engineers of very mixed programming
 # experience. Every failure message in this pipeline should say what to do next,
@@ -353,6 +356,70 @@ jobs:
         run: python3 .github/workflows/scripts/bench_cdc.py --mb 4 --repeat 3
 
   # ===========================================================================
+  rust:
+    # The `crates/` workspace (ADR-0006, ADR-0004). Root workspace members are
+    # `crates/*` ONLY — see /Cargo.toml's comment and the M0 guardrail in
+    # wit-planning/PLAN.md: `app/src-tauri` gets its own Cargo workspace when
+    # it is scaffolded (M5), so this job never needs webkit2gtk or other Tauri
+    # system deps on the ubuntu leg.
+    name: Rust · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.97
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # dtolnay/rust-toolchain does NOT read rust-toolchain.toml — the
+          # pin has to be repeated here explicitly, or a runner's default
+          # stable silently drifts from what contributors build with locally.
+          toolchain: "1.97"
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+
+      - name: cargo clippy (warnings are errors)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace --locked
+
+      - name: Why this job exists
+        if: always()
+        run: |
+          {
+            echo "### Rust — ${{ matrix.os }}"
+            echo
+            echo "Exercises the \`crates/\` workspace: fmt, clippy (deny warnings), and"
+            echo "\`cargo test --workspace\`. Real-material tests (gated on \`WIT_FIXTURES\`,"
+            echo "mirroring \`tests/conftest.py\`'s loud-skip doctrine) land starting M1 and"
+            echo "skip here by design — see wit-planning/PLAN.md's test pyramid."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ===========================================================================
+  licenses:
+    # Machine-enforces the license boundary docs/FORMATS.md argues in prose:
+    # Wit adopts ideas from DawVert and BBC audiowaveform, never their code,
+    # because both are GPL-3.0. See ADR-0004 and /deny.toml.
+    name: Licenses (cargo-deny)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses advisories
+
+  # ===========================================================================
   docs-repro:
     # Best-effort reminder. Annotates, never blocks, never comments — a bot that
     # re-comments on every push is how a good rule gets muted.
@@ -381,7 +448,7 @@ jobs:
     # not mean editing repository settings.
     name: CI
     if: always()
-    needs: [lint, test, guardrails, claims, benchmark]
+    needs: [lint, test, guardrails, claims, benchmark, rust, licenses]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

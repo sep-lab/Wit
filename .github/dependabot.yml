@@ -1,9 +1,16 @@
-# Dependabot — GitHub Actions only.
+# Dependabot — GitHub Actions, and (from M0) the Rust workspace.
 #
-# The only third-party code this repository depends on is the actions in
-# .github/workflows/. experiments/ is standard-library-only by design (AGENTS.md),
-# and tests/requirements-dev.txt is two pinned-by-floor test tools that a
-# contributor installs locally, not something shipped to anyone.
+# experiments/ is standard-library-only by design (AGENTS.md), and
+# tests/requirements-dev.txt is two pinned-by-floor test tools that a
+# contributor installs locally, not something shipped to anyone. The `crates/`
+# workspace (ADR-0006, ADR-0004) is real shipped third-party dependency surface
+# and gets its own ecosystem below.
+#
+# `npm` entries for /app and /viewer are staged below ahead of M5/M6: both
+# directories (and their package.json) don't exist yet, so each entry is
+# inert until then — Dependabot reports "dependency file not found" in the
+# repo's Insights tab and otherwise does nothing. That's expected, not a
+# misconfiguration; nothing here gates CI.
 #
 # Actions are pinned to major versions, so these PRs are rare and are the moments
 # to look at what changed. Grouped into one PR per week so this never becomes
@@ -44,3 +51,62 @@ updates:
       prefix: "test"
     labels:
       - dependencies
+
+  # Root Cargo workspace (crates/*). The `licenses` CI job (cargo-deny, see
+  # /deny.toml) is what actually gates a new dependency's license; dependabot
+  # just keeps the pinned versions from going stale silently.
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+    open-pull-requests-limit: 5
+    groups:
+      cargo:
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "cargo"
+    labels:
+      - dependencies
+      - rust
+
+  # /app (Tauri shell + Svelte UI) — scaffolded at M5. Inert until then.
+  - package-ecosystem: npm
+    directory: "/app"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+    open-pull-requests-limit: 5
+    groups:
+      npm-app:
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "npm"
+    labels:
+      - dependencies
+      - app
+
+  # /viewer (zero-install recipient page) — scaffolded at M6. Inert until then.
+  - package-ecosystem: npm
+    directory: "/viewer"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+    open-pull-requests-limit: 5
+    groups:
+      npm-viewer:
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "npm"
+    labels:
+      - dependencies
+      - viewer
