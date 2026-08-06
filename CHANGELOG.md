@@ -12,6 +12,21 @@ Building the 0.0 pilot — no released artifact yet.
   [docs/ROADMAP.md](docs/ROADMAP.md)'s "Now: the 0.0 pilot" section for the milestone plan.
 - Rust workspace scaffolding (`crates/wit-model`, `crates/wit-diff`) and CI (`rust`,
   `licenses` jobs) — M0, [PR #13](https://github.com/sep-lab/Wit/pull/13)
+- **M1** — Ableton `.als` parity port: `wit-model`, `wit-als`, `wit-diff`, `wit-cli`, a
+  Rust port of the working Python semantic differ with golden byte-for-byte tests and
+  three named bug fixes over the Python original (deterministic ordering, a rename
+  bijection guard, and a device-settings-fingerprint check that catches a same-shape
+  knob turn) — [PR #24](https://github.com/sep-lab/Wit/pull/24)
+- **M2** — Logic/GarageBand `ProjectData` container walker: `wit-logic`, covering both
+  `.logicx` and `.band` (same container, same magic bytes), with record framing, a tag
+  census, and whitelist name/tempo extraction — [PR #25](https://github.com/sep-lab/Wit/pull/25)
+- **M4** — Audio engine: `wit-audio`, covering `symphonia`-based decode
+  (wav/aiff/caf/alac/flac/mp4/mp3/aac) with a typed, never-panics `DecodeError`; `i8`
+  min/max peak computation for waveform rendering; `realfft`-based FFT cross-correlation
+  alignment with a confidence gate (refuses below 1.5 rather than returning a
+  low-confidence shift); and the null-diff verdict ladder ported verbatim from
+  `experiments/null_diff.py` (−80/−40/−12 dB thresholds, relative-not-absolute
+  reasoning) — [PR #TBD](https://github.com/sep-lab/Wit/pull/TBD)
 - Research findings across Ableton `.als`, Logic `ProjectData`, GarageBand `.band` and
   FL Studio `.flp`, measured on real projects ([docs/EXPERIMENTS.md](docs/EXPERIMENTS.md))
 - Working prototypes: Ableton semantic differ, CDC dedup harness, FLP parser, storage bench
