@@ -51,6 +51,36 @@ Everything in `experiments/` is **read-only and never modifies your projects**. 
 write a new one, keep it that way — copy to a temp directory before any experiment that
 writes.
 
+## Working on the Rust workspace (`crates/`)
+
+The 0.0 pilot ([ADR-0006](docs/decisions/0006-consumer-surface-logic-first.md)) is built
+in Rust, in `crates/`. The **root workspace is `crates/*` only, forever** — `app/`
+(Tauri) gets its own Cargo workspace with path-deps when it's scaffolded, so a root
+member that doesn't exist yet never breaks `cargo` for anyone working on the crates.
+
+```bash
+rustup toolchain install 1.97   # pinned in rust-toolchain.toml
+cargo test --workspace
+```
+
+Before opening a PR, run what CI's `rust` job runs:
+
+```bash
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+```
+
+A new dependency is checked by the `licenses` job (`cargo-deny`, see `/deny.toml`) —
+GPL-licensed crates are rejected regardless of how good the code is (see
+[ADR-0004](docs/decisions/0004-implementation-stack.md) and the DawVert/audiowaveform
+discussion in [docs/FORMATS.md](docs/FORMATS.md)).
+
+The same data rules from `experiments/` apply here, machine-enforced by
+`check_no_binaries.sh`: **never commit a file or directory whose path contains
+`ProjectData`, `Project File Backups`, `*.logicx`, or `*.band`** — even a tiny synthetic
+fixture. Generate Logic/GarageBand container fixtures at runtime into a temp dir instead.
+
 ## Ways to contribute that we especially want
 
 **1. Format reverse-engineering.** The hardest, most valuable work. If you can map

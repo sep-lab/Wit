@@ -1,7 +1,7 @@
 # Roadmap
 
-Wit is in the **design phase**. The research is done and the architecture is decided;
-what follows is building it.
+Wit's research is done and its architecture is decided. What follows is building the
+first product.
 
 The ordering principle: **be excellent for one person using one DAW before being mediocre
 for many.** A collaboration tool that is useless until your collaborator also installs it
@@ -28,11 +28,52 @@ Output: [EXPERIMENTS.md](EXPERIMENTS.md), [FORMATS.md](FORMATS.md),
 
 ---
 
-## Phase 1 — Single-player Ableton
+## Now: the 0.0 pilot
+
+**[ADR-0006](decisions/0006-consumer-surface-logic-first.md) changed the plan.** The first
+*shipped product* is not the write-path roadmap below — it's a Logic/GarageBand-first,
+**read-only** macOS app: passive auto-history over backups Logic already keeps, plus a
+readable "what changed" comparison. No project-file write-path, so blocker #1 (below)
+does not gate it. Full rationale, the adoption counter-evidence that drove the pivot, and
+what would overturn it are in the ADR.
+
+**Goal: install Wit, point it at a Logic library, and read a comparison a musician can
+understand — without ever risking a project file.**
+
+| Milestone | What it delivers | Exit criterion |
+|---|---|---|
+| M0 ✅ | ADR-0006, Rust workspace scaffolding, CI (`rust` + `licenses` jobs) | Landed [PR #13](https://github.com/sep-lab/Wit/pull/13) |
+| M2 | Logic/GarageBand `ProjectData` walker (`wit-logic`) | Census matches published `AuRg`/`Trak`/`AuFl` trajectories; identical-save pair → `NoStructuralChange`; 30 real fixtures walk clean |
+| M2.5 | **Reality gate** — measure the empty-verdict rate on a real Logic library | Published finding in EXPERIMENTS.md; if >50% of saves show no visible structural change, the next work is mapping Logic's volume-fader field, not the GUI |
+| M3 | Index, content-addressed store, CLI (`wit-index`, `wit-cli`) | `wit scan` lists every project with sane version counts; `wit dupes` reproduces the ~5.4 GB figure; rescan idempotent |
+| M4 | Audio engine — decode, peaks, alignment, null-diff (`wit-audio`) | Injected sample shifts recovered exactly; two 5-min bounces diff in < 10 s |
+| M5 | Tauri app alpha — Shelf, Story, Compare, watcher | Installs on a second Mac, reads a diff on the demo library and a real Logic folder, clicks Reveal |
+| M7-lite | Unsigned pilot package + PILOT.md | Clean Mac installs from the release link using only PILOT.md |
+
+Deferred to 0.1: the Ableton parity port (M1) and the zero-install share-HTML viewer (M6).
+Full milestone detail lives outside this repo per ADR-0006's evidence trail; see
+`AGENTS.md`'s settled-decisions table for what's locked.
+
+**The metric that matters:** five friends who are not contributors open a comparison twice
+in a hands-off week, unprompted. Every other criterion here would pass even if nobody
+wanted the product. See "The evidence that most challenges this project" in
+[DECISION-DOC.md](DECISION-DOC.md).
+
+---
+
+## After 0.0 — the write-path roadmap
+
+The phases below predate ADR-0006 and describe a different, larger bet: full version
+control with a write-path, merge, and eventually multi-DAW support. They are **not
+superseded** — ADR-0006 explicitly does not overturn [ADR-0005](decisions/0005-first-daw-target.md)
+— but they are **not being worked on until after the 0.0 pilot reports back**. A clean
+negative on the pilot's comprehension bet redirects investment to Logic payload schemas
+(issue #3) before this resumes; a positive result funds it directly.
+
+### Phase 1 — Single-player Ableton
 
 **Goal: a producer installs Wit, keeps working exactly as before, and gains a complete,
-readable history of their project.** No collaborator required. This is the whole bet — if
-it is not useful alone, nothing later matters.
+readable history of their project, with a write-path.** No collaborator required.
 
 - [ ] `wit` CLI skeleton in Rust ([ADR-0004](decisions/0004-implementation-stack.md))
 - [ ] Content-addressed object store: BLAKE3, algorithm-tagged, delta chains with
@@ -54,15 +95,7 @@ it is not useful alone, nothing later matters.
    the known device-parameter gap.
 4. **Five producers who are not contributors run `wit diff` twice in a week, unprompted.**
 
-Criterion 4 is not decoration. Every other exit criterion here would pass even if nobody
-wanted the product — and the strongest counter-evidence we have is precisely about
-adoption: Logic ships free one-click branching and, across 30 real projects, it has been
-used **zero** times. See "The evidence that most challenges this project" in
-[DECISION-DOC.md](DECISION-DOC.md).
-
----
-
-## Phase 2 — Two people, one DAW
+### Phase 2 — Two people, one DAW
 
 Collaboration where both use Ableton — the smaller problem, solved properly.
 
@@ -77,11 +110,10 @@ Collaboration where both use Ableton — the smaller problem, solved properly.
 **Exit criteria:** two people edit different tracks of one session, both push, and the
 merged session opens correctly in Live with both sets of changes.
 
----
+### Phase 3 — Logic and GarageBand (write-path)
 
-## Phase 3 — Logic and GarageBand
-
-One parser covers both — same container, same magic bytes.
+One parser covers both — same container, same magic bytes. The 0.0 pilot's `wit-logic`
+crate is read-only groundwork for this phase, not a substitute for it.
 
 - [ ] `ProjectData` chunk-payload schemas beyond the container (container is already
       decoded; payloads are not)
@@ -91,9 +123,7 @@ One parser covers both — same container, same magic bytes.
       compare or merge)
 - [ ] GarageBand support falls out of the same parser
 
----
-
-## Phase 4 — FL Studio
+### Phase 4 — FL Studio
 
 - [ ] Event-stream parser for ≤ v24, where locality is proven (17 of 53,448 bytes
       changed between real autosaves)
@@ -119,8 +149,9 @@ Stated so nobody builds them by accident:
 
 ## How you can help now
 
-Phase 0's numbers come from a handful of projects on one machine. **Breadth is the
-biggest gap**, and it needs no Rust:
+The 0.0 pilot's issues are tracked with `m2`–`m7` labels and milestones. Beyond writing
+Rust, the biggest gap is still breadth — Phase 0's numbers come from a handful of
+projects on one machine, and none of the read-only-slice measurements need Rust either:
 
 - Run `experiments/` against your own sessions and report what you get
 - Tell us how your studio actually collaborates

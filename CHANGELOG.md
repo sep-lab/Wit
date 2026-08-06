@@ -4,13 +4,18 @@ Notable changes to this project. Format based on [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
-Design phase — no released artifact yet.
+Building the 0.0 pilot — no released artifact yet.
 
 ### Added
+- **ADR-0006**: the first shipped product is a Logic/GarageBand-first, read-only
+  comprehension app — no project-file write-path in this slice. See
+  [docs/ROADMAP.md](docs/ROADMAP.md)'s "Now: the 0.0 pilot" section for the milestone plan.
+- Rust workspace scaffolding (`crates/wit-model`, `crates/wit-diff`) and CI (`rust`,
+  `licenses` jobs) — M0, [PR #13](https://github.com/sep-lab/Wit/pull/13)
 - Research findings across Ableton `.als`, Logic `ProjectData`, GarageBand `.band` and
   FL Studio `.flp`, measured on real projects ([docs/EXPERIMENTS.md](docs/EXPERIMENTS.md))
 - Working prototypes: Ableton semantic differ, CDC dedup harness, FLP parser, storage bench
-- ADRs 0001–0005 covering the core design
+- ADRs 0001–0006 covering the core design
 - Open-source project scaffolding: license, contributing guide, code of conduct, security
   policy, issue/PR templates, CI
 

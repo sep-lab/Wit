@@ -6,11 +6,13 @@
 # workspace (ADR-0006, ADR-0004) is real shipped third-party dependency surface
 # and gets its own ecosystem below.
 #
-# `npm` entries for /app and /viewer are staged below ahead of M5/M6: both
-# directories (and their package.json) don't exist yet, so each entry is
-# inert until then — Dependabot reports "dependency file not found" in the
-# repo's Insights tab and otherwise does nothing. That's expected, not a
-# misconfiguration; nothing here gates CI.
+# `npm` entries for /app and /viewer are commented out below until M5/M6 scaffold
+# those directories. They were live from M0 to the 0.0 truth-up pass under the
+# assumption that a missing package.json makes Dependabot a silent no-op — measured
+# wrong: it runs a "Dependabot Updates" job on every push to main that reports
+# FAILURE (not skipped) for each ecosystem with no dependency file. Nothing here
+# gates CI, but it trains reviewers to expect red on main, which is the thing we
+# are correcting. Uncomment each block in the same commit that adds its package.json.
 #
 # Actions are pinned to major versions, so these PRs are rare and are the moments
 # to look at what changed. Grouped into one PR per week so this never becomes
@@ -73,40 +75,42 @@ updates:
       - dependencies
       - rust
 
-  # /app (Tauri shell + Svelte UI) — scaffolded at M5. Inert until then.
-  - package-ecosystem: npm
-    directory: "/app"
-    schedule:
-      interval: weekly
-      day: monday
-      time: "09:00"
-    open-pull-requests-limit: 5
-    groups:
-      npm-app:
-        update-types:
-          - "minor"
-          - "patch"
-    commit-message:
-      prefix: "npm"
-    labels:
-      - dependencies
-      - app
+  # /app (Tauri shell + Svelte UI) — scaffolded at M5. Uncomment once
+  # app/package.json exists; see the note at the top of this file.
+  # - package-ecosystem: npm
+  #   directory: "/app"
+  #   schedule:
+  #     interval: weekly
+  #     day: monday
+  #     time: "09:00"
+  #   open-pull-requests-limit: 5
+  #   groups:
+  #     npm-app:
+  #       update-types:
+  #         - "minor"
+  #         - "patch"
+  #   commit-message:
+  #     prefix: "npm"
+  #   labels:
+  #     - dependencies
+  #     - app
 
-  # /viewer (zero-install recipient page) — scaffolded at M6. Inert until then.
-  - package-ecosystem: npm
-    directory: "/viewer"
-    schedule:
-      interval: weekly
-      day: monday
-      time: "09:00"
-    open-pull-requests-limit: 5
-    groups:
-      npm-viewer:
-        update-types:
-          - "minor"
-          - "patch"
-    commit-message:
-      prefix: "npm"
-    labels:
-      - dependencies
-      - viewer
+  # /viewer (zero-install recipient page) — scaffolded at M6. Uncomment once
+  # viewer/package.json exists; see the note at the top of this file.
+  # - package-ecosystem: npm
+  #   directory: "/viewer"
+  #   schedule:
+  #     interval: weekly
+  #     day: monday
+  #     time: "09:00"
+  #   open-pull-requests-limit: 5
+  #   groups:
+  #     npm-viewer:
+  #       update-types:
+  #         - "minor"
+  #         - "patch"
+  #   commit-message:
+  #     prefix: "npm"
+  #   labels:
+  #     - dependencies
+  #     - viewer
