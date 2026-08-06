@@ -11,3 +11,10 @@ workspace = true
 
 [dependencies]
 wit-model = { path = "../wit-model" }
+
+[dev-dependencies]
+# Golden-parity integration test only (tests/golden.rs): builds a synthetic
+# .als, runs it through the real wit-als parser, and asserts the rendered
+# diff matches tests/test_als_golden.py's GOLDEN_DIFF byte-for-byte.
+wit-als = { path = "../wit-als" }
+flate2 = "1.0"

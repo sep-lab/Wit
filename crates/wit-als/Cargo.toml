@@ -1,0 +1,19 @@
+[package]
+name = "wit-als"
+version = "0.0.0"
+description = "Hardened .als (Ableton Live Set) reader: bounded gunzip, DOCTYPE rejection, depth-capped XML, whitelist extraction into wit-model::Model."
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+wit-model = { path = "../wit-model" }
+flate2 = "1.0"
+quick-xml = "0.41"
+blake3 = "1.5"
+
+[dev-dependencies]
+proptest = "1"
