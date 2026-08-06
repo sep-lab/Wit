@@ -40,15 +40,15 @@ what would overturn it are in the ADR.
 **Goal: install Wit, point it at a Logic library, and read a comparison a musician can
 understand — without ever risking a project file.**
 
-| Milestone | What it delivers | Exit criterion |
-|---|---|---|
-| M0 ✅ | ADR-0006, Rust workspace scaffolding, CI (`rust` + `licenses` jobs) | Landed [PR #13](https://github.com/sep-lab/Wit/pull/13) |
-| M2 | Logic/GarageBand `ProjectData` walker (`wit-logic`) | Census matches published `AuRg`/`Trak`/`AuFl` trajectories; identical-save pair → `NoStructuralChange`; 30 real fixtures walk clean |
-| M2.5 | **Reality gate** — measure the empty-verdict rate on a real Logic library | Published finding in EXPERIMENTS.md; if >50% of saves show no visible structural change, the next work is mapping Logic's volume-fader field, not the GUI |
-| M3 | Index, content-addressed store, CLI (`wit-index`, `wit-cli`) | `wit scan` lists every project with sane version counts; `wit dupes` reproduces the ~5.4 GB figure; rescan idempotent |
-| M4 | Audio engine — decode, peaks, alignment, null-diff (`wit-audio`) | Injected sample shifts recovered exactly; two 5-min bounces diff in < 10 s |
-| M5 | Tauri app alpha — Shelf, Story, Compare, watcher | Installs on a second Mac, reads a diff on the demo library and a real Logic folder, clicks Reveal |
-| M7-lite | Unsigned pilot package + PILOT.md | Clean Mac installs from the release link using only PILOT.md |
+| Milestone | Tracking | What it delivers | Exit criterion |
+|---|---|---|---|
+| M0 ✅ | [PR #13](https://github.com/sep-lab/Wit/pull/13) | ADR-0006, Rust workspace scaffolding, CI (`rust` + `licenses` jobs) | Landed |
+| M2 | [#3](https://github.com/sep-lab/Wit/issues/3), [#5](https://github.com/sep-lab/Wit/issues/5) | Logic/GarageBand `ProjectData` walker (`wit-logic`) | Census matches published `AuRg`/`Trak`/`AuFl` trajectories; identical-save pair → `NoStructuralChange`; 30 real fixtures walk clean |
+| M2.5 | [#15](https://github.com/sep-lab/Wit/issues/15) | **Reality gate** — measure the empty-verdict rate on a real Logic library | Published finding in EXPERIMENTS.md; if >50% of saves show no visible structural change, the next work is mapping Logic's volume-fader field, not the GUI |
+| M3 | [#16](https://github.com/sep-lab/Wit/issues/16) | Index, content-addressed store, CLI (`wit-index`, `wit-cli`) | `wit scan` lists every project with sane version counts; `wit dupes` reproduces the ~5.4 GB figure; rescan idempotent |
+| M4 | [#17](https://github.com/sep-lab/Wit/issues/17) | Audio engine — decode, peaks, alignment, null-diff (`wit-audio`) | Injected sample shifts recovered exactly; two 5-min bounces diff in < 10 s |
+| M5 | [#18](https://github.com/sep-lab/Wit/issues/18) | Tauri app alpha — Shelf, Story, Compare, watcher | Installs on a second Mac, reads a diff on the demo library and a real Logic folder, clicks Reveal |
+| M7-lite | [#19](https://github.com/sep-lab/Wit/issues/19) | Unsigned pilot package + PILOT.md | Clean Mac installs from the release link using only PILOT.md |
 
 Deferred to 0.1: the Ableton parity port (M1) and the zero-install share-HTML viewer (M6).
 Full milestone detail lives outside this repo per ADR-0006's evidence trail; see
