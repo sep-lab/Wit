@@ -28,6 +28,15 @@ WHAT THIS DOES NOT HANDLE
     - MIDI note-level diffs are not produced (note counts only).
     - Automation is compared by lane count, not by breakpoint.
     - Live-version schema drift is not handled; tested against Live 12.x.
+    - Robustness (this section added when the DoS/crash bugs below were fixed):
+      a document with a DOCTYPE internal subset containing only internal
+      entities (the "billion laughs" shape) is refused outright, since Ableton
+      never writes a DOCTYPE at all; a document with more than
+      MAX_XML_ELEMENTS elements, or more than MAX_XML_BYTES of decompressed
+      content, is refused rather than fully materialised. None of this is a
+      claim that the parser is hardened against arbitrary hostile input — see
+      docs/TESTING.md 9 — only that the four failure modes measured there no
+      longer take the caller down silently or unboundedly.
 
 Standard library only, by design — see AGENTS.md.
 """
@@ -37,6 +46,8 @@ from __future__ import annotations
 import argparse
 import glob
 import gzip
+import io
+import os
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -46,6 +57,32 @@ TRACK_TAGS = ("AudioTrack", "MidiTrack", "GroupTrack", "ReturnTrack")
 
 # Live's autosave filename: "<Project> [YYYY-MM-DD HHMMSS].als"
 AUTOSAVE_NAME = re.compile(r" \[\d{4}-\d{2}-\d{2} \d{6}\]\.als$")
+
+# Generous ceilings for hostile-input defence, not product limits. A real Live
+# set can legitimately run to hundreds of thousands of XML elements — measured:
+# a real project's .als parses to 183,403 elements from 8.9 MB of decompressed
+# XML — so an absolute element or byte cap set low enough to catch a crafted
+# flat-element bomb would also reject real material. What actually
+# distinguishes the bomb is *compression ratio*: that same real file compresses
+# ~19x (8.9 MB -> 473 KB), while a maximally repetitive flat-element bomb
+# compresses 400x or more (measured on the 100,000-element case this defends
+# against). MAX_DECOMPRESSION_RATIO is the primary defence; MAX_XML_BYTES and
+# MAX_XML_ELEMENTS are backstops, set far above anything real, for hostile
+# input that also pads its compressed size to dodge the ratio check.
+MAX_DECOMPRESSION_RATIO = 200
+MAX_XML_BYTES = 256 * 1024 * 1024
+MAX_XML_ELEMENTS = 2_000_000
+
+# Ableton Live never writes a DOCTYPE. A DOCTYPE with an internal subset whose
+# entities are all internal (no SYSTEM/PUBLIC reference) is exactly how an XML
+# "billion laughs" bomb is built, and xml.etree.ElementTree expands internal
+# entities without a size limit of its own (docs/TESTING.md 6: "assert it, do
+# not assume it" — the interpreter's transitive amplification limit is not a
+# defence we own). A DOCTYPE that *does* reference an external entity is left
+# alone here; expat already refuses to resolve those with its own
+# "external entity" error, and that message is worth keeping intact.
+_DOCTYPE_INTERNAL_SUBSET_RE = re.compile(rb"<!DOCTYPE\b[^>\[]*\[(.*?)\]", re.DOTALL)
+_EXTERNAL_ENTITY_RE = re.compile(rb"<!ENTITY\b[^>]*\b(?:SYSTEM|PUBLIC)\b", re.IGNORECASE)
 
 
 def _val(node, path, attr="Value", default=None):
@@ -62,12 +99,110 @@ def _num(s, places=3):
         return s
 
 
+def _reject_entity_bomb(xml_bytes: bytes, path: str) -> None:
+    """Refuse a DOCTYPE internal subset that has no external entity in it.
+
+    See the module docstring and the comment above the compiled patterns for
+    why this specific shape, and not "any DOCTYPE", is what gets refused here.
+    """
+    match = _DOCTYPE_INTERNAL_SUBSET_RE.search(xml_bytes)
+    if match and not _EXTERNAL_ENTITY_RE.search(match.group(1)):
+        raise ET.ParseError(
+            "%s: refusing a DOCTYPE internal subset with only internal "
+            "entities (possible XML entity-expansion attack); Ableton Live "
+            "never writes a DOCTYPE" % path
+        )
+
+
+def _parse_bounded(data: bytes, path: str) -> ET.Element:
+    """Parse XML while capping the number of elements materialised.
+
+    ``ET.parse`` holds the entire tree in memory regardless of how much of it
+    the whitelist below actually reads, and Python object overhead per element
+    is what actually blew up in the measured bug (an 8.8 KB gzipped .als with
+    200,000 trivial elements peaked at 66 MB — ~330 bytes of Python object per
+    XML element that is a few bytes on disk). The compression-ratio check in
+    ``_read_gzip_capped`` is the real defence against that specific shape;
+    this is a backstop, set at MAX_XML_ELEMENTS far above the 183,403 elements
+    measured in a real project, for a hostile file that pads its compressed
+    size enough to dodge the ratio check but still declares an absurd element
+    count. ``iterparse`` still builds the same tree, but it lets this function
+    count elements as they close and abort before the count runs away.
+    """
+    count = 0
+    context = iter(ET.iterparse(io.BytesIO(data), events=("start", "end")))
+    _, root = next(context)
+    for event, _elem in context:
+        if event != "end":
+            continue
+        count += 1
+        if count > MAX_XML_ELEMENTS:
+            raise ValueError(
+                "%s: more than %d XML elements; refusing to parse further "
+                "(bounds memory on hostile input, see docs/TESTING.md 6)"
+                % (path, MAX_XML_ELEMENTS)
+            )
+    return root
+
+
+def _read_gzip_capped(
+    path: str,
+    byte_cap: int = MAX_XML_BYTES,
+    ratio_cap: int = MAX_DECOMPRESSION_RATIO,
+) -> bytes:
+    """
+    Decompress ``path``, refusing once the output exceeds an absolute cap or a
+    generous multiple of the file's own compressed size on disk, whichever is
+    smaller.
+
+    The ratio check is what actually distinguishes a real, large Live set
+    from a decompression bomb — see the comment on MAX_DECOMPRESSION_RATIO.
+    Reading in fixed-size chunks matters as much as the cap itself: asking
+    ``GzipFile.read(n)`` for a single huge ``n`` makes it pre-allocate a
+    buffer of that size before it even looks at the data, which would defeat
+    the cap for exactly the hostile/garbage input it exists to bound
+    (measured: a 268 MB peak from a 184-byte non-gzip file, just from the
+    size of the read request).
+    """
+    try:
+        compressed_size = max(os.path.getsize(path), 1)
+    except OSError:
+        compressed_size = 1
+    # A floor keeps a tiny-but-legitimate file from being choked by the ratio
+    # alone; the absolute byte_cap is the real ceiling for anything larger.
+    limit = min(byte_cap, max(compressed_size * ratio_cap, 1_000_000))
+
+    chunk_size = 1024 * 1024
+    total = 0
+    pieces = []
+    with gzip.open(path, "rb") as fh:
+        while True:
+            chunk = fh.read(chunk_size)
+            if not chunk:
+                break
+            pieces.append(chunk)
+            total += len(chunk)
+            if total > limit:
+                raise ValueError(
+                    "%s: decompressed content exceeds %d bytes (more than "
+                    "%dx its %d-byte compressed size); refusing to parse "
+                    "(possible decompression bomb)"
+                    % (path, limit, ratio_cap, compressed_size)
+                )
+    return b"".join(pieces)
+
+
 def build_model(path: str) -> dict:
     """Extract the musically meaningful state of a Live set."""
-    with gzip.open(path, "rb") as fh:
-        root = ET.parse(fh).getroot()
+    data = _read_gzip_capped(path)
+    _reject_entity_bomb(data, path)
+    root = _parse_bounded(data, path)
 
     live_set = root.find("LiveSet")
+    if live_set is None:
+        raise ValueError(
+            "%s is not an Ableton Live set (no <LiveSet> element)" % path
+        )
     model = {
         "creator": root.get("Creator"),
         "tempo": None,
@@ -134,6 +269,7 @@ def diff_models(a: dict, b: dict) -> list[str]:
     # A single rename in the sample folder rewrites every clip that references
     # it. On real material one rename produced 425 clip-level changes. Detect
     # the rename once and suppress the fan-out, or the diff is unreadable.
+    #
     renames: dict[tuple[str, str], int] = defaultdict(int)
     for tid in set(a["tracks"]) & set(b["tracks"]):
         ca, cb = a["tracks"][tid]["clips"], b["tracks"][tid]["clips"]
