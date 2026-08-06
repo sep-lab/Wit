@@ -1,0 +1,12 @@
+[package]
+name = "wit-model"
+version = "0.0.0"
+description = "Shared semantic model: Model, ChangeRecord, units translation, text renderers. Zero I/O."
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

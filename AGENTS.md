@@ -67,7 +67,8 @@ This repository's credibility rests on its numbers being real.
 | Version the recipe, not the render | ADR-0001 |
 | Delta chains for project files, content addressing for audio | ADR-0002 |
 | Plugin state is tracked opaquely, never interpreted or ported | ADR-0003 |
-| Ableton is the first DAW target | ADR-0005 |
+| Ableton is the first DAW target (parser/write-path roadmap) | ADR-0005 |
+| The first *shipped product* is a Logic-first, read-only comprehension surface; no project-file write-path in this slice | ADR-0006 |
 
 Each ADR lists what evidence would overturn it. Bring that evidence, or leave them alone.
 
