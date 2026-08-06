@@ -193,13 +193,19 @@ def test_every_shell_experiment_documents_itself(repo_root):
 def test_test_dependencies_stay_minimal(repo_root):
     """
     The tests may use pytest; that is the only concession. Keeping the list to two
-    entries means a contributor can run the suite from a clean machine in one
+    distinct packages means a contributor can run the suite from a clean machine in one
     command, which is the same reasoning that keeps experiments/ stdlib-only.
+
+    A package may legitimately appear on more than one line when its version floor is
+    split by an environment marker (tests/requirements-dev.txt splits pytest's floor by
+    `python_version`, since pytest 9 requires >=3.10 and CI keeps a 3.9 leg) -- that is
+    still one dependency, not two, so the set of distinct package names is what must
+    stay minimal, not the line count.
     """
     text = (repo_root / "tests" / "requirements-dev.txt").read_text(encoding="utf-8")
-    packages = [
-        re.split(r"[<>=!\[]", line.strip())[0]
+    packages = {
+        re.split(r"[<>=!\[;]", line.strip())[0].strip()
         for line in text.splitlines()
         if line.strip() and not line.strip().startswith("#")
-    ]
+    }
     assert sorted(packages) == ["pytest", "pytest-cov"]
