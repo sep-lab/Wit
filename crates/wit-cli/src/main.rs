@@ -6,8 +6,10 @@
 //! (census + extracted names; see `wit-logic`'s module docs for why byte
 //! comparison is a diagnostic, never the verdict). M3 adds `scan` and
 //! `dupes` (`wit-index`) — the first commands that persist anything, via
-//! the one crate in the workspace allowed to write. `wit log`/`diff`/
-//! `report` land later; see `docs/ROADMAP.md`.
+//! the one crate in the workspace allowed to write. M2.5 adds
+//! `logic-report` — the issue #15 reality-gate tool, running `logic-probe`'s
+//! comparison across an entire library instead of one pair. `wit log`/
+//! `diff`/`report` land later; see `docs/ROADMAP.md`.
 
 use clap::{Parser, Subcommand};
 use std::collections::BTreeSet;
@@ -51,6 +53,11 @@ enum Command {
     /// Report byte-for-byte duplicate audio files under `path`. Read-only
     /// — Wit never deletes anything; this is just a map.
     Dupes { path: PathBuf },
+    /// M2.5 (issue #15) reality-gate report: walk every Logic/GarageBand
+    /// alternative's backup chain under `path`, run `logic-probe`'s
+    /// comparison on every consecutive pair, and print the empty-verdict
+    /// rate across the whole library. Read-only.
+    LogicReport { path: PathBuf },
 }
 
 fn main() -> ExitCode {
@@ -60,6 +67,7 @@ fn main() -> ExitCode {
         Command::LogicProbe { old, new } => logic_probe(&old, &new),
         Command::Scan { path, data_dir } => scan(&path, data_dir),
         Command::Dupes { path } => dupes(&path),
+        Command::LogicReport { path } => logic_report(&path),
     }
 }
 
@@ -344,4 +352,66 @@ fn human_bytes(bytes: u64) -> String {
     } else {
         format!("{size:.1} {}", UNITS[unit])
     }
+}
+
+// --------------------------------------------------------------------- //
+// M2.5: logic-report (issue #15 reality gate)
+// --------------------------------------------------------------------- //
+
+fn logic_report(path: &std::path::Path) -> ExitCode {
+    let report = wit_index::logic_report(path);
+
+    if report.projects_scanned == 0 {
+        println!("  no Logic/GarageBand project found under this path — nothing to report");
+        return ExitCode::SUCCESS;
+    }
+
+    // Project/alternative *names* only, never a full path — same privacy
+    // discipline `wit scan`/`wit dupes` already follow (no home-directory
+    // path leaves this machine's report output).
+    let mut out = String::new();
+    out.push_str(&format!(
+        "  scanned {} project(s), {} alternative(s), {} consecutive save pair(s)\n",
+        report.projects_scanned,
+        report.alternatives_scanned,
+        report.total_pairs()
+    ));
+
+    if report.total_pairs() == 0 {
+        out.push_str("  no consecutive save pairs found (every alternative has 0 or 1 version) — nothing to compare\n");
+    } else {
+        out.push_str(&format!(
+            "  {:.1}% of save pairs show a structural change Wit can see ({} of {})\n",
+            report.structural_change_percent(),
+            report.pairs_with_structural_change(),
+            report.total_pairs()
+        ));
+        out.push_str(
+            "  distribution of change counts per save pair (0 = no visible structural change):\n",
+        );
+        for (count, n) in report.change_count_distribution() {
+            out.push_str(&format!("    {count} change(s): {n} pair(s)\n"));
+        }
+        let byte_different_but_same = report.byte_different_structurally_identical();
+        out.push_str(&format!(
+            "  {byte_different_but_same} pair(s) ({:.1}%) are byte-different but structurally identical\n",
+            byte_different_but_same as f64 / report.total_pairs() as f64 * 100.0
+        ));
+    }
+    if !report.read_errors.is_empty() {
+        out.push_str(&format!(
+            "  ({} ProjectData file(s) could not be read or walked and were skipped)\n",
+            report.read_errors.len()
+        ));
+    }
+
+    if let Err(msg) = wit_index::assert_no_home_paths(&out) {
+        // Must never happen — a bug in this function, not a recoverable
+        // runtime condition, so fail loudly rather than print a path that
+        // was supposed to be impossible to print (mirrors `dupes` above).
+        eprintln!("wit: internal error — {msg}");
+        return ExitCode::FAILURE;
+    }
+    print!("{out}");
+    ExitCode::SUCCESS
 }

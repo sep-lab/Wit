@@ -73,6 +73,43 @@ pub fn semantic_equal(a: &Walked, b: &Walked) -> Verdict {
     }
 }
 
+/// Count of distinct signals that differ between two walks: one per
+/// census tag whose count differs, one per name added to or removed from
+/// each of the three [`Extracted`] name lists, and one if tempo differs.
+/// **Diagnostic granularity only — not part of the [`Verdict`].**
+/// `semantic_equal` stays a strict boolean at v1 (M2 tracking issue
+/// guardrail); this exists to answer a different question — *how much*
+/// changed on saves that already report `StructuralChange` — for M2.5's
+/// "distribution of change counts per save" (issue #15). Guaranteed to be
+/// `0` exactly when `semantic_equal` reports `NoStructuralChange`, since
+/// both are derived from the same census/extracted equality checks.
+pub fn change_count(a: &Walked, b: &Walked) -> usize {
+    let mut count = 0usize;
+    let tags: std::collections::BTreeSet<&String> =
+        a.census.keys().chain(b.census.keys()).collect();
+    for tag in tags {
+        if a.census.get(tag).copied().unwrap_or(0) != b.census.get(tag).copied().unwrap_or(0) {
+            count += 1;
+        }
+    }
+    count += symmetric_diff_count(
+        &a.extracted.possible_track_names,
+        &b.extracted.possible_track_names,
+    );
+    count += symmetric_diff_count(&a.extracted.region_names, &b.extracted.region_names);
+    count += symmetric_diff_count(&a.extracted.audio_file_names, &b.extracted.audio_file_names);
+    if a.extracted.tempo_bpm != b.extracted.tempo_bpm {
+        count += 1;
+    }
+    count
+}
+
+fn symmetric_diff_count(a: &[String], b: &[String]) -> usize {
+    let sa: std::collections::BTreeSet<&String> = a.iter().collect();
+    let sb: std::collections::BTreeSet<&String> = b.iter().collect();
+    sa.symmetric_difference(&sb).count()
+}
+
 /// Raw byte comparison — a diagnostic only ("did the file change at all"),
 /// never fed into [`semantic_equal`]'s verdict. Exposed because `wit logic
 /// probe` reports it alongside the structural verdict, honestly labeled as
@@ -150,5 +187,35 @@ mod tests {
         let b = walk(&data_b).unwrap();
         assert_ne!(a.root.version_word, b.root.version_word);
         assert_eq!(semantic_equal(&a, &b), Verdict::NoStructuralChange);
+    }
+
+    #[test]
+    fn change_count_is_zero_exactly_when_no_structural_change() {
+        let data_a = build_container(&[(b"karT", vec![0xAA; 8])]);
+        let data_b = build_container(&[(b"karT", vec![0xBB; 8])]);
+        let a = walk(&data_a).unwrap();
+        let b = walk(&data_b).unwrap();
+        assert_eq!(semantic_equal(&a, &b), Verdict::NoStructuralChange);
+        assert_eq!(change_count(&a, &b), 0);
+    }
+
+    #[test]
+    fn change_count_counts_one_per_differing_census_tag() {
+        let data_a = build_container(&[(b"karT", vec![0u8; 8])]);
+        let data_b = build_container(&[(b"karT", vec![0u8; 8]), (b"gRuA", vec![0u8; 8])]);
+        let a = walk(&data_a).unwrap();
+        let b = walk(&data_b).unwrap();
+        assert_eq!(semantic_equal(&a, &b), Verdict::StructuralChange);
+        // Only "gRuA" changed count (0 -> 1); "karT" is unchanged (1 -> 1).
+        assert_eq!(change_count(&a, &b), 1);
+    }
+
+    #[test]
+    fn change_count_is_symmetric() {
+        let data_a = build_container(&[(b"karT", vec![0u8; 8])]);
+        let data_b = build_container(&[(b"karT", vec![0u8; 8]), (b"gRuA", vec![0u8; 8])]);
+        let a = walk(&data_a).unwrap();
+        let b = walk(&data_b).unwrap();
+        assert_eq!(change_count(&a, &b), change_count(&b, &a));
     }
 }

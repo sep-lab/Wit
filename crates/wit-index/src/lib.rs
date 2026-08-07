@@ -10,6 +10,7 @@
 pub mod discover;
 pub mod dupes;
 pub mod registry;
+pub mod report;
 pub mod scan;
 pub mod store;
 
@@ -19,5 +20,6 @@ pub use discover::{
 };
 pub use dupes::{assert_no_home_paths, duplicate_report, DuplicateGroup, DuplicateReport};
 pub use registry::{ProjectRow, Registry, RegistryError};
+pub use report::{logic_report, LogicLibraryReport, SavePairResult};
 pub use scan::{scan, ScanResult};
 pub use store::{Hash, Store, StoreError};
