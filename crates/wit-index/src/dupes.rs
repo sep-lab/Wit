@@ -187,6 +187,6 @@ mod tests {
     #[test]
     fn assert_no_home_paths_catches_a_leak() {
         assert!(assert_no_home_paths("clean report, no paths here").is_ok());
-        assert!(assert_no_home_paths("found it at /Users/sepehr/Music/Song.logicx").is_err());
+        assert!(assert_no_home_paths("found it at /Users/alice/Music/Song.logicx").is_err());
     }
 }
