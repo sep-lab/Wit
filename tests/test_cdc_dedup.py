@@ -179,20 +179,16 @@ def test_gunzip_mode_compares_decompressed_content(cdc, tmp_path, capsys):
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG in cdc_dedup.pairwise: `reused` sums each DISTINCT chunk once "
-        "(chunk_map is digest->length) while `total` counts every byte of B. Any "
-        "internal duplication inside B therefore understates reuse. Here B is A, "
-        "byte for byte, and the script reports ~19% reusable instead of 100%. "
-        "This biases every pairwise figure downward on repetitive material — "
-        "which is what Logic ProjectData is, and 'only 2-87% reuse per pair' in "
-        "docs/EXPERIMENTS.md 6a is a pairwise figure. Fix: count occurrences, "
-        "e.g. sum the lengths of B's chunk *instances* whose digest is in A."
-    ),
-)
 def test_self_comparison_is_always_100_percent(cdc, tmp_path, capsys):
+    """
+    Fixed: `reused` used to sum each DISTINCT chunk once (chunk_map is
+    digest->length) while `total` counted every byte of B, so any internal
+    duplication inside B understated reuse — B compared against itself, byte
+    for byte, reported ~19% reusable instead of 100%. pairwise() now walks B's
+    actual chunk *instances* via chunk_bounds and sums the length of every one
+    whose digest is already in A, so repeated chunks are counted once per
+    occurrence rather than once per distinct digest.
+    """
     data = binary.repeated_blocks(50_000, 6, seed=50)
     p = write(tmp_path, "dup.bin", data)
     r = parse_pairwise(report_of(capsys, cdc.pairwise, p, p))

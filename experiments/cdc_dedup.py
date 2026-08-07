@@ -92,9 +92,18 @@ def pairwise(path_a: str, path_b: str, gunzip: bool = False) -> None:
     a = chunk_map(_read(path_a, gunzip))
     data_b = _read(path_b, gunzip)
     b = chunk_map(data_b)
-    shared = set(a) & set(b)
-    reused = sum(b[k] for k in shared)
     total = len(data_b)
+    # BUG (fixed): `sum(b[k] for k in set(a) & set(b))` sums each distinct
+    # chunk digest once, because chunk_map is digest -> length. That
+    # undercounts whenever B repeats a chunk that A also has — including B
+    # compared against itself, which should be 100% reusable and was not.
+    # Count occurrences instead: walk B's actual chunk instances and add up
+    # the length of every one whose digest is already in A.
+    reused = sum(
+        end - start
+        for start, end in chunk_bounds(data_b)
+        if hashlib.blake2b(data_b[start:end], digest_size=16).digest() in a
+    )
     print(f"  A: {path_a.split('/')[-1]}")
     print(f"  B: {path_b.split('/')[-1]}  ({total/1e6:.2f} MB, {len(b)} chunks)")
     print(f"  reusable from A : {100*reused/total:6.2f}%")

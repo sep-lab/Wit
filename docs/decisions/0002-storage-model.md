@@ -18,7 +18,11 @@ measurement showed that is wrong for project files.
 | Material | CDC + zlib | zstd delta chain |
 |---|---|---|
 | 29 Ableton versions (283 MB logical) | 9.1 MB (~310 KB/save) | **314 KB (~11 KB/save)** |
-| 10 Logic `ProjectData` versions | 2–87% reuse, mean 46% | **171 KB total (62×)** |
+| 10 Logic `ProjectData` versions | 2.19–86.63% reuse, mean 46.3% | **171 KB total (62×)** |
+
+(The CDC column was re-measured after fixing a chunk-accounting bug in
+`cdc_dedup.pairwise` — see [EXPERIMENTS.md 6a](../EXPERIMENTS.md#6-storage-what-does-version-history-actually-cost)
+for what the bug was and why it did not move this particular number.)
 
 Delta chains are **29× better** on Ableton history and turn Logic from a weak case into a
 strong one. The reason is structural: a DAW save produces many small scattered edits with
