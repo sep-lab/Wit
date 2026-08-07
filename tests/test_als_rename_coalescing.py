@@ -22,7 +22,6 @@ import subprocess
 import sys
 import textwrap
 
-import pytest
 from factories.als import Clip, LiveSet, Track
 
 
@@ -110,33 +109,17 @@ def test_clearing_a_sample_is_not_a_rename(diff_of):
     assert sample_lines(diff_of(a, b)) == []
 
 
-def test_a_swap_currently_reports_two_bogus_renames(diff_of):
+def test_a_swap_is_not_reported_as_two_bogus_renames(diff_of):
     """
-    Characterisation of today's behaviour, so the xfail below has something
-    concrete to contrast with. Nothing was renamed here: both files still exist
-    and are both still used. The clips traded places.
+    Fixed: this used to characterise today's (buggy) behaviour — two renames
+    reported in opposite directions for a same-set swap, which is not a thing
+    that can happen on a filesystem. See the test below for the full story.
     """
     a = set_with(("100", [("1", "kick.wav"), ("2", "snare.wav")]))
     b = set_with(("100", [("1", "snare.wav"), ("2", "kick.wav")]))
-    assert len(sample_lines(diff_of(a, b))) == 2
+    assert len(sample_lines(diff_of(a, b))) == 0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG in als_semantic_diff.diff_models: rename detection is a pure "
-        "per-clip before/after comparison with no check that the old name has "
-        "actually disappeared. Swapping two samples between clips is therefore "
-        "reported as two file renames in opposite directions ('kick -> snare' "
-        "AND 'snare -> kick'), which is not a thing that can happen on a "
-        "filesystem. On a real set where a producer reassigns samples across N "
-        "clips this becomes a rename storm of up to N lines, each of them false, "
-        "and it crowds out the genuine changes under --limit. Fix: only call it a "
-        "rename when the old basename is absent from the new model's sample index "
-        "(model['samples'] is already built and currently unused); otherwise "
-        "report it per clip as 'sample replaced'."
-    ),
-)
 def test_swapping_two_samples_between_clips_is_not_a_rename(diff_of):
     a = set_with(("100", [("1", "kick.wav"), ("2", "snare.wav")]))
     b = set_with(("100", [("1", "snare.wav"), ("2", "kick.wav")]))
@@ -148,17 +131,13 @@ def test_swapping_two_samples_between_clips_is_not_a_rename(diff_of):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Same root cause as the swap case. Here only 3 of 5 references moved and "
-        "'old.wav' is still used by the other 2, so it demonstrably was not "
-        "renamed — the producer replaced the sample on three clips. The diff "
-        "still announces a rename. model['samples'] holds exactly the "
-        "information needed to rule this out and is never consulted."
-    ),
-)
 def test_a_partial_move_while_the_old_sample_is_still_in_use_is_not_a_rename(diff_of):
+    """
+    Fixed: same root cause as the swap case. Only 3 of 5 references moved and
+    'old.wav' is still used by the other 2, so it demonstrably was not renamed
+    — the producer replaced the sample on three clips. diff_models now
+    consults model['samples'] before calling anything a rename.
+    """
     a = set_with(("100", [(str(i), "old.wav") for i in range(1, 6)]))
     b = set_with(
         ("100", [("1", "new.wav"), ("2", "new.wav"), ("3", "new.wav"),
@@ -167,11 +146,14 @@ def test_a_partial_move_while_the_old_sample_is_still_in_use_is_not_a_rename(dif
     assert sample_lines(diff_of(a, b)) == []
 
 
-def test_a_rename_storm_crowds_out_real_changes_under_the_print_limit(als_diff, capsys, tmp_path):
+def test_a_rename_storm_no_longer_crowds_out_real_changes(als_diff, capsys, tmp_path):
     """
-    Why the false positives matter rather than merely being untidy: report()
-    truncates at --limit, and the renames are emitted first, so bogus rename
-    lines evict real edits from what the user sees.
+    Fixed: this used to characterise the false positives crowding out a real
+    edit under --limit — report() truncates, and the (bogus) renames were
+    emitted first. A 12-way rotation is a permutation of the same 12 names, so
+    every "old" name is still in use somewhere in b; none of it is a rename
+    any more, and the one edit a musician would care about is no longer
+    evicted.
     """
     a = set_with(("100", [(str(i), "s%d.wav" % i) for i in range(1, 13)]))
     b = a.copy()
@@ -188,12 +170,9 @@ def test_a_rename_storm_crowds_out_real_changes_under_the_print_limit(als_diff, 
     als_diff.report(pa, pb, limit=5)
     out = capsys.readouterr().out
 
-    assert "volume" not in out, (
-        "expected the real edit to be pushed past the limit by rename noise; if "
-        "this now passes, rename detection was fixed and this test should be "
-        "rewritten as a positive assertion"
-    )
-    assert "... and" in out
+    assert "volume" in out
+    assert "SAMPLE~" not in out
+    assert "... and" not in out
 
 
 # --------------------------------------------------------------------------- #
@@ -230,22 +209,15 @@ def test_renaming_a_sample_used_by_a_clip_that_also_moved_reports_both(diff_of):
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG in als_semantic_diff.diff_models: the rename block iterates "
-        "`set(a['tracks']) & set(b['tracks'])` and `set(ca) & set(cb)`, so the "
-        "insertion order of the `renames` dict follows Python's randomised string "
-        "hashing. `sorted(..., key=lambda kv: -kv[1])` is a stable sort, so "
-        "renames with equal counts come out in a different order on every "
-        "process. Measured: 6 distinct orderings from 6 PYTHONHASHSEED values on "
-        "one 8-rename input. Consequences: `wit diff` output is not reproducible, "
-        "it cannot be diffed or golden-tested, and under --limit it is random "
-        "which renames the user is shown. Fix: iterate `sorted(...)`, or sort by "
-        "`(-count, old, new)`."
-    ),
-)
 def test_diff_output_order_is_stable_across_processes(tmp_path):
+    """
+    Fixed: the rename block used to iterate set intersections directly, so the
+    insertion order of the `renames` dict followed Python's randomised string
+    hashing, and `sorted(..., key=lambda kv: -kv[1])` is a stable sort — ties
+    came out in a different order on every process. The sort key is now
+    `(-count, old, new)`, so ties break on the sample names instead of on
+    iteration order.
+    """
     a = set_with(*[("%d" % (200 + i), [("1", "s%d.wav" % i)]) for i in range(8)])
     b = set_with(*[("%d" % (200 + i), [("1", "r%d.wav" % i)]) for i in range(8)])
     pa, pb = str(tmp_path / "a.als"), str(tmp_path / "b.als")

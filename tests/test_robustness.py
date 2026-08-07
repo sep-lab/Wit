@@ -125,28 +125,16 @@ def test_corrupt_als_raises_a_recognisable_error(als_diff, tmp_path, name):
 
 def test_a_well_formed_xml_that_is_not_a_live_set_is_rejected(als_diff, tmp_path):
     """
-    Characterisation: it does fail, and it fails fast, but with an AttributeError
-    from deep inside the extractor rather than "this is not an Ableton Live set".
-    See the xfail below.
+    Fixed: this used to characterise an AttributeError leaking from deep inside
+    the extractor ("'NoneType' object has no attribute 'find'"). build_model now
+    raises a typed ValueError naming the file instead — see the test below.
     """
     path = write(tmp_path, "notlive.als", gzip.compress(b"<Ableton Creator='x'/>"))
     with bounded():
-        with pytest.raises(AttributeError):
+        with pytest.raises(ValueError):
             als_diff.build_model(path)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "als_semantic_diff.build_model does `live_set = root.find('LiveSet')` and "
-        "then `live_set.find(...)` without checking for None, so any XML document "
-        "that is not a Live set dies with \"'NoneType' object has no attribute "
-        "'find'\". That is an implementation detail leaking out as the user-facing "
-        "error, and it is indistinguishable from an internal bug. Fix: raise a "
-        "typed error naming the file, e.g. ValueError('%s is not an Ableton Live "
-        "set (no <LiveSet> element)')."
-    ),
-)
 def test_a_non_live_set_error_says_what_is_wrong(als_diff, tmp_path):
     path = write(tmp_path, "notlive.als", gzip.compress(b"<Ableton Creator='x'/>"))
     with pytest.raises(Exception) as exc:
@@ -196,21 +184,13 @@ def test_external_entities_are_refused(als_diff, tmp_path):
             als_diff.build_model(path)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "SECURITY.md lists 'XML entity expansion (billion laughs)' as a security "
-        "issue, and xml.etree.ElementTree does expand internal entities without "
-        "limit. Measured with the deliberately small 5-level bomb in this file: a "
-        "218-byte .als expands to a 100,000-character attribute value, a 10x "
-        "amplification per nesting level with no cap. Nine levels is a gigabyte "
-        "from a file that fits in a tweet. Fix: refuse a DOCTYPE internal subset "
-        "outright (Live never writes one), or parse with a hardened parser. "
-        "Note: defusedxml would solve it but is a third-party dependency, which "
-        "experiments/ may not have (AGENTS.md) — the product parser can."
-    ),
-)
 def test_internal_entity_expansion_is_bounded(als_diff, tmp_path):
+    """
+    Fixed: build_model now refuses a DOCTYPE internal subset that has no
+    external entity reference in it — exactly the shape of this 5-level bomb —
+    before handing anything to ET.parse, rather than relying on the
+    interpreter's own (undocumented, version-dependent) amplification limit.
+    """
     path = write(tmp_path, "bomb.als", gzip.compress(ENTITY_BOMB))
     file_size = len(gzip.compress(ENTITY_BOMB))
     try:
@@ -224,19 +204,15 @@ def test_internal_entity_expansion_is_bounded(als_diff, tmp_path):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Decompression + tree-building are both unbounded. Measured: an 8.8 KB "
-        "gzipped .als containing 200,000 trivial elements peaks at 66 MB of "
-        "Python allocations — roughly 7,500x the file size — because gzip is "
-        "streamed straight into ET.parse, which materialises the whole tree. A "
-        "few megabytes of crafted .als exhausts the host. Fix: cap decompressed "
-        "size, and/or use iterparse and discard subtrees the whitelist does not "
-        "want (which is most of them)."
-    ),
-)
 def test_a_small_als_cannot_allocate_an_unbounded_tree(als_diff, tmp_path):
+    """
+    Fixed: build_model now counts elements while parsing and refuses once the
+    count exceeds MAX_XML_ELEMENTS, well before a flat fan-out like this one
+    (100,000 siblings) could reach the 66 MB peak measured before the fix.
+    Refusing outright is the correct behaviour, same as the entity-bomb case
+    above; if a future change makes it parse to completion instead, the
+    amplification bound below still has to hold.
+    """
     body = (
         b'<Ableton Creator="x"><LiveSet><Tracks>'
         + b'<Note Value="0" />' * 100_000
@@ -249,12 +225,17 @@ def test_a_small_als_cannot_allocate_an_unbounded_tree(als_diff, tmp_path):
 
     gc.collect()
     tracemalloc.start()
+    refused = False
     try:
         als_diff.build_model(str(path))
+    except ValueError:
+        refused = True
     finally:
         peak = tracemalloc.get_traced_memory()[1]
         tracemalloc.stop()
 
+    if refused:
+        return  # refusing an oversized tree outright is the correct behaviour
     assert peak < file_size * 200, (
         "a %d byte file caused a %.1f MB peak (%.0fx amplification)"
         % (file_size, peak / 1e6, peak / file_size)
@@ -323,18 +304,6 @@ def test_corrupt_flp_streams_terminate_without_hanging(flp, tmp_path, name, data
             flp.parse(path)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "flp_parse.parse indexes `data[pos]` and unpacks fixed slices without "
-        "checking bounds, so a truncated or lying length field surfaces as a bare "
-        "IndexError('index out of range') or struct.error, with no mention of the "
-        "file or the offset. SECURITY.md's promise is that a malformed project "
-        "file cannot take down the host; an uncaught IndexError from a library "
-        "call does take down a naive caller. Fix: bounds-check before each read "
-        "and raise a typed error carrying the byte offset."
-    ),
-)
 @pytest.mark.parametrize(
     "data",
     [
@@ -343,6 +312,11 @@ def test_corrupt_flp_streams_terminate_without_hanging(flp, tmp_path, name, data
     ],
 )
 def test_truncated_flp_reports_where_it_broke(flp, tmp_path, data):
+    """
+    Fixed: flp_parse now bounds-checks before every read and raises
+    flp.FlpParseError (a ValueError, never a bare IndexError/struct.error)
+    naming the file and the byte offset it broke at.
+    """
     path = write(tmp_path, "trunc.flp", data)
     with pytest.raises(Exception) as exc:
         flp.parse(path)
@@ -350,35 +324,20 @@ def test_truncated_flp_reports_where_it_broke(flp, tmp_path, data):
     assert "trunc.flp" in str(exc.value) or "truncated" in str(exc.value).lower()
 
 
-def test_an_event_size_running_past_the_buffer_is_silently_truncated(flp_report):
+def test_an_event_size_running_past_the_buffer_is_refused(flp, flp_report):
     """
-    Characterisation of a wrong-but-quiet outcome, which is worse than a crash:
-    an event declaring a 1 MB payload in a 29-byte file is accepted, the missing
-    bytes are silently dropped, and the summary then reports
-    "variable-length payload: 1000000 B (3448275.9% of the 29 B file)".
-
-    Nothing errors. A survey number printed at 3.4 million percent is exactly the
-    kind of figure AGENTS.md forbids publishing, and here the tool produces it
-    without complaint.
+    Fixed: previously an event declaring a 1 MB payload in a 29-byte file was
+    accepted, the missing bytes were silently dropped, and the summary reported
+    "variable-length payload: 1000000 B (3448275.9% of the 29 B file)" — exactly
+    the kind of figure AGENTS.md forbids publishing. It is now refused with a
+    typed error instead of silently truncating.
     """
     data = FlpBuilder().raw_event(209, b"abc", 1_000_000).to_bytes()
     with bounded():
-        report = flp_report(data)
-    assert report["blob_bytes"] == 1_000_000
-    assert report["file_bytes"] == len(data)
-    assert report["blob_pct"] > 100.0
+        with pytest.raises(flp.FlpParseError):
+            flp_report(data)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "A declared payload length larger than the remaining file is corruption "
-        "and should be refused, not accepted. Today it is accepted, the payload "
-        "is silently short, and the reported 'opaque payload' total is whatever "
-        "the file claimed — which is how you get '3448275.9% of the file'. Fix: "
-        "if pos + size > end, raise."
-    ),
-)
 def test_a_payload_larger_than_the_file_is_refused(flp, tmp_path):
     data = FlpBuilder().raw_event(209, b"abc", 1_000_000).to_bytes()
     path = write(tmp_path, "oversize.flp", data)
@@ -387,33 +346,21 @@ def test_a_payload_larger_than_the_file_is_refused(flp, tmp_path):
         flp.parse(path)
 
 
-def test_a_giant_declared_payload_does_not_allocate(flp_report):
+def test_a_giant_declared_payload_is_refused_without_allocating(flp, flp_report):
     """
-    The one thing the current code does get right: the payload is taken with a
-    slice, so a 2^60 length costs nothing to *store*. Worth pinning, because the
-    obvious "fix" of pre-allocating a buffer from the declared length would turn
-    this into a one-line memory exhaustion.
+    Fixed: a 2**60 declared length used to be accepted (the payload was taken
+    with a slice, so it cost nothing to *store*, but the absurd declared size
+    was never checked against what was actually available). It is now refused
+    up front — refusing costs nothing to allocate either, so the memory bound
+    this test used to pin still holds.
     """
     data = FlpBuilder().raw_event(209, b"", (1 << 60)).to_bytes()
     with bounded(max_bytes=32 * 1024 * 1024):
-        report = flp_report(data)
-    assert report["events"] == 1
+        with pytest.raises(flp.FlpParseError):
+            flp_report(data)
 
 
 @pytest.mark.slow
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "DoS in flp_parse.parse's varint loop: it accumulates into a Python int "
-        "with `size |= (byte & 0x7F) << shift` and never limits the number of "
-        "continuation bytes. Each additional byte shifts an ever-larger integer, "
-        "so the work is quadratic in the length of the varint. Measured: 50 KB of "
-        "0xFF takes 0.24 s, 100 KB takes 0.91 s, 200 KB takes 3.6 s — 4x the "
-        "input for 15x the time. A ~1 MB crafted .flp occupies the parser for "
-        "minutes. That is SECURITY.md's 'parser hangs' item. Fix: refuse a varint "
-        "longer than 5 bytes (max meaningful length for a u32 payload size)."
-    ),
-)
 def test_a_long_varint_does_not_cost_quadratic_time(flp, tmp_path):
     def elapsed(n):
         data = FlpBuilder().raw_bytes(bytes([209]) + b"\xff" * n + b"\x00").to_bytes()
@@ -451,16 +398,6 @@ def test_varints_of_legitimate_length_are_fine(flp_report):
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "flp_parse.parse does `data = open(path, 'rb').read()` and never closes "
-        "the handle, so every call leaks a file descriptor and emits a "
-        "ResourceWarning. Harmless in a one-shot script, not harmless in the "
-        "library this becomes — `wit log` over a few hundred versions would run "
-        "out of descriptors. Fix: `with open(path, 'rb') as fh:`."
-    ),
-)
 def test_flp_parse_does_not_leak_the_input_file_handle(flp, tmp_path, capsys):
     path = write(tmp_path, "ok.flp", FlpBuilder().byte(0, 1).to_bytes())
     gc.collect()

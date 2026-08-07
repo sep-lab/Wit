@@ -181,27 +181,37 @@ def test_tempo_is_read_from_the_master_track(model_of):
     assert model_of(ls)["tempo"] == 128.0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG in als_semantic_diff.build_model: it looks for LiveSet/MasterTrack, "
-        "but Live 12.3 writes LiveSet/MainTrack. Verified against a real Live "
-        "12.3.5 set on the development machine: build_model returns tempo=None "
-        "for every one of the 30 autosaves, so a tempo change is invisible on "
-        "current Ableton — while the module docstring claims 'tested against "
-        "Live 12.x'. Fix: accept either tag (or search LiveSet/.//Tempo/Manual)."
-    ),
-)
 def test_tempo_is_read_from_a_live_12_3_main_track(model_of):
+    """
+    Fixed: build_model used to look only for LiveSet/MasterTrack; Live 12.3
+    writes LiveSet/MainTrack instead, so tempo came back None for every save
+    made in current Ableton. build_model now falls back to MainTrack when
+    MasterTrack is absent.
+    """
     ls = simple_set()
     ls.tempo = 128.0
     ls.tempo_host_tag = "MainTrack"
     assert model_of(ls)["tempo"] == 128.0
 
 
-def test_a_set_with_no_tempo_host_reports_none_rather_than_crashing(model_of):
-    ls = LiveSet(tracks=[Track(id="1", name="T")], tempo_host_tag="MainTrack")
-    assert model_of(ls)["tempo"] is None
+def test_a_set_with_no_tempo_host_reports_none_rather_than_crashing(als_diff, tmp_path):
+    """
+    Neither MasterTrack nor MainTrack is present at all — as opposed to present
+    but unrecognised — so tempo must come back None rather than crash, no
+    matter which tag build_model checks. (This test used to pass
+    ``tempo_host_tag="MainTrack"`` to simulate "no host", which only worked
+    because MainTrack was unrecognised; now that build_model accepts it, that
+    would just read the tempo. Strip the element outright instead.)
+    """
+    ls = LiveSet(tracks=[Track(id="1", name="T")])
+    xml = ls.to_xml_bytes()
+    start = xml.index(b"<MasterTrack>")
+    end = xml.index(b"</MasterTrack>") + len(b"</MasterTrack>")
+    stripped = xml[:start] + xml[end:]
+    path = tmp_path / "notempo.als"
+    with gzip.GzipFile(str(path), "wb", mtime=0) as fh:
+        fh.write(stripped)
+    assert als_diff.build_model(str(path))["tempo"] is None
 
 
 # --------------------------------------------------------------------------- #

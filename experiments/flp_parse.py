@@ -23,8 +23,11 @@ FORMAT (as verified against the local file, consistent with public docs)
         id  64-127 : 2 bytes
         id 128-191 : 4 bytes
         id 192-255 : varint length, then that many bytes
-    Text events are ASCII in older files and UTF-16LE in newer ones; this script
-    tries UTF-16LE first and falls back to latin-1.
+    Text events carry no encoding flag. A payload is read as UTF-16LE only when
+    its length is even *and* it ends with the two-byte UTF-16 NUL terminator
+    (0x00 0x00) that every UTF-16LE-encoded FL string carries; a NUL-terminated
+    latin-1 string ends in exactly one zero byte, so this almost never
+    coincides by accident. Anything else is read as latin-1.
 
 USAGE
     python3 flp_parse.py PROJECT.flp
@@ -35,6 +38,16 @@ WHAT THIS DOES NOT HANDLE
     - Playlist/pattern data is counted, not interpreted.
     - Not validated across many FL versions; the sample tested was FL 10 era.
       Do not assume ID meanings are stable across major versions.
+    - Robustness (this section added when the DoS/crash bugs below were fixed):
+      a truncated or lying length field raises FlpParseError naming the file and
+      the byte offset, rather than a bare IndexError/struct.error. A varint
+      longer than 5 bytes, or a declared payload that runs past the end of the
+      file, is refused rather than accepted. The input file handle is always
+      closed. None of this makes the parser safe against a hostile file in the
+      sense SECURITY.md means for the product core — it is still Python,
+      still single-threaded, and still has no fuzzing budget (see
+      docs/TESTING.md 9) — it only means the four failure modes measured
+      there no longer take the caller down with an unlabelled exception.
 """
 
 from __future__ import annotations
@@ -59,33 +72,104 @@ EVENT_NAMES = {
 }
 TEXT_EVENTS = set(range(192, 208))
 
+# A u32 payload length never needs more than 5 continuation bytes (35 usable
+# bits). Anything longer is corrupt or hostile input: the varint decoder used
+# to shift into an ever-larger Python int with no limit, which made decoding
+# a single crafted event quadratic in the length of its length field.
+MAX_VARINT_BYTES = 5
+
+
+class FlpParseError(ValueError):
+    """A .flp file is truncated, corrupt, or internally inconsistent.
+
+    Deliberately a ValueError subclass, not a bare IndexError/struct.error, so
+    a caller can catch one typed exception instead of guessing which low-level
+    error a given corruption happens to trigger.
+    """
+
+
+def _need(data: bytes, pos: int, n: int, path: str, what: str) -> bytes:
+    """Return ``data[pos:pos+n]``, or raise a located error if that runs past EOF."""
+    if n < 0 or pos < 0 or pos + n > len(data):
+        raise FlpParseError(
+            "%s: truncated while reading %s at offset %d (need %d byte(s), "
+            "%d available)" % (path, what, pos, n, max(len(data) - pos, 0))
+        )
+    return data[pos : pos + n]
+
+
+def decode_varint(data: bytes, pos: int, path: str) -> "tuple[int, int]":
+    """Decode FL's LEB128-style unsigned varint starting at ``pos``.
+
+    Returns ``(value, new_pos)``. Refuses anything longer than
+    ``MAX_VARINT_BYTES`` bytes rather than looping forever on a run of
+    continuation bytes.
+    """
+    value = 0
+    shift = 0
+    start = pos
+    for _ in range(MAX_VARINT_BYTES):
+        byte = _need(data, pos, 1, path, "a varint continuation byte")[0]
+        pos += 1
+        value |= (byte & 0x7F) << shift
+        shift += 7
+        if not byte & 0x80:
+            return value, pos
+    raise FlpParseError(
+        "%s: varint starting at offset %d exceeds %d bytes (corrupt length, "
+        "or a deliberately hostile file)" % (path, start, MAX_VARINT_BYTES)
+    )
+
 
 def decode_text(payload: bytes) -> str:
-    try:
-        s = payload.decode("utf-16-le")
-        # Heuristic: ASCII-era files decode to CJK-looking mojibake via UTF-16.
-        if sum(ch.isprintable() and ord(ch) < 128 for ch in s) < len(s) * 0.5:
-            raise UnicodeDecodeError("utf-16-le", payload, 0, 1, "looks like ascii")
-        return s.rstrip("\x00")
-    except (UnicodeDecodeError, ValueError):
-        return payload.decode("latin-1").rstrip("\x00")
+    """
+    Decode a NUL-terminated FL text payload: UTF-16LE in modern files, latin-1
+    in older ones. There is no encoding flag in the format, so this guesses —
+    but on the file's own terms rather than the string's shape.
+
+    UTF-16LE text always ends with a two-byte NUL terminator (0x00 0x00),
+    because the terminating NUL character is itself encoded as two bytes.
+    Latin-1 text always ends with a *single* zero byte. That is a reliable,
+    length-independent signal: a 3-character latin-1 name like "Hat" plus its
+    terminator happens to be 4 bytes (even), but its last two bytes are
+    ('t', 0x00), never (0x00, 0x00), so it is never mistaken for UTF-16 no
+    matter how short it is. Genuinely non-Latin UTF-16 text (Japanese,
+    Cyrillic, Chinese channel names) decodes cleanly and is accepted on the
+    same signal, regardless of how few of its characters are ASCII.
+    """
+    if not payload:
+        return ""
+    if len(payload) % 2 == 0 and payload[-2:] == b"\x00\x00":
+        try:
+            return payload.decode("utf-16-le").rstrip("\x00")
+        except UnicodeDecodeError:
+            pass
+    return payload.decode("latin-1").rstrip("\x00")
 
 
 def parse(path: str) -> None:
-    data = open(path, "rb").read()
+    with open(path, "rb") as fh:
+        data = fh.read()
+
     if data[:4] != b"FLhd":
         sys.exit(f"not an FLP: expected b'FLhd', got {data[:4]!r}")
 
-    hlen = struct.unpack("<I", data[4:8])[0]
-    fmt, nchan, ppq = struct.unpack("<hHH", data[8 : 8 + hlen])
+    hlen = struct.unpack("<I", _need(data, 4, 4, path, "the header length"))[0]
+    header = _need(data, 8, hlen, path, "the header body")
+    fmt, nchan, ppq = struct.unpack("<hHH", _need(header, 0, 6, path, "header fields"))
     print(f"FLhd  format={fmt}  channels={nchan}  ppq={ppq}")
 
     pos = 8 + hlen
     if data[pos : pos + 4] != b"FLdt":
         sys.exit(f"expected b'FLdt' at {pos}, got {data[pos:pos+4]!r}")
-    dlen = struct.unpack("<I", data[pos + 4 : pos + 8])[0]
+    dlen = struct.unpack("<I", _need(data, pos + 4, 4, path, "the data length"))[0]
     pos += 8
     end = pos + dlen
+    if end > len(data):
+        raise FlpParseError(
+            "%s: FLdt declares %d byte(s) of event stream at offset %d, but "
+            "only %d byte(s) remain in the file" % (path, dlen, pos, len(data) - pos)
+        )
     print(f"FLdt  {dlen} bytes of event stream\n")
 
     counts: collections.Counter = collections.Counter()
@@ -93,7 +177,7 @@ def parse(path: str) -> None:
     texts: list[tuple[int, str]] = []
 
     while pos < end:
-        ev = data[pos]
+        ev = _need(data, pos, 1, path, "an event id")[0]
         pos += 1
         if ev < 64:
             size = 1
@@ -102,16 +186,8 @@ def parse(path: str) -> None:
         elif ev < 192:
             size = 4
         else:
-            size = 0
-            shift = 0
-            while True:
-                byte = data[pos]
-                pos += 1
-                size |= (byte & 0x7F) << shift
-                shift += 7
-                if not byte & 0x80:
-                    break
-        payload = data[pos : pos + size]
+            size, pos = decode_varint(data, pos, path)
+        payload = _need(data, pos, size, path, "event 0x%02x's payload" % ev)
         pos += size
         counts[ev] += 1
         if ev >= 192:
