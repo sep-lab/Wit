@@ -1,17 +1,19 @@
 //! The `wit` command-line tool.
 //!
 //! M1 added `diff-als` (the M1 exit criterion: "`wit diff-als a.als b.als`
-//! prints the golden"). M2 adds `logic-probe` — the issue #20 CLI hook,
+//! prints the golden"). M2 added `logic-probe` — the issue #20 CLI hook,
 //! comparing two Logic/GarageBand saves at the Structure honesty tier
 //! (census + extracted names; see `wit-logic`'s module docs for why byte
-//! comparison is a diagnostic, never the verdict). `wit
-//! scan`/`log`/`diff`/`dupes`/`report` land with M3 (`wit-index`); see
-//! `docs/ROADMAP.md`.
+//! comparison is a diagnostic, never the verdict). M3 adds `scan` and
+//! `dupes` (`wit-index`) — the first commands that persist anything, via
+//! the one crate in the workspace allowed to write. `wit log`/`diff`/
+//! `report` land later; see `docs/ROADMAP.md`.
 
 use clap::{Parser, Subcommand};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Parser)]
 #[command(name = "wit", about = "Version control for music projects", version)]
@@ -36,6 +38,19 @@ enum Command {
     /// bundle directory (the current alternative's `ProjectData` is
     /// resolved automatically).
     LogicProbe { old: PathBuf, new: PathBuf },
+    /// Discover Logic/GarageBand/Ableton projects under `path` and
+    /// archive-before-recycle every version into Wit's local index.
+    Scan {
+        path: PathBuf,
+        /// Override the index location (default: the platform app-data
+        /// dir). Tests and anyone experimenting should always pass this —
+        /// it's the same rule `wit-index`'s own tests follow.
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+    /// Report byte-for-byte duplicate audio files under `path`. Read-only
+    /// — Wit never deletes anything; this is just a map.
+    Dupes { path: PathBuf },
 }
 
 fn main() -> ExitCode {
@@ -43,7 +58,20 @@ fn main() -> ExitCode {
     match cli.command {
         Command::DiffAls { old, new, limit } => diff_als(&old, &new, limit),
         Command::LogicProbe { old, new } => logic_probe(&old, &new),
+        Command::Scan { path, data_dir } => scan(&path, data_dir),
+        Command::Dupes { path } => dupes(&path),
     }
+}
+
+/// The default index location: `~/Library/Application Support/Wit` on
+/// macOS (the only platform the 0.0 pilot targets — ADR-0006). Falls back
+/// to a `wit-data` directory under the current directory if `$HOME` isn't
+/// set (a CI/test environment, not a real user's Mac), rather than
+/// panicking.
+fn default_data_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(|home| PathBuf::from(home).join("Library/Application Support/Wit"))
+        .unwrap_or_else(|| PathBuf::from("wit-data"))
 }
 
 fn diff_als(old: &std::path::Path, new: &std::path::Path, limit: usize) -> ExitCode {
@@ -192,5 +220,128 @@ fn print_name_diff(label: &str, a: &[String], b: &[String]) {
     }
     for removed in sa.difference(&sb) {
         println!("    {label} removed: '{removed}'");
+    }
+}
+
+// --------------------------------------------------------------------- //
+// M3: scan / dupes (wit-index)
+// --------------------------------------------------------------------- //
+
+fn scan(path: &std::path::Path, data_dir: Option<PathBuf>) -> ExitCode {
+    let data_dir = data_dir.unwrap_or_else(default_data_dir);
+    let store = match wit_index::Store::open(data_dir.join("objects")) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("wit: failed to open the store: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let registry = match wit_index::Registry::open(data_dir.join("wit.db")) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("wit: failed to open the index: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    let result = wit_index::scan(path, &store, &registry, now);
+    println!(
+        "  found {} Logic/GarageBand project(s), {} Ableton lineage(s) — {} new version(s) archived",
+        result.logic_projects_found, result.ableton_lineages_found, result.new_versions_ingested
+    );
+    if result.read_errors > 0 {
+        println!(
+            "  ({} file(s) could not be read and were skipped)",
+            result.read_errors
+        );
+    }
+
+    let projects = match registry.list_projects() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("wit: failed to list the index: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    // Names only, never the full bundle_path (which contains an absolute
+    // home-directory path) — the same "no path leaves this machine's
+    // report output" discipline `wit dupes` follows below.
+    for project in &projects {
+        println!(
+            "    {} ({}): {} version(s)",
+            project.name, project.kind, project.version_count
+        );
+    }
+    ExitCode::SUCCESS
+}
+
+fn dupes(path: &std::path::Path) -> ExitCode {
+    let report = wit_index::duplicate_report(path);
+    if report.groups.is_empty() {
+        println!(
+            "  no duplicate audio found ({} file(s) scanned)",
+            report.scanned_file_count
+        );
+        return ExitCode::SUCCESS;
+    }
+
+    let mut out = String::new();
+    out.push_str(&format!(
+        "  found {} of duplicate audio ({:.1}% of {} scanned)\n",
+        human_bytes(report.total_wasted_bytes()),
+        report.duplicate_percent(),
+        human_bytes(report.total_audio_bytes)
+    ));
+    let mut groups = report.groups.clone();
+    groups.sort_by_key(|g| std::cmp::Reverse(g.wasted_bytes()));
+    for group in &groups {
+        // Basenames only — never a full path, per the same privacy
+        // discipline the M3 issue asks of the (future) `report` command.
+        let names: Vec<String> = group
+            .paths
+            .iter()
+            .map(|p| {
+                p.file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            })
+            .collect();
+        out.push_str(&format!(
+            "    {} ({} copies, {} each): {}\n",
+            human_bytes(group.wasted_bytes()),
+            group.paths.len(),
+            human_bytes(group.size_bytes),
+            names.join(", ")
+        ));
+    }
+    out.push_str("  no delete button exists — this is just a map\n");
+
+    if let Err(msg) = wit_index::assert_no_home_paths(&out) {
+        // This must never happen — it's a bug in this function, not a
+        // recoverable runtime condition, so fail loudly rather than print
+        // a path that was supposed to be impossible to print.
+        eprintln!("wit: internal error — {msg}");
+        return ExitCode::FAILURE;
+    }
+    print!("{out}");
+    ExitCode::SUCCESS
+}
+
+fn human_bytes(bytes: u64) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
+    let mut size = bytes as f64;
+    let mut unit = 0;
+    while size >= 1024.0 && unit < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{size:.1} {}", UNITS[unit])
     }
 }
