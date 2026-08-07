@@ -68,6 +68,7 @@ skip into a failure — that is what a nightly job or a release gate should use.
 | `test_als_diff.py` | One isolated edit at a time, whole-output assertions |
 | `test_als_rename_coalescing.py` | The rename heuristic, including its false positives |
 | `test_als_golden.py` | Characterisation of the user-facing text and the CLI |
+| `test_track_locality.py` | Blacklist/whitelist agreement, and the positional-id false-flag bug both must avoid |
 | `test_flp_parse.py` | Event widths, varint boundaries, the text-encoding heuristic |
 | `test_robustness.py` | Malformed input: time-bounded, memory-bounded, no hangs |
 | `test_storage_bench.py` | The shell benchmark: read-only, clean failures, delta wins |
