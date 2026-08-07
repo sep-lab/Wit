@@ -20,6 +20,11 @@ Building the 0.0 pilot — no released artifact yet.
 - **M2** — Logic/GarageBand `ProjectData` container walker: `wit-logic`, covering both
   `.logicx` and `.band` (same container, same magic bytes), with record framing, a tag
   census, and whitelist name/tempo extraction — [PR #25](https://github.com/sep-lab/Wit/pull/25)
+- **M3** — Index, content-addressed store, CLI: `wit-index`, plus `wit scan` and
+  `wit dupes` on `wit-cli` — covers Logic, GarageBand, and Ableton discovery, archiving
+  every version into a local store keyed by content hash. Originally reviewed and merged
+  as [PR #26](https://github.com/sep-lab/Wit/pull/26), which was opened against the wrong
+  base branch and never reached `main`; corrected via [PR #29](https://github.com/sep-lab/Wit/pull/29)
 - **M4** — Audio engine: `wit-audio`, covering `symphonia`-based decode
   (wav/aiff/caf/alac/flac/mp4/mp3/aac) with a typed, never-panics `DecodeError`; `i8`
   min/max peak computation for waveform rendering; `realfft`-based FFT cross-correlation
@@ -33,6 +38,17 @@ Building the 0.0 pilot — no released artifact yet.
 - ADRs 0001–0006 covering the core design
 - Open-source project scaffolding: license, contributing guide, code of conduct, security
   policy, issue/PR templates, CI
+
+### Fixed
+- All 13 bugs documented as `xfail` in the Python prototype test suite (21 xfail markers
+  total), spanning robustness (billion-laughs expansion, unbounded tree allocation,
+  quadratic varint DoS in `flp_parse`, a leaked file descriptor, an oversized-payload
+  acceptance bug, bare `IndexError`/`struct.error` on truncated input) and correctness
+  (`decode_text` mojibake in both directions, `build_model` crashing on non-Live XML,
+  Live 12.3's `MainTrack` tempo being invisible to the differ, non-deterministic diff
+  ordering, two rename-coalescing false positives, and `cdc_dedup.pairwise()`
+  undercounting reuse — the last of which required re-measuring and correcting
+  `EXPERIMENTS.md` §6a) — [PR #28](https://github.com/sep-lab/Wit/pull/28), closes #10
 
 ### Findings that shaped the design
 - Byte-level versioning of rendered audio is not viable: a global gain change leaves
