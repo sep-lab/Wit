@@ -551,6 +551,72 @@ Processed (DERIVED: Freeze/Consolidate/Crop)  850 MB   51.8%
 
 ---
 
+## 11. M2.5 — the empty-verdict rate on a real Logic library
+
+**Tracking issue:** [#15](https://github.com/sep-lab/Wit/issues/15). On Ableton, 24% of
+saves are semantically empty (§1). On Logic, where `wit-logic`'s Structure honesty tier
+can't see knob/fader moves (§4's limit, restated for this format), the empty-verdict rate
+was unknown before this experiment.
+
+**Method.** `wit logic-report <library-root>` (new in this change; `crates/wit-index/src/report.rs`,
+`crates/wit-cli/src/main.rs`) discovers every Logic/GarageBand bundle under a library root
+(reusing `wit-index`'s M3 discovery, `discover_logic_projects`), and for every alternative's
+chain (`Project File Backups/00`–`09` oldest-first, then the current `ProjectData` —
+matching M2's `backup_chain()` order in `wit-logic/tests/real_fixtures.rs`) walks every
+consecutive pair with `wit_logic::walk` and reports, per pair: `semantic_equal`'s verdict,
+`wit_logic::change_count` (a new diagnostic — one per differing census tag or added/removed
+extracted name, or a tempo change; `0` exactly when the verdict is `NoStructuralChange`),
+and raw byte identity.
+
+**Result — measured, n = 1 project.**
+
+```
+$ wit logic-report "/path/to/YourLibrary"
+  scanned 1 project(s), 1 alternative(s), 9 consecutive save pair(s)
+  44.4% of save pairs show a structural change Wit can see (4 of 9)
+  distribution of change counts per save pair (0 = no visible structural change):
+    0 change(s): 5 pair(s)
+    1 change(s): 1 pair(s)
+    2 change(s): 1 pair(s)
+    14 change(s): 1 pair(s)
+    17 change(s): 1 pair(s)
+  5 pair(s) (55.6%) are byte-different but structurally identical
+```
+
+Run against `You make my crazy!` (§0's fixture table) — the same 10-save chain M2 used.
+5 of 9 pairs show no structural change (**55.6%**), and every one of those 5 is also
+byte-different from its neighbor (the M2 finding that raw byte comparison is useless on
+this format, reconfirmed: 100% of the no-visible-change pairs would look "changed" to a
+byte diff). Every pair with a nonzero `change_count` was correctly called
+`StructuralChange`, and every zero-count pair was correctly called `NoStructuralChange` —
+`change_count` and the verdict never disagreed, which is expected since both derive from
+the same census/extracted equality (`wit-logic/src/lib.rs`), but is a useful sanity check
+on the new counting logic itself.
+
+**Limits — this is a tool delivery, not the finding issue #15 asks for.** The issue's own
+exit criterion is a decision at **30 projects, 26 GB** — whether >50% of real saves show
+no visible structural change. **n = 1 project cannot answer that question either way**;
+55.6% on one project's one alternative is a data point, not a verdict on a library. This
+environment does not have the 30-project/26 GB library (`daw-vcs-adoption-evidence`
+memory) the issue was scoped against — only the one `.logicx` bundle in the fixture table
+above. The exit-criterion decision (M5 vs. the M2 stretch goal — mapping Logic's
+volume-fader field) is **not resolved by this entry** and still requires running the
+command below against the real library.
+
+**Reproduce (opt-in, real material, never committed):**
+
+```bash
+WIT_LOGIC_LIBRARY="/path/to/YourLibrary" cargo test -p wit-index --test real_fixtures -- --nocapture --ignored
+```
+
+or, without the test harness, directly:
+
+```bash
+cargo run -p wit-cli -- logic-report "/path/to/YourLibrary"
+```
+
+---
+
 ## Reproducing these
 
 ```bash
