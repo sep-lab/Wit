@@ -9,6 +9,7 @@ own sessions immediately. That constraint is deliberate; do not add dependencies
 |---|---|---|
 | `demo.py` | **Start here** — zero-input demo, no DAW required | — |
 | `als_semantic_diff.py` | Ableton `.als` → a diff a musician can read | — |
+| `track_locality.py` | How many tracks change per save — blacklist vs whitelist | — |
 | `cdc_dedup.py` | Content-defined chunking / dedup harness | — |
 | `null_diff.py` | Audible diff between two renders — **any DAW, no parser** | `ffmpeg` |
 | `flp_parse.py` | FL Studio `.flp` event-stream survey | — |
@@ -22,6 +23,7 @@ have a version chain**:
 
 ```bash
 python3 experiments/als_semantic_diff.py --chain '/path/to/YourProject/Backup/*.als'
+python3 experiments/track_locality.py --chain '/path/to/YourProject/Backup/*.als'
 ./experiments/storage_bench.sh '/path/to/YourProject/Backup'
 python3 experiments/flp_parse.py '/path/to/project.flp'
 ```

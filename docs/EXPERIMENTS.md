@@ -133,34 +133,65 @@ cannot distinguish "this track changed" from "one track deleted and another adde
 
 ## 3. How localized is an edit?
 
-**Method.** Hash each track's XML subtree independently, excluding view-state and
-bookkeeping tags, and compare hashes across saves.
+**Method.** `experiments/track_locality.py` hashes each track's XML subtree two ways per
+consecutive save pair, and reports both:
 
-**Result — measured.** Of 28 tracks, the number changing per save was:
+- **Blacklist** — hash the whole subtree, excluding a frozen, named, commented set of
+  churn tags (`TRACK_BLACKLIST_ELEMENTS` / `TRACK_BLACKLIST_ATTRS` in the script).
+- **Whitelist** — extract only the fields that define "the track" (name, volume, pan,
+  on/off, output routing, device chain, and each clip's sample/position/mute state) and
+  hash that instead, per the standing whitelist-over-blacklist convention in
+  [AGENTS.md](../AGENTS.md).
 
+**Sample.** One local chain of **10 consecutive autosaves (9 pairs)** of a 28-track
+Ableton Live set. **This is a new, independently-obtained measurement, not a
+reproduction of the number this section previously published.** The original corpus for
+that number is not available in the environment this measurement was taken in, so no
+claim is made about how the two relate — this is its own result, on its own material,
+with its own sample size stated up front, per the reproducibility rule in
+[AGENTS.md](../AGENTS.md).
+
+**Result — measured.**
+
+| Method | Median | Range | Per-pair changed-track counts (of 28) |
+|---|---|---|---|
+| Blacklist (frozen exclusion set) | **9** | 0–15 | 5, 9, 4, 0, 15, 1, 11, 11, 12 |
+| Whitelist (named fields) | **2** | 0–4 | 4, 3, 4, 0, 4, 0, 2, 0, 0 |
+
+Reproduce with:
+
+```bash
+python3 experiments/track_locality.py --chain 'path/to/YourProject/Backup/*.als'
 ```
-4, 11, 0, 3, 3, 1, 12, 1, 6      → median 3, range 0–12
-```
 
-Edits are **local**. Most saves touch a handful of tracks, which is what makes
-track-granular merge viable — two people working on different tracks are, structurally,
-editing different files.
+**The two methods disagree by more than 4x on this material too**, which is the exact
+failure mode this script exists to make visible instead of hiding behind an unpublished
+exclusion set. Concretely: `als_semantic_diff.py` independently reports "no musical
+change detected" for two of the nine pairs measured here. The whitelist agrees (0 of 28
+tracks changed on both). The blacklist reports **11** and **12** tracks changed on those
+same two pairs — pure residual churn (chiefly warp-marker re-analysis and
+`FileRef`/`AuPreset`/`AutomationTarget` id renumbering that the frozen exclusion set does
+not fully catch) that has nothing to do with a musical edit.
 
-> ⚠️ **This specific number is not currently reproducible, and should be treated as
-> provisional.** There is no script in `experiments/` implementing it, and the result is
-> highly sensitive to the exclusion set: an independent re-implementation using only the
-> exclusion list published in FORMATS.md gets **median 13, range 3–19** — which is the very
-> result this document elsewhere describes as the *discarded* first pass. Adding
-> `FileRef` moves it to median 11; adding view/selection extras moves it to median 3.
-> The qualitative finding (edits are local) is robust; the exact figure is not. Publishing
-> `experiments/track_locality.py` with a frozen exclusion set is tracked as an issue.
+Edits are still **local** either way. Even the less flattering, blacklist-inflated
+median — 9 of 28 tracks — means two-thirds of the project is untouched by a typical save,
+which is what makes track-granular merge viable: two people working on different tracks
+are, structurally, editing different files. The whitelist number (median 2) is the one
+this project's own convention says to trust, and it says the same thing more strongly.
 
-> **Methodological note, and a correction.** A first pass at this used a *blacklist*
-> (hash everything, exclude known churn tags) and reported 3–19 changed tracks including
-> saves that were musically empty. Adding more excluded tags changed the answer.
-> Blacklists leak. The numbers above use an explicit exclusion set, and the production
-> approach should be a *whitelist* — name the fields that matter. This is recorded in
-> [AGENTS.md](../AGENTS.md) as a standing convention.
+> **Methodological note, and a correction to this section's own history.** An earlier
+> version of this document published "median 3, range 0–12" from a blacklist pass that
+> was never committed as a script, and flagged that figure provisional because the result
+> is highly sensitive to exactly which tags get excluded — a plausible independent
+> reimplementation using a smaller exclusion set landed on median 13 instead, a 4x swing
+> on an unpublished parameter. `experiments/track_locality.py` (this section, above) is
+> that script, finally shipped: the exclusion set is frozen, named, and commented in code
+> instead of implied by prose, and both a blacklist and a whitelist number are reported
+> side by side precisely so nobody has to trust an invisible parameter again. **The old
+> "median 3" figure is retracted as unreproducible** — not because it was necessarily
+> wrong, but because nothing here could prove it either way, which is disqualifying for a
+> number this document publishes. Blacklists leak; name the fields that matter instead.
+> This is recorded in [AGENTS.md](../AGENTS.md) as a standing convention.
 
 > ⚠️ **Normalising for *display* is not the same as normalising for *storage*.** These
 > exclusions are safe for deciding "did the music change". They are **not** safe for
@@ -621,6 +652,7 @@ cargo run -p wit-cli -- logic-report "/path/to/YourLibrary"
 
 ```bash
 python3 experiments/als_semantic_diff.py --chain 'path/to/Backup/*.als'
+python3 experiments/track_locality.py --chain 'path/to/Backup/*.als'
 python3 experiments/cdc_dedup.py --store 'path/to/Backup/*.als' --gunzip
 python3 experiments/flp_parse.py path/to/project.flp
 bash    experiments/storage_bench.sh path/to/Backup
