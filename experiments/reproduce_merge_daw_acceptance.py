@@ -44,7 +44,7 @@ WHAT TO DO WITH THE OUTPUT
        comes from merging or from the gunzip/gzip repack alone.)
     4. Report back: exact Ableton Live version, and the answers above.
 
-WHAT THIS DOES NOT DO
+WHAT THIS DOES NOT HANDLE
     - It does not touch your original project files. Everything is read, decompressed,
       and written under --out-dir only.
     - It does not open Ableton Live -- no DAW automation exists here on purpose, per
