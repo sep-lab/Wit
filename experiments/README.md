@@ -13,6 +13,7 @@ own sessions immediately. That constraint is deliberate; do not add dependencies
 | `null_diff.py` | Audible diff between two renders — **any DAW, no parser** | `ffmpeg` |
 | `flp_parse.py` | FL Studio `.flp` event-stream survey | — |
 | `storage_bench.sh` | naive vs git vs delta chain | `zstd`, `git` |
+| `reproduce_merge_daw_acceptance.py` | Reproduce the EXPERIMENTS.md §5 merge on your own project, for issue #1 (does Live open it?) | `git` |
 
 ## Try it on your own work
 
