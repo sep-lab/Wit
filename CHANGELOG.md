@@ -40,6 +40,10 @@ Building the 0.0 pilot — no released artifact yet.
   policy, issue/PR templates, CI
 
 ### Fixed
+- `wit dupes` formatted byte counts with a 1024-based divisor while printing decimal unit
+  labels ("GB"), understating its own totals by 7.4% and making its output silently
+  incomparable to `docs/EXPERIMENTS.md`, which quotes decimal GB throughout. Now decimal,
+  with a test pinning the boundary
 - All 13 bugs documented as `xfail` in the Python prototype test suite (21 xfail markers
   total), spanning robustness (billion-laughs expansion, unbounded tree allocation,
   quadratic varint DoS in `flp_parse`, a leaked file descriptor, an oversized-payload
@@ -51,6 +55,14 @@ Building the 0.0 pilot — no released artifact yet.
   `EXPERIMENTS.md` §6a) — [PR #28](https://github.com/sep-lab/Wit/pull/28), closes #10
 
 ### Findings that shaped the design
+- **M2.5 reality gate — the Logic empty-verdict rate, measured at scale and passed.**
+  Across 32 real Logic projects (28 GB, 100 consecutive save pairs), **33.0%** of save
+  pairs show no structural change Wit can see — against issue #15's >50% threshold for
+  stopping M5 in favour of mapping Logic's volume-fader field first. **M5 proceeds**
+  ([#18](https://github.com/sep-lab/Wit/issues/18) unblocked). 28.0% of pairs are
+  byte-different but structurally identical, reconfirming at library scale M2's finding
+  that byte comparison is useless on this format — see
+  [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) §11, closes #15
 - Byte-level versioning of rendered audio is not viable: a global gain change leaves
   **0.00%** of bytes reusable, and costs git a full extra copy
 - Delta chains beat content-defined chunking **29×** on project-file history

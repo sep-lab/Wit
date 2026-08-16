@@ -339,12 +339,21 @@ fn dupes(path: &std::path::Path) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Format a byte count in **decimal** units — 1 GB = 1,000,000,000 bytes.
+///
+/// This is deliberately not the 1024-based convention. Every published
+/// figure in `docs/EXPERIMENTS.md` is decimal GB (§9 says so explicitly),
+/// and `wit dupes` output is meant to be directly comparable to it — a
+/// user pasting this tool's number into a Measurement issue (the ask in
+/// [#4]) must be quoting the same unit the docs quote. Dividing by 1024
+/// while printing "GB" understated the library total by 7.4% and made the
+/// two numbers silently incomparable.
 fn human_bytes(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
     let mut size = bytes as f64;
     let mut unit = 0;
-    while size >= 1024.0 && unit < UNITS.len() - 1 {
-        size /= 1024.0;
+    while size >= 1000.0 && unit < UNITS.len() - 1 {
+        size /= 1000.0;
         unit += 1;
     }
     if unit == 0 {
@@ -414,4 +423,24 @@ fn logic_report(path: &std::path::Path) -> ExitCode {
     }
     print!("{out}");
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::human_bytes;
+
+    #[test]
+    fn byte_counts_are_formatted_in_decimal_units_not_binary() {
+        // The boundary that matters: 1000 B is 1.0 KB, and 1024 B is also
+        // 1.0 KB rather than the binary convention's "1.0 KiB".
+        assert_eq!(human_bytes(999), "999 B");
+        assert_eq!(human_bytes(1_000), "1.0 KB");
+        assert_eq!(human_bytes(1_024), "1.0 KB");
+        // The unit the published numbers are actually quoted in. A 1024-based
+        // divisor would render this as "20.7 GB" — a 7.4% understatement, and
+        // the exact discrepancy that made `wit dupes` output incomparable to
+        // EXPERIMENTS.md §9.
+        assert_eq!(human_bytes(22_200_000_000), "22.2 GB");
+        assert_eq!(human_bytes(0), "0 B");
+    }
 }
