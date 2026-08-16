@@ -8,8 +8,11 @@
 //! `dupes` (`wit-index`) — the first commands that persist anything, via
 //! the one crate in the workspace allowed to write. M2.5 adds
 //! `logic-report` — the issue #15 reality-gate tool, running `logic-probe`'s
-//! comparison across an entire library instead of one pair. `wit log`/
-//! `diff`/`report` land later; see `docs/ROADMAP.md`.
+//! comparison across an entire library instead of one pair. M5 adds
+//! `demo-library` (`wit-demo`), which writes the synthetic library the app
+//! is developed and demoed against, so neither needs a real Logic library
+//! on the machine. `wit log`/`diff`/`report` land later; see
+//! `docs/ROADMAP.md`.
 
 use clap::{Parser, Subcommand};
 use std::collections::BTreeSet;
@@ -58,6 +61,11 @@ enum Command {
     /// comparison on every consecutive pair, and print the empty-verdict
     /// rate across the whole library. Read-only.
     LogicReport { path: PathBuf },
+    /// Write a synthetic `~/Music`-shaped library to `dest` — two Logic
+    /// projects, a GarageBand project, and an Ableton lineage — so the app
+    /// is demoable on a machine with no real Logic library. Refuses to
+    /// write into a directory that already has anything in it.
+    DemoLibrary { dest: PathBuf },
 }
 
 fn main() -> ExitCode {
@@ -68,7 +76,28 @@ fn main() -> ExitCode {
         Command::Scan { path, data_dir } => scan(&path, data_dir),
         Command::Dupes { path } => dupes(&path),
         Command::LogicReport { path } => logic_report(&path),
+        Command::DemoLibrary { dest } => demo_library(&dest),
     }
+}
+
+/// M5 (issue #18): build the synthetic library `just demo-library` wraps.
+fn demo_library(dest: &std::path::Path) -> ExitCode {
+    let lib = match wit_demo::build_demo_library(dest) {
+        Ok(lib) => lib,
+        Err(e) => {
+            eprintln!("wit: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    println!(
+        "  wrote {} Logic project(s), {} GarageBand project(s), {} Ableton lineage(s) — {} version(s) total",
+        lib.logic_projects, lib.garageband_projects, lib.ableton_lineages, lib.total_versions
+    );
+    println!(
+        "  these are synthetic fixtures for Wit's own readers — Logic and Live cannot open them"
+    );
+    println!("  point the app at: {}", lib.root.display());
+    ExitCode::SUCCESS
 }
 
 /// The default index location: `~/Library/Application Support/Wit` on

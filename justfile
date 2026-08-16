@@ -35,18 +35,14 @@ licenses:
 
 # --- What lands starting M5 (the Tauri app) — stubs until then ---
 
-# Build a synthetic ~/Music-shaped tree (two .logicx packages with N backups, one .als
-# lineage) so first-run, the timeline, and the watcher are demoable on any machine, not
-# just a machine with real Logic projects on it. See PLAN.md M5.
-demo-library:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ ! -d crates/wit-cli ]; then
-        echo "error: crates/wit-cli doesn't exist yet — demo-library lands with M3/M5." >&2
-        echo "See docs/ROADMAP.md 'Now: the 0.0 pilot' for what's built so far." >&2
-        exit 1
-    fi
-    cargo run -p wit-cli -- demo-library "$@"
+# Build a synthetic ~/Music-shaped tree (two .logicx packages with backups, a .band, and
+# one .als lineage) so first-run, the timeline, and the watcher are demoable on any
+# machine, not just a machine with real Logic projects on it. See issue #18.
+#
+# Refuses to write into a directory that already has anything in it, so pointing this at
+# a real library by mistake cannot destroy anything.
+demo-library dest="target/demo-library":
+    cargo run -p wit-cli -- demo-library "{{dest}}"
 
 # Build an unsigned, ad-hoc-signed .app + .zip for pilot distribution (no Apple Developer
 # ID). Apple Silicon requires at least an ad-hoc signature to launch at all — this recipe
