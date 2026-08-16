@@ -32,6 +32,16 @@ Building the 0.0 pilot — no released artifact yet.
   low-confidence shift); and the null-diff verdict ladder ported verbatim from
   `experiments/null_diff.py` (−80/−40/−12 dB thresholds, relative-not-absolute
   reasoning) — [PR #27](https://github.com/sep-lab/Wit/pull/27)
+- **M5 (first slice)** — `wit-demo` and `wit demo-library`: a deterministic generator that
+  writes a synthetic `~/Music`-shaped tree (two Logic bundles, one with two alternatives;
+  a GarageBand bundle with no backups, matching the real shape; and a five-save Ableton
+  lineage in Live's `Backup/` layout — 21 versions total). The files carry real
+  `ProjectData` and `.als` framing with only the fields Wit extracts, so `wit scan`,
+  `logic-report` and `diff-als` all read them, but Logic and Live cannot open them and the
+  command says so. The Logic chain is shaped to the measured 33% empty-verdict rate rather
+  than to look impressive. Refuses any destination that is not empty, so it cannot
+  overwrite a real library. This also fixes `just demo-library`, which called a
+  `demo-library` subcommand that had never existed — [#18](https://github.com/sep-lab/Wit/issues/18)
 - Research findings across Ableton `.als`, Logic `ProjectData`, GarageBand `.band` and
   FL Studio `.flp`, measured on real projects ([docs/EXPERIMENTS.md](docs/EXPERIMENTS.md))
 - Working prototypes: Ableton semantic differ, CDC dedup harness, FLP parser, storage bench

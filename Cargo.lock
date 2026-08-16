@@ -957,6 +957,20 @@ dependencies = [
  "clap",
  "flate2",
  "wit-als",
+ "wit-demo",
+ "wit-diff",
+ "wit-index",
+ "wit-logic",
+ "wit-model",
+]
+
+[[package]]
+name = "wit-demo"
+version = "0.0.0"
+dependencies = [
+ "flate2",
+ "tempfile",
+ "wit-als",
  "wit-diff",
  "wit-index",
  "wit-logic",

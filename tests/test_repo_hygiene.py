@@ -31,12 +31,25 @@ FORBIDDEN_SUFFIXES = re.compile(
 )
 
 
+# Build output, not repository content. `/target/` is root-anchored in
+# .gitignore, so nothing under it can ever be committed — and the CI mirror of
+# this check (.github/workflows/scripts/check_no_binaries.sh) reads `git
+# ls-files`, so it never sees these either. Without this exclusion the local
+# test diverges from CI the moment anything writes there: `just demo-library`
+# generates a synthetic library with `.als` files under `target/`, which is
+# exactly what it is supposed to do.
+IGNORED_TOP_LEVEL_DIRS = {".git", "target"}
+IGNORED_ANY_LEVEL_DIRS = {"__pycache__", ".pytest_cache", ".ruff_cache"}
+
+
 def repo_files(repo_root: Path):
     for path in repo_root.rglob("*"):
         if not path.is_file():
             continue
         parts = path.relative_to(repo_root).parts
-        if ".git" in parts or "__pycache__" in parts or ".pytest_cache" in parts:
+        if parts[0] in IGNORED_TOP_LEVEL_DIRS:
+            continue
+        if IGNORED_ANY_LEVEL_DIRS.intersection(parts):
             continue
         yield path
 

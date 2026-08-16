@@ -19,6 +19,7 @@ wit-als = { path = "../wit-als" }
 wit-diff = { path = "../wit-diff" }
 wit-logic = { path = "../wit-logic" }
 wit-index = { path = "../wit-index" }
+wit-demo = { path = "../wit-demo" }
 clap = { version = "4.5", features = ["derive"] }
 
 [dev-dependencies]
