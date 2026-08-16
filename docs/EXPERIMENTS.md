@@ -11,7 +11,7 @@ fixtures:
 | `Artefakt - Undertow` (Ableton) | A commercial-grade Live 12 set, 28 tracks, 688 audio clips, 5,112 warp markers. **30 sequential autosaves** of the same project spanning Feb–May 2026. |
 | `You make my crazy!` (Logic) | A real Logic 12 project, 459 MB, 33 audio files. **10 sequential saves** (`Project File Backups/00..08` + current). |
 | `Aston Martin Music Remake` (FL Studio) | A real FL 10-era `.flp`, 136 KB, 18 channels. |
-| A 30-project Logic library | 26 GB across 30 real projects — used for the duplication analysis. |
+| A real Logic library | One person's working library, used for the duplication analysis (§9) and the M2.5 reality gate (§11). It grows: **30 projects / 26 GB** when §9 walked it, **32 projects / 28 GB** at §11's 2026-08-16 run. Each section states the snapshot it measured. |
 
 Labels used throughout: **measured** (we ran it), **cited** (someone else's result, with
 a source), **inferred** (reasoning, not measurement).
@@ -538,6 +538,28 @@ exist today**.
 > it would work today. That is an argument for shipping that part first, not evidence that
 > version control produced it.
 
+**Independent cross-check — measured, 2026-08-16.** The figures above come from the Python
+walk on the 30-project / 26 GB snapshot. `wit dupes` (the Rust reimplementation shipped in
+M3, `wit-index::duplicate_report`) was run against the same library after it had grown to 32
+projects:
+
+```
+$ wit dupes "/path/to/YourLibrary"
+  found 5.5 GB of duplicate audio (23.2% of 23.9 GB scanned)
+```
+
+**5.5 GB of 23.9 GB (23.2%)**, against Python's 5.38 GB of 21.95 GB (24.5%) — the two
+implementations agree, on a library that gained ~2 GB of audio in between, with the duplicate
+share drifting down about a point. This closes M3's flagged follow-up (the ROADMAP noted the
+`wit dupes` verification had only ever run against a deliberately-planted duplicate, never the
+full library). The top duplicate groups are the same `Save As` triples §9 named — three copies
+each of `Vintage Upright Piano_*_consolidated.caf` at ~300 MB apiece.
+
+Both numbers are decimal GB. `wit dupes` divided by 1024 while printing "GB" until this
+change, which understated its own totals by 7.4% and made its output silently incomparable to
+this section; it now formats in decimal units, with a test pinning the boundary
+(`crates/wit-cli/src/main.rs`).
+
 **Limits.** Exact-duplicate detection only; sub-file chunk dedup would find more
 ([issue #6](https://github.com/sep-lab/Wit/issues/6)). The FLAC ratio is extrapolated from
 a 10-file random sample, so treat 1.8× as approximate. Figures are decimal GB throughout;
@@ -599,40 +621,90 @@ consecutive pair with `wit_logic::walk` and reports, per pair: `semantic_equal`'
 extracted name, or a tempo change; `0` exactly when the verdict is `NoStructuralChange`),
 and raw byte identity.
 
-**Result — measured, n = 1 project.**
+**Result — measured, n = 32 projects, 2026-08-16.**
 
 ```
 $ wit logic-report "/path/to/YourLibrary"
-  scanned 1 project(s), 1 alternative(s), 9 consecutive save pair(s)
-  44.4% of save pairs show a structural change Wit can see (4 of 9)
+  scanned 32 project(s), 32 alternative(s), 100 consecutive save pair(s)
+  67.0% of save pairs show a structural change Wit can see (67 of 100)
   distribution of change counts per save pair (0 = no visible structural change):
-    0 change(s): 5 pair(s)
-    1 change(s): 1 pair(s)
-    2 change(s): 1 pair(s)
-    14 change(s): 1 pair(s)
-    17 change(s): 1 pair(s)
-  5 pair(s) (55.6%) are byte-different but structurally identical
+    0 change(s): 33 pair(s)
+    1 change(s): 12 pair(s)
+    2 change(s): 4 pair(s)
+    3 change(s): 6 pair(s)
+    4 change(s): 1 pair(s)
+    5 change(s): 1 pair(s)
+    6 change(s): 3 pair(s)
+    7 change(s): 4 pair(s)
+    9 change(s): 1 pair(s)
+   11 change(s): 3 pair(s)
+   13 change(s): 2 pair(s)
+   14 change(s): 2 pair(s)
+   15 change(s): 2 pair(s)
+   16 change(s): 1 pair(s)
+   17 change(s): 1 pair(s)
+   18 change(s): 1 pair(s)
+   19 change(s): 1 pair(s)
+   25 change(s): 2 pair(s)
+   26 change(s): 1 pair(s)
+   29 change(s): 1 pair(s)
+   30 change(s): 1 pair(s)
+   33 change(s): 1 pair(s)
+   36 change(s): 1 pair(s)
+   37 change(s): 1 pair(s)
+   44 change(s): 1 pair(s)
+   47 change(s): 1 pair(s)
+   56 change(s): 1 pair(s)
+   63 change(s): 1 pair(s)
+   65 change(s): 1 pair(s)
+   67 change(s): 1 pair(s)
+   68 change(s): 1 pair(s)
+   71 change(s): 1 pair(s)
+   76 change(s): 1 pair(s)
+   93 change(s): 1 pair(s)
+  116 change(s): 2 pair(s)
+  145 change(s): 1 pair(s)
+  235 change(s): 1 pair(s)
+  28 pair(s) (28.0%) are byte-different but structurally identical
 ```
 
-Run against `You make my crazy!` (§0's fixture table) — the same 10-save chain M2 used.
-5 of 9 pairs show no structural change (**55.6%**), and every one of those 5 is also
-byte-different from its neighbor (the M2 finding that raw byte comparison is useless on
-this format, reconfirmed: 100% of the no-visible-change pairs would look "changed" to a
-byte diff). Every pair with a nonzero `change_count` was correctly called
-`StructuralChange`, and every zero-count pair was correctly called `NoStructuralChange` —
-`change_count` and the verdict never disagreed, which is expected since both derive from
-the same census/extracted equality (`wit-logic/src/lib.rs`), but is a useful sanity check
-on the new counting logic itself.
+Run against the full library in §0's fixture table (32 projects, 28 GB — it has grown by
+two projects since the §9 duplication analysis walked it). Every `ProjectData` in the
+library walked cleanly: the report printed no read-error line, so all 100 pairs are real
+comparisons rather than partial ones.
 
-**Limits — this is a tool delivery, not the finding issue #15 asks for.** The issue's own
-exit criterion is a decision at **30 projects, 26 GB** — whether >50% of real saves show
-no visible structural change. **n = 1 project cannot answer that question either way**;
-55.6% on one project's one alternative is a data point, not a verdict on a library. This
-environment does not have the 30-project/26 GB library (`daw-vcs-adoption-evidence`
-memory) the issue was scoped against — only the one `.logicx` bundle in the fixture table
-above. The exit-criterion decision (M5 vs. the M2 stretch goal — mapping Logic's
-volume-fader field) is **not resolved by this entry** and still requires running the
-command below against the real library.
+**The three statistics issue #15 asked for:**
+
+- **33 of 100 pairs (33.0%) show no structural change Wit can see.** The complement — 67.0%
+  — do.
+- **The distribution is long-tailed, not bimodal.** The mode above zero is a single change
+  (12 pairs), 26 pairs sit in the 1–7 band, and a thin tail runs out to 235. So the common
+  case is not "nothing" and not "everything"; it is a handful of visible changes per save.
+- **28 pairs (28.0%) are byte-different but structurally identical** — 28 of the 33
+  empty-verdict pairs. The M2 finding holds at library scale: a byte diff would report a
+  change on 28% of all saves where there is nothing structural to show. The remaining 5
+  empty pairs were byte-identical too, so *every* pair the byte comparison called changed
+  and the walker called empty is accounted for.
+
+**The decision this triggers.** Issue #15's exit criterion was: if **>50%** of real saves
+show no visible structural change, do not start M5 — spend that time on the M2 stretch
+goal (mapping Logic's volume-fader field) instead, because no UI copy survives a dominant
+"nothing changed" first impression. **Measured 33.0%, so the gate passes and M5 proceeds**
+([#18](https://github.com/sep-lab/Wit/issues/18) is no longer blocked).
+
+For calibration against the other format: Ableton's semantically-empty rate is 24% (§1).
+Logic's 33% is higher, as expected from the Structure tier's narrower vision, but it is not
+the majority outcome the gate was written to catch.
+
+**Limits.** One person's library, one machine — the same acknowledged breadth weakness every
+number in this document carries, and exactly what [issue #4](https://github.com/sep-lab/Wit/issues/4)
+exists to fix. It is also a library that has never been used with a version-control tool, so
+its save cadence reflects Logic's own backup behaviour rather than deliberate committing. The
+33% is a rate over *save pairs*, not over sessions: a project with 20 backups contributes 19
+pairs and weighs more than a project with 2. And "no structural change Wit can see" remains a
+statement about the Structure honesty tier, not about the music — a save that moved only a
+fader is in that 33% and is a real musical change. That gap is what the stretch goal closes,
+and it is still worth doing; the gate result means it does not have to come *before* M5.
 
 **Reproduce (opt-in, real material, never committed):**
 

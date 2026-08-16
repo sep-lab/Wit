@@ -168,6 +168,17 @@ which is an argument for shipping it early, not evidence that version control is
 delivered it. (An earlier figure of 8.1 GB / 3.2× was wrong: it applied FLAC to 7.4 GB of
 `.caf` that is already ALAC-compressed.)
 
+You can reproduce the duplicate half of that on your own library in about half a minute —
+it is read-only, prints basenames only, and there is no delete button:
+
+```
+cargo run --release -p wit-cli -- dupes /path/to/YourLibrary
+```
+
+On the library above, since grown to 32 projects, that reports **5.5 GB of 23.9 GB (23.2%)**
+— an independent Rust reimplementation agreeing with the Python analysis
+([EXPERIMENTS.md §9](docs/EXPERIMENTS.md)).
+
 ## How it works
 
 A music project is already a program: immutable source recordings plus a tree of
