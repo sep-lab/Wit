@@ -13,7 +13,7 @@ Claims are labelled **[verified]** (we parsed it ourselves on real files),
 | DAW | Container | Encoding | Semantic diff | v1 |
 |---|---|---|---|---|
 | Ableton Live | single `.als` | gzip → XML | **feasible today** | 🟢 |
-| Logic Pro | `.logicx` package | chunked binary | object inventory only, so far | 🟡 |
+| Logic Pro | `.logicx` package | chunked binary | regions and their positions; no parameters | 🟡 |
 | GarageBand | `.band` package | **same as Logic** | same as Logic | 🟡 |
 | FL Studio | single `.flp` | typed event stream | feasible ≤ v24 | 🟡 |
 | Studio One | `.song` | ZIP + XML | likely straightforward | 🟡 |
@@ -163,12 +163,91 @@ Region names are readable directly from `AuRg` payloads. `AuFl` payloads reveale
 semantic event: paths changed from absolute to package-relative between v00 and v09,
 i.e. the project was relocated and relinked.
 
-**What is demonstrated is an *object-inventory* diff, not a full semantic diff.** From
-the container structure alone you can say *"6 regions added, 4 tracks added, 189 plugin
-instances added"* and extract region names and audio paths. That is genuinely useful and
-it is real. What is **not** demonstrated — and is gated on per-tag payload schemas — is
-parameter-level diff: what a region's position actually became, what a fader moved to.
-Do not describe Logic support as "semantic diff" until that lands.
+⚠️ **The tag names above are the logical ones. On disk every FourCC is reversed** —
+`AuRg` is stored as `gRuA`, `Trak` as `karT`, `EvSq` as `qSvE`, `MSeq` as `qeSM`,
+`AuFl` as `lFuA`, `Song` as `gnoS`. Code matches the reversed form; prose in this file
+uses the logical one. Both conventions are in use, so state which you mean.
+
+### Region payloads — [verified]
+
+The container census says *"79 regions became 96"*. These two payloads say *which*
+region, and where it went. All offsets are **record-relative** (from the start of the
+36-byte record header); payload-relative = record − `0x24`. Fields are **2-byte
+aligned**, not 4 — Logic descends from Emagic's m68k-era Notator, and it shows.
+
+**`AuRg`/`gRuA` — the region object.**
+
+| Offset | Type | Meaning |
+|---|---|---|
+| `+0x08` | u32 | `familyIndex << 18`. Low 18 bits are zero on every record measured. |
+| `+0x3A` | u32 | Region length, in frames **of the source file's sample rate** |
+| `+0x6E` | u16 | Name length |
+| `+0x70` | ASCII | Name, padded to an even length |
+| name end `+0x56` | 16 B | Region UUID (RFC 4122 v1 layout) |
+
+The name is variable-length **and the record is sized to fit it**:
+`payload_size == 209 + nlen + (nlen & 1)`, exact on all 79 records of one save (40 even
+names → `+209`, 39 odd → `+210`). Everything behind the name shifts with it, so the
+suffix — a constant 133 bytes — must be addressed from the padded name end, never from a
+fixed offset. The length field is a *region* length, not a file length: a trimmed region
+reads shorter than its source (`Reverse Hat Beat 01.1` = 89,128 frames against the
+source's 235,200). It was confirmed against `afinfo` on five independent files, e.g.
+`Deep Down Shaker` at 173,509 frames = 3.934444 s × 44,100.
+
+**The UUID is the important field.** It is unique per region and *stable across saves*:
+all 79 region UUIDs in the oldest save of one 10-save chain are still present in the
+newest, which adds exactly 17 more. That is Logic's equivalent of the Ableton `Id` this
+document relies on elsewhere, and it is what makes a cross-save region diff possible.
+Its node field is random per UUID (96 distinct over 96 regions, multicast and
+locally-administered bits both mixed), so it is **not** a hardware MAC address and
+carries no machine identity.
+
+**`EvSq`/`qSvE` — where position actually lives.**
+
+Region position is **not** in `AuRg`. Two sibling copies of one region differ by only
+four bytes outside their name and UUID. Position lives in the arrangement:
+
+> Every `qSvE` payload is a stream of **16-byte typed events** — 13,606 of 13,606
+> payloads across a 32-project library are an exact multiple of 16, with byte `+7` of
+> each unit a type code and exactly one terminator event
+> (`f1 00 00 00 ff ff ff 3f` + 8 zero bytes) per record.
+
+An audio placement is a group headed by `24 00 00 00` on that grid, at *variable*
+spacing. Within the group:
+
+| Offset | Type | Meaning |
+|---|---|---|
+| `+0x04` | u32 | Position = `34560 + tick@960` (regions use origin 34560, tempo/markers 38400) |
+| `+0x10` | u32 | Event id |
+| `+0x14` | u8 | **Track number, 1-based** |
+| `+0x2c` | u32 | Region link; `link / 4` == `familyIndex` |
+
+Measured with `experiments/logic_region_map.py --scan` over 32 real Logic projects,
+132 saves: 132/132 saves walked to clean EOF; 10,020/10,020 region records decoded both a
+name and a distinct UUID; 5,282/5,282 placements resolved to a region family; and
+132/132 saves had every decoded track number within that save's `MetaData.plist`
+`NumberOfTracks`. 4,995 of 5,282 placements land on the 960-tick grid — the rest are
+legitimate, a region dragged with snap off sits at tick resolution.
+
+The four-byte marker does collide with data inside other event types, so 265 hits were
+rejected: 264 carrying track 0 (the byte is 1-based) and one at bar 821,376 on a
+five-track project. Rejections are counted, never silently dropped.
+
+**What is still open — [inferred].** A placement links to a region *family* (one source
+file), not to an individual region record. `Angelic Vocal FX 03` and its `.1`/`.2`/`.3`
+copies share one link value. On the measured project 23 of 35 families hold exactly as
+many region records as placements and pair 1:1; the other 12 hold more — 79 region
+objects for 56 placements, so 23 region objects exist that are not on the timeline. Which
+copy a given placement refers to is **not** resolvable from the fields above, and the
+tooling reports those as "one of N copies" rather than guessing.
+
+**What is demonstrated is now a region-level diff, and still not a full semantic diff.**
+Region add/remove/rename/resize and placement moves are readable, and
+`experiments/logic_region_map.py` prints them. What is **not** demonstrated is
+parameter-level diff: what a fader moved to, what a plugin knob became. Those payloads
+are unmapped. Do not describe Logic support as "semantic diff" until that lands — and
+note that `wit-logic`, the shipping crate, does not yet read any of the fields above;
+the map exists in `experiments/` only.
 
 ### Start from LogicProFormatWriter, not from scratch — [cited]
 
@@ -378,7 +457,10 @@ reassign element IDs rather than synthesising Live's schema from nothing.
 ## Open format questions
 
 1. Are Ableton IDs stable across **Live versions**, and across duplicate/copy-paste?
-2. Full `ProjectData` payload schemas per chunk tag (only the container is mapped).
+2. Full `ProjectData` payload schemas per remaining chunk tag. The container, the
+   region object (`AuRg`) and the placement events in `EvSq` are mapped; `Trak`,
+   `AuCU`, and the other six `EvSq` event types are not. Within the mapped set, which
+   *copy* of a multi-region family a placement refers to is still unresolved.
 3. The FL Studio v25 scalar keystream.
 4. Does a Wit-written `.als` open cleanly in Live? **Untested — release gate.**
 5. Studio One and modern Cubase need first-hand verification; ours is second-hand.
