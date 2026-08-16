@@ -236,15 +236,72 @@ fn logic_probe(old: &std::path::Path, new: &std::path::Path) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// What kind of object a census tag's records cluster around, for display
+/// only — plus whether the raw record count is known to line up 1:1 with a
+/// real object count. Only `lFuA`/`AuFl` (audio files) has that evidence:
+/// `docs/FORMATS.md` measured it matching `MetaData.plist`'s real count
+/// exactly (35 -> 37). Every other tag here stays disclaimed: `wit-logic`'s
+/// census module doc measured an ~8.4x record-to-track multiplier on a real
+/// project (260 `karT` records against 31 actual tracks), so a tag graduates
+/// to an actual object count only after issue #3's per-tag payload work, not
+/// here. Deliberately excludes `gnoS` (the root/song record) — `wit-logic`'s
+/// frame doc guarantees exactly one per valid file, so it can never differ
+/// between two successfully-walked files and the diff branch below would
+/// never fire for it.
+struct TagInfo {
+    noun: &'static str,
+    verified_count: bool,
+}
+
+fn tag_info(tag: &str) -> Option<TagInfo> {
+    match tag {
+        "karT" => Some(TagInfo {
+            noun: "tracks",
+            verified_count: false,
+        }),
+        "gRuA" => Some(TagInfo {
+            noun: "regions",
+            verified_count: false,
+        }),
+        "lFuA" => Some(TagInfo {
+            noun: "audio files",
+            verified_count: true,
+        }),
+        "UCuA" => Some(TagInfo {
+            noun: "plugins",
+            verified_count: false,
+        }),
+        "qeSM" => Some(TagInfo {
+            noun: "MIDI sequences",
+            verified_count: false,
+        }),
+        "qSvE" => Some(TagInfo {
+            noun: "event sequences",
+            verified_count: false,
+        }),
+        _ => None,
+    }
+}
+
 fn print_census_diff(a: &wit_logic::Census, b: &wit_logic::Census) {
     let tags: BTreeSet<&String> = a.keys().chain(b.keys()).collect();
     for tag in tags {
         let ca = a.get(tag).copied().unwrap_or(0);
         let cb = b.get(tag).copied().unwrap_or(0);
         if ca != cb {
-            println!(
-                "    {tag}: {ca} -> {cb} record(s) [internal count, not a musician-facing number]"
-            );
+            match tag_info(tag) {
+                Some(info) if info.verified_count => println!(
+                    "    {}: {ca} -> {cb} ({tag}) [verified against MetaData.plist on the one real project measured — see docs/FORMATS.md]",
+                    info.noun
+                ),
+                Some(info) => println!(
+                    "    {}-related records ({tag}): {ca} -> {cb} [internal record count, does NOT equal the number of {} — record-to-object ratio isn't 1:1, see wit-logic's census module doc]",
+                    info.noun, info.noun
+                ),
+                None => println!(
+                    "    {tag}: {ca} -> {cb} record(s) [internal count, unmapped tag — not a musician-facing number]"
+                ),
+            }
         }
     }
 }
@@ -456,7 +513,7 @@ fn logic_report(path: &std::path::Path) -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::human_bytes;
+    use super::{human_bytes, tag_info};
 
     #[test]
     fn byte_counts_are_formatted_in_decimal_units_not_binary() {
@@ -471,5 +528,36 @@ mod tests {
         // EXPERIMENTS.md §9.
         assert_eq!(human_bytes(22_200_000_000), "22.2 GB");
         assert_eq!(human_bytes(0), "0 B");
+    }
+
+    #[test]
+    fn only_audio_files_are_marked_as_a_verified_count() {
+        // lFuA is the only tag docs/FORMATS.md measured matching
+        // MetaData.plist exactly — every other mapped tag showed a
+        // record-to-object multiplier and must stay disclaimed.
+        let audio_files = tag_info("lFuA").expect("lFuA is a mapped tag");
+        assert_eq!(audio_files.noun, "audio files");
+        assert!(audio_files.verified_count);
+
+        for (tag, noun) in [
+            ("karT", "tracks"),
+            ("gRuA", "regions"),
+            ("UCuA", "plugins"),
+            ("qeSM", "MIDI sequences"),
+            ("qSvE", "event sequences"),
+        ] {
+            let info = tag_info(tag).unwrap_or_else(|| panic!("{tag} should be mapped"));
+            assert_eq!(info.noun, noun);
+            assert!(!info.verified_count, "{tag} has no verified 1:1 count");
+        }
+    }
+
+    #[test]
+    fn unmapped_and_root_tags_have_no_category() {
+        assert!(tag_info("MneG").is_none());
+        // gnoS (the root/song record) is deliberately excluded: wit-logic's
+        // frame doc guarantees exactly one per valid file, so its count can
+        // never differ between two successfully-walked files.
+        assert!(tag_info("gnoS").is_none());
     }
 }
