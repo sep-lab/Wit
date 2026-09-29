@@ -195,6 +195,140 @@ fn autosave_lineage_name(filename: &str) -> Option<String> {
     Some(base[..base.len() - 20].to_string())
 }
 
+/// One FL Studio project: its own `.flp`, plus FL's own `Backup/` autosave
+/// chain of it, if one was found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlpProject {
+    pub name: String,
+    /// The project's own current save, wherever it lives. `None` for a
+    /// **backup-only lineage** — FL's default autosave layout is one
+    /// shared `Backup/` folder per "Projects" root (probe-verified this
+    /// session: a real autosave chain lived at `<Projects
+    /// root>/Backup/<name> (autosaved at <time>).flp`, a sibling of the
+    /// project's *own* subfolder, not of the `.flp` file itself), and a
+    /// project renamed via Save As leaves its old-named autosaves with no
+    /// current file to match. Never dropped — archive-before-recycle
+    /// applies here the same way it does to every other DAW this crate
+    /// discovers.
+    pub current: Option<PathBuf>,
+    /// `Backup/<name> (autosaved at <time>).flp`, oldest first **by
+    /// filesystem modification time — not by filename.** This is a
+    /// deliberate divergence from [`discover_ableton_lineages`]: Ableton's
+    /// autosave names embed a full date (`[YYYY-MM-DD HHMMSS]`), so
+    /// lexicographic order is chronological order. FL's autosave names
+    /// carry only a time of day (`"... (autosaved at 5h56)"`), no date —
+    /// measured this session on 4 real autosaves of one project: two were
+    /// named with hours that sort "later" (`"16h34"`) than a file that was
+    /// actually written a full day *earlier* than a `"5h36"`/`"7h59"`
+    /// pair. Sorting these by name would silently misorder the lineage.
+    pub backups: Vec<PathBuf>,
+}
+
+impl FlpProject {
+    /// Every version, oldest backup first, current save last — the same
+    /// convention [`LogicProject::all_versions`] uses.
+    pub fn all_versions(&self) -> Vec<&PathBuf> {
+        let mut v: Vec<&PathBuf> = self.backups.iter().collect();
+        v.extend(self.current.iter());
+        v
+    }
+}
+
+/// Walk `root` for `.flp` files and FL Studio's own `Backup/<name>
+/// (autosaved at <time>).flp` autosave chain, grouped into one lineage
+/// per project name — the same grouping strategy
+/// [`discover_ableton_lineages`] uses, adapted to FL's current-file-plus-
+/// shared-Backup-folder shape rather than Ableton's flat lineage-of-equals
+/// one (see [`FlpProject`]'s doc for why).
+///
+/// **Known limitation, inherited from the same design
+/// [`discover_ableton_lineages`] already accepts:** grouping is by name
+/// alone, globally across `root`, so two unrelated projects that happen to
+/// share a filename in different folders would incorrectly merge into one
+/// lineage. Scoping backups to a per-project directory instead would avoid
+/// that, but would also miss the real, measured shape above (one shared
+/// `Backup/` folder per Projects root) — this crate matches what FL
+/// Studio actually does on disk over what would be safest in the
+/// abstract, and says so here rather than silently.
+pub fn discover_flp_projects(root: &Path) -> Vec<FlpProject> {
+    let mut current_by_name: std::collections::BTreeMap<String, Vec<PathBuf>> =
+        std::collections::BTreeMap::new();
+    let mut backups_by_name: std::collections::BTreeMap<String, Vec<PathBuf>> =
+        std::collections::BTreeMap::new();
+
+    walk(root, 0, &mut |path| {
+        if path.extension().and_then(|e| e.to_str()) != Some("flp") {
+            return true;
+        }
+        let Some(filename) = path.file_name().and_then(|f| f.to_str()) else {
+            return true;
+        };
+        let in_backup_dir = path
+            .parent()
+            .and_then(|p| p.file_name())
+            .is_some_and(|n| n == "Backup");
+        if in_backup_dir {
+            if let Some(name) = flp_autosave_lineage_name(filename) {
+                backups_by_name
+                    .entry(name)
+                    .or_default()
+                    .push(path.to_path_buf());
+                return true;
+            }
+            // A file inside a Backup/ dir that doesn't match FL's own
+            // autosave naming (a manual copy someone dropped there) falls
+            // through to the ordinary-current-file branch below instead
+            // of being silently ignored.
+        }
+        let name = filename
+            .strip_suffix(".flp")
+            .unwrap_or(filename)
+            .to_string();
+        current_by_name
+            .entry(name)
+            .or_default()
+            .push(path.to_path_buf());
+        true
+    });
+
+    let mut names: std::collections::BTreeSet<String> = current_by_name.keys().cloned().collect();
+    names.extend(backups_by_name.keys().cloned());
+
+    names
+        .into_iter()
+        .map(|name| {
+            let mut backups = backups_by_name.remove(&name).unwrap_or_default();
+            backups.sort_by_key(|p| {
+                std::fs::metadata(p)
+                    .and_then(|m| m.modified())
+                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+            });
+            let mut currents = current_by_name.remove(&name).unwrap_or_default();
+            currents.sort(); // deterministic pick if the same name somehow occurs twice
+            let current = currents.into_iter().next();
+            FlpProject {
+                name,
+                current,
+                backups,
+            }
+        })
+        .collect()
+}
+
+/// If `filename` matches FL Studio's own autosave naming,
+/// `"<name> (autosaved at <time>).flp"`, return `<name>`. `<time>` is
+/// deliberately never parsed as a clock time — see [`FlpProject::backups`]
+/// for why it cannot be used to order the chain.
+fn flp_autosave_lineage_name(filename: &str) -> Option<String> {
+    let base = filename.strip_suffix(".flp")?;
+    const MARKER: &str = " (autosaved at ";
+    let marker_start = base.find(MARKER)?;
+    if !base.ends_with(')') {
+        return None;
+    }
+    Some(base[..marker_start].to_string())
+}
+
 /// Recursive directory walk with a depth cap (defends against a symlink
 /// cycle without needing an inode-visited set). `visit` returns `true` to
 /// keep descending into a directory, `false` to stop there.
@@ -302,5 +436,101 @@ mod tests {
         assert_eq!(lineages[0].saves.len(), 2);
         assert_eq!(lineages[1].name, "v1");
         assert_eq!(lineages[1].saves.len(), 1);
+    }
+
+    fn touch_at(path: &Path, epoch_secs: u64) {
+        touch(path);
+        let mtime = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(epoch_secs);
+        // Windows refuses to set times through a read-only handle.
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(mtime)
+            .unwrap();
+    }
+
+    #[test]
+    fn flp_autosave_lineage_name_parses_fls_own_naming_convention() {
+        assert_eq!(
+            flp_autosave_lineage_name("untitled (autosaved at 5h56).flp"),
+            Some("untitled".to_string())
+        );
+        assert_eq!(
+            flp_autosave_lineage_name("My Song (autosaved at 16h34).flp"),
+            Some("My Song".to_string())
+        );
+        assert_eq!(flp_autosave_lineage_name("v1.flp"), None);
+        assert_eq!(flp_autosave_lineage_name("Project_1.flp"), None);
+    }
+
+    #[test]
+    fn discovers_an_flp_project_with_current_and_backups() {
+        let dir = tempfile::tempdir().unwrap();
+        touch(&dir.path().join("Song.flp"));
+        touch(&dir.path().join("Backup/Song (autosaved at 1h00).flp"));
+        touch(&dir.path().join("Backup/Song (autosaved at 2h00).flp"));
+
+        let projects = discover_flp_projects(dir.path());
+        assert_eq!(projects.len(), 1);
+        let p = &projects[0];
+        assert_eq!(p.name, "Song");
+        assert_eq!(p.current, Some(dir.path().join("Song.flp")));
+        assert_eq!(p.backups.len(), 2);
+        assert_eq!(p.all_versions().len(), 3);
+    }
+
+    #[test]
+    fn flp_backups_are_ordered_by_modification_time_not_by_filename() {
+        // FL's own autosave names carry only a time of day, no date
+        // (measured this session — see FlpProject::backups). Name "5h36"
+        // is written LATER (mtime 2000) than name "7h59" (mtime 1000),
+        // which sorting by filename would get backwards.
+        let dir = tempfile::tempdir().unwrap();
+        let later_by_name_earlier_by_time = dir.path().join("Backup/Song (autosaved at 7h59).flp");
+        let earlier_by_name_later_by_time = dir.path().join("Backup/Song (autosaved at 5h36).flp");
+        touch_at(&later_by_name_earlier_by_time, 1000);
+        touch_at(&earlier_by_name_later_by_time, 2000);
+
+        let projects = discover_flp_projects(dir.path());
+        assert_eq!(projects.len(), 1);
+        let backups = &projects[0].backups;
+        assert_eq!(backups.len(), 2);
+        assert!(
+            backups[0].to_string_lossy().contains("7h59"),
+            "the older-by-mtime file must sort first regardless of its name: {backups:?}"
+        );
+        assert!(backups[1].to_string_lossy().contains("5h36"));
+    }
+
+    #[test]
+    fn a_backup_only_lineage_is_never_dropped() {
+        // The project was renamed via Save As, so its old-named autosaves
+        // have no current file to match — archive-before-recycle: still
+        // discovered, current is None, nothing is lost.
+        let dir = tempfile::tempdir().unwrap();
+        touch(&dir.path().join("Backup/untitled (autosaved at 5h56).flp"));
+        touch(&dir.path().join("Renamed.flp")); // a different, unrelated project
+
+        let mut projects = discover_flp_projects(dir.path());
+        projects.sort_by(|a, b| a.name.cmp(&b.name));
+
+        assert_eq!(projects.len(), 2);
+        assert_eq!(projects[0].name, "Renamed");
+        assert_eq!(projects[0].current, Some(dir.path().join("Renamed.flp")));
+        assert!(projects[0].backups.is_empty());
+        assert_eq!(projects[1].name, "untitled");
+        assert_eq!(projects[1].current, None);
+        assert_eq!(projects[1].backups.len(), 1);
+        assert_eq!(projects[1].all_versions().len(), 1);
+    }
+
+    #[test]
+    fn discovers_multiple_flp_projects_at_different_depths() {
+        let dir = tempfile::tempdir().unwrap();
+        touch(&dir.path().join("A.flp"));
+        touch(&dir.path().join("nested/deeper/B.flp"));
+        let projects = discover_flp_projects(dir.path());
+        assert_eq!(projects.len(), 2);
     }
 }

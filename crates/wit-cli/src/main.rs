@@ -11,8 +11,10 @@
 //! comparison across an entire library instead of one pair. M5 adds
 //! `demo-library` (`wit-demo`), which writes the synthetic library the app
 //! is developed and demoed against, so neither needs a real Logic library
-//! on the machine. `wit log`/`diff`/`report` land later; see
-//! `docs/ROADMAP.md`.
+//! on the machine. Phase 4 (FL Studio) adds `flp-probe` (`wit-flp`) —
+//! `logic-probe`'s counterpart for `.flp` projects, and `scan` now
+//! discovers FL Studio projects and their `Backup/` autosave chain too.
+//! `wit log`/`diff`/`report` land later; see `docs/ROADMAP.md`.
 
 use clap::{Parser, Subcommand};
 use std::collections::BTreeSet;
@@ -43,7 +45,12 @@ enum Command {
     /// bundle directory (the current alternative's `ProjectData` is
     /// resolved automatically).
     LogicProbe { old: PathBuf, new: PathBuf },
-    /// Discover Logic/GarageBand/Ableton projects under `path` and
+    /// Print the names and tempo Wit can read out of an FL Studio project,
+    /// and — when a second file is given — a plain-words comparison
+    /// between the two. FL Studio 25+ projects print names normally but
+    /// tempo as "can't read yet" (see `wit-flp`'s module docs for why).
+    FlpProbe { a: PathBuf, b: Option<PathBuf> },
+    /// Discover Logic/GarageBand/Ableton/FL Studio projects under `path` and
     /// archive-before-recycle every version into Wit's local index.
     Scan {
         path: PathBuf,
@@ -73,6 +80,7 @@ fn main() -> ExitCode {
     match cli.command {
         Command::DiffAls { old, new, limit } => diff_als(&old, &new, limit),
         Command::LogicProbe { old, new } => logic_probe(&old, &new),
+        Command::FlpProbe { a, b } => flp_probe(&a, b.as_deref()),
         Command::Scan { path, data_dir } => scan(&path, data_dir),
         Command::Dupes { path } => dupes(&path),
         Command::LogicReport { path } => logic_report(&path),
@@ -318,6 +326,113 @@ fn print_name_diff(label: &str, a: &[String], b: &[String]) {
 }
 
 // --------------------------------------------------------------------- //
+// wit-flp: flp-probe
+// --------------------------------------------------------------------- //
+
+fn flp_probe(a: &std::path::Path, b: Option<&std::path::Path>) -> ExitCode {
+    let extracted_a = match wit_flp::parse_file(a) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("wit: failed to read {}: {e}", a.display());
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let Some(b) = b else {
+        print_flp_summary(a, &extracted_a);
+        return ExitCode::SUCCESS;
+    };
+
+    let extracted_b = match wit_flp::parse_file(b) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("wit: failed to read {}: {e}", b.display());
+            return ExitCode::FAILURE;
+        }
+    };
+
+    print_flp_summary(a, &extracted_a);
+    println!();
+    print_flp_summary(b, &extracted_b);
+    println!();
+
+    // Diagnostic only, mirroring logic_probe's own bytes_equal line: the
+    // raw-byte fact is reported, but never used to decide the verdict
+    // above it — see wit_flp::compare_with_bytes's doc comment.
+    let bytes_equal = match (std::fs::read(a), std::fs::read(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => false,
+    };
+    let changes = wit_flp::compare_with_bytes(&extracted_a, &extracted_b, bytes_equal);
+    if changes.is_empty() {
+        println!("  nothing changed between these two projects");
+    } else {
+        println!("  {} thing(s) changed:", changes.len());
+        for change in &changes {
+            println!("    {}", render_flp_change(change));
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+fn print_flp_summary(path: &std::path::Path, e: &wit_flp::Extracted) {
+    println!("  {}", path.display());
+    println!(
+        "    FL Studio version: {}  channels: {}  tempo: {}",
+        e.fl_version.as_deref().unwrap_or("unknown"),
+        e.channels,
+        e.tempo
+    );
+    if !e.channel_names.is_empty() {
+        println!("    channel names: {}", e.channel_names.join(", "));
+    }
+    if !e.pattern_names.is_empty() {
+        println!("    pattern names: {}", e.pattern_names.join(", "));
+    }
+    if !e.plugin_names.is_empty() {
+        println!("    plugin names: {}", e.plugin_names.join(", "));
+    }
+    if !e.mixer_insert_names.is_empty() {
+        println!(
+            "    mixer insert names: {}",
+            e.mixer_insert_names.join(", ")
+        );
+    }
+    if !e.arrangement_names.is_empty() {
+        println!("    arrangement names: {}", e.arrangement_names.join(", "));
+    }
+    if e.format_status == wit_flp::FormatStatus::PartialV25ScalarsUnreadable {
+        println!(
+            "    note: this FL Studio version scrambles some numeric settings that Wit \
+             can't unscramble yet — the names above are still trustworthy"
+        );
+    }
+}
+
+fn render_flp_change(change: &wit_flp::FlChange) -> String {
+    match change {
+        wit_flp::FlChange::ChannelAdded { name } => format!("channel added: '{name}'"),
+        wit_flp::FlChange::ChannelRemoved { name } => format!("channel removed: '{name}'"),
+        wit_flp::FlChange::ChannelRenamed { old, new } => {
+            format!("channel renamed: '{old}' -> '{new}'")
+        }
+        wit_flp::FlChange::PatternAdded { name } => format!("pattern added: '{name}'"),
+        wit_flp::FlChange::PatternRemoved { name } => format!("pattern removed: '{name}'"),
+        wit_flp::FlChange::PatternRenamed { old, new } => {
+            format!("pattern renamed: '{old}' -> '{new}'")
+        }
+        wit_flp::FlChange::PluginAdded { name } => format!("plugin added: '{name}'"),
+        wit_flp::FlChange::PluginRemoved { name } => format!("plugin removed: '{name}'"),
+        wit_flp::FlChange::TempoChanged { from_bpm, to_bpm } => {
+            format!("tempo: {from_bpm} -> {to_bpm} BPM")
+        }
+        wit_flp::FlChange::BytesChangedNothingReadable => {
+            "something changed that Wit can't read yet".to_string()
+        }
+    }
+}
+
+// --------------------------------------------------------------------- //
 // M3: scan / dupes (wit-index)
 // --------------------------------------------------------------------- //
 
@@ -344,8 +459,12 @@ fn scan(path: &std::path::Path, data_dir: Option<PathBuf>) -> ExitCode {
 
     let result = wit_index::scan(path, &store, &registry, now);
     println!(
-        "  found {} Logic/GarageBand project(s), {} Ableton lineage(s) — {} new version(s) archived",
-        result.logic_projects_found, result.ableton_lineages_found, result.new_versions_ingested
+        "  found {} Logic/GarageBand project(s), {} Ableton lineage(s), {} FL Studio project(s) \
+         — {} new version(s) archived",
+        result.logic_projects_found,
+        result.ableton_lineages_found,
+        result.flp_projects_found,
+        result.new_versions_ingested
     );
     if result.read_errors > 0 {
         println!(
