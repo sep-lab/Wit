@@ -53,6 +53,26 @@ pub enum FlChange {
     PluginRemoved {
         name: String,
     },
+    MixerInsertAdded {
+        name: String,
+    },
+    MixerInsertRemoved {
+        name: String,
+    },
+    MixerInsertRenamed {
+        old: String,
+        new: String,
+    },
+    ArrangementAdded {
+        name: String,
+    },
+    ArrangementRemoved {
+        name: String,
+    },
+    ArrangementRenamed {
+        old: String,
+        new: String,
+    },
     TempoChanged {
         from_bpm: f64,
         to_bpm: f64,
@@ -65,9 +85,9 @@ pub enum FlChange {
 }
 
 /// Compare two extractions, in a fixed, deterministic order: tempo, then
-/// channels, then patterns, then plugins. Never looks at raw bytes — see
-/// [`compare_with_bytes`] for the one fact ([`FlChange::BytesChangedNothingReadable`])
-/// that requires them.
+/// channels, patterns, plugins, mixer inserts, and arrangements. Never
+/// looks at raw bytes — see [`compare_with_bytes`] for the one fact
+/// ([`FlChange::BytesChangedNothingReadable`]) that requires them.
 pub fn compare(old: &Extracted, new: &Extracted) -> Vec<FlChange> {
     let mut changes = Vec::new();
 
@@ -100,6 +120,22 @@ pub fn compare(old: &Extracted, new: &Extracted) -> Vec<FlChange> {
         |name| FlChange::PluginAdded { name },
         |name| FlChange::PluginRemoved { name },
         None, // the whitelist asks for plugin added/removed only, no renamed
+    );
+    diff_names(
+        &old.mixer_insert_names,
+        &new.mixer_insert_names,
+        &mut changes,
+        |name| FlChange::MixerInsertAdded { name },
+        |name| FlChange::MixerInsertRemoved { name },
+        Some(|old, new| FlChange::MixerInsertRenamed { old, new }),
+    );
+    diff_names(
+        &old.arrangement_names,
+        &new.arrangement_names,
+        &mut changes,
+        |name| FlChange::ArrangementAdded { name },
+        |name| FlChange::ArrangementRemoved { name },
+        Some(|old, new| FlChange::ArrangementRenamed { old, new }),
     );
 
     changes
@@ -263,6 +299,44 @@ mod tests {
                     name: "Sytrus".to_string()
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn a_mixer_insert_rename_is_reported_as_a_rename_not_unreadable() {
+        // The bug this closes: mixer insert and arrangement names were
+        // never compared at all, so a rename there fell through to
+        // compare_with_bytes's "something changed Wit can't read yet"
+        // fallback even though the name change was perfectly readable.
+        let old = Extracted {
+            mixer_insert_names: vec!["Dream bell".to_string()],
+            ..Extracted::default()
+        };
+        let new = Extracted {
+            mixer_insert_names: vec!["Dream bell 2".to_string()],
+            ..Extracted::default()
+        };
+        assert_eq!(
+            compare(&old, &new),
+            vec![FlChange::MixerInsertRenamed {
+                old: "Dream bell".to_string(),
+                new: "Dream bell 2".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn an_arrangement_added_is_reported() {
+        let old = Extracted::default();
+        let new = Extracted {
+            arrangement_names: vec!["Arrangement".to_string()],
+            ..Extracted::default()
+        };
+        assert_eq!(
+            compare(&old, &new),
+            vec![FlChange::ArrangementAdded {
+                name: "Arrangement".to_string()
+            }]
         );
     }
 

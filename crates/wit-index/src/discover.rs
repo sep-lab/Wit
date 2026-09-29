@@ -200,27 +200,28 @@ fn autosave_lineage_name(filename: &str) -> Option<String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlpProject {
     pub name: String,
-    /// The project's own current save, wherever it lives. `None` for a
-    /// **backup-only lineage** — FL's default autosave layout is one
-    /// shared `Backup/` folder per "Projects" root (probe-verified this
-    /// session: a real autosave chain lived at `<Projects
-    /// root>/Backup/<name> (autosaved at <time>).flp`, a sibling of the
-    /// project's *own* subfolder, not of the `.flp` file itself), and a
-    /// project renamed via Save As leaves its old-named autosaves with no
-    /// current file to match. Never dropped — archive-before-recycle
-    /// applies here the same way it does to every other DAW this crate
-    /// discovers.
+    /// The project's own current save, wherever it lives. Every current
+    /// `.flp` file discovery finds becomes its own [`FlpProject`] — never
+    /// merged with another one just because it shares a name, and never
+    /// dropped (see [`discover_flp_projects`]'s doc for the bug this
+    /// closed). `None` only for a **backup-only lineage**: a `Backup/`
+    /// autosave chain whose project was, e.g., renamed via Save As, so no
+    /// current file anywhere shares its old name. Never dropped either —
+    /// archive-before-recycle applies here the same way it does to every
+    /// other DAW this crate discovers.
     pub current: Option<PathBuf>,
     /// `Backup/<name> (autosaved at <time>).flp`, oldest first **by
-    /// filesystem modification time — not by filename.** This is a
-    /// deliberate divergence from [`discover_ableton_lineages`]: Ableton's
-    /// autosave names embed a full date (`[YYYY-MM-DD HHMMSS]`), so
-    /// lexicographic order is chronological order. FL's autosave names
-    /// carry only a time of day (`"... (autosaved at 5h56)"`), no date —
-    /// measured this session on 4 real autosaves of one project: two were
-    /// named with hours that sort "later" (`"16h34"`) than a file that was
-    /// actually written a full day *earlier* than a `"5h36"`/`"7h59"`
-    /// pair. Sorting these by name would silently misorder the lineage.
+    /// filesystem modification time, not by filename, with the path as a
+    /// tie-break** when two backups report the same (or an unreadable)
+    /// modification time. This is a deliberate divergence from
+    /// [`discover_ableton_lineages`]: Ableton's autosave names embed a
+    /// full date (`[YYYY-MM-DD HHMMSS]`), so lexicographic order is
+    /// chronological order. FL's autosave names carry only a time of day
+    /// (`"... (autosaved at 5h56)"`), no date — measured this session on 4
+    /// real autosaves of one project: two were named with hours that sort
+    /// "later" (`"16h34"`) than a file that was actually written a full
+    /// day *earlier* than a `"5h36"`/`"7h59"` pair. Sorting these by name
+    /// would silently misorder the lineage.
     pub backups: Vec<PathBuf>,
 }
 
@@ -235,24 +236,29 @@ impl FlpProject {
 }
 
 /// Walk `root` for `.flp` files and FL Studio's own `Backup/<name>
-/// (autosaved at <time>).flp` autosave chain, grouped into one lineage
-/// per project name — the same grouping strategy
-/// [`discover_ableton_lineages`] uses, adapted to FL's current-file-plus-
-/// shared-Backup-folder shape rather than Ableton's flat lineage-of-equals
-/// one (see [`FlpProject`]'s doc for why).
+/// (autosaved at <time>).flp` autosave chain.
 ///
-/// **Known limitation, inherited from the same design
-/// [`discover_ableton_lineages`] already accepts:** grouping is by name
-/// alone, globally across `root`, so two unrelated projects that happen to
-/// share a filename in different folders would incorrectly merge into one
-/// lineage. Scoping backups to a per-project directory instead would avoid
-/// that, but would also miss the real, measured shape above (one shared
-/// `Backup/` folder per Projects root) — this crate matches what FL
-/// Studio actually does on disk over what would be safest in the
-/// abstract, and says so here rather than silently.
+/// **One project per current file, always — never dropped, never merged
+/// with another current file just because they share a name.** An earlier
+/// version of this function grouped every current file sharing a name
+/// into one bucket and kept only one of them (`Vec::into_iter().next()`),
+/// which silently discarded every other same-named project outright —
+/// reproduced this session with two unrelated projects both named
+/// `beat.flp` in different folders: only one was ever archived. Backups
+/// are still grouped by lineage name (FL's real shape: one shared
+/// `Backup/` folder per Projects root, not one per project — see
+/// [`FlpProject::backups`]), but a backup chain is only ever *attached* to
+/// a current file when that attachment is unambiguous:
+///
+/// - Exactly one current file anywhere shares the lineage name -> attach.
+/// - Two or more do -> prefer one that lives under the same top-level
+///   directory the `Backup/` folder itself lives under (FL's real
+///   layout), and attach only if that preference narrows it to exactly
+///   one. Otherwise, attach to none of them.
+/// - Zero do -> the chain becomes its own backup-only [`FlpProject`]
+///   (`current: None`) rather than being silently dropped.
 pub fn discover_flp_projects(root: &Path) -> Vec<FlpProject> {
-    let mut current_by_name: std::collections::BTreeMap<String, Vec<PathBuf>> =
-        std::collections::BTreeMap::new();
+    let mut currents: Vec<PathBuf> = Vec::new();
     let mut backups_by_name: std::collections::BTreeMap<String, Vec<PathBuf>> =
         std::collections::BTreeMap::new();
 
@@ -280,39 +286,98 @@ pub fn discover_flp_projects(root: &Path) -> Vec<FlpProject> {
             // through to the ordinary-current-file branch below instead
             // of being silently ignored.
         }
-        let name = filename
-            .strip_suffix(".flp")
-            .unwrap_or(filename)
-            .to_string();
-        current_by_name
-            .entry(name)
-            .or_default()
-            .push(path.to_path_buf());
+        currents.push(path.to_path_buf());
         true
     });
 
-    let mut names: std::collections::BTreeSet<String> = current_by_name.keys().cloned().collect();
-    names.extend(backups_by_name.keys().cloned());
+    // Index currents by lineage name up front, so attaching a backup
+    // chain can tell whether that name is ambiguous before picking one.
+    let mut currents_by_name: std::collections::BTreeMap<String, Vec<PathBuf>> =
+        std::collections::BTreeMap::new();
+    for current in &currents {
+        currents_by_name
+            .entry(flp_lineage_name(current))
+            .or_default()
+            .push(current.clone());
+    }
 
-    names
-        .into_iter()
-        .map(|name| {
-            let mut backups = backups_by_name.remove(&name).unwrap_or_default();
-            backups.sort_by_key(|p| {
-                std::fs::metadata(p)
-                    .and_then(|m| m.modified())
-                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
-            });
-            let mut currents = current_by_name.remove(&name).unwrap_or_default();
-            currents.sort(); // deterministic pick if the same name somehow occurs twice
-            let current = currents.into_iter().next();
-            FlpProject {
-                name,
-                current,
-                backups,
+    let mut projects = Vec::new();
+    let mut attached_names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+    for current in &currents {
+        let name = flp_lineage_name(current);
+        let same_name_currents = &currents_by_name[&name];
+        let backups = backups_by_name.get(&name).and_then(|paths| {
+            if same_name_currents.len() == 1 {
+                // Unambiguous: this is the only current file with this
+                // name anywhere in the scanned tree.
+                Some(paths.clone())
+            } else {
+                // Ambiguous by name alone -- attach only if preferring a
+                // current file under the Backup/ dir's own top-level
+                // directory narrows it to exactly this one.
+                let projects_root = paths
+                    .first()
+                    .and_then(|b| b.parent())
+                    .and_then(|p| p.parent());
+                let preferred: Vec<&PathBuf> = same_name_currents
+                    .iter()
+                    .filter(|c| projects_root.is_some_and(|root| c.starts_with(root)))
+                    .collect();
+                (preferred.len() == 1 && preferred[0] == current).then(|| paths.clone())
             }
-        })
-        .collect()
+        });
+
+        if backups.is_some() {
+            attached_names.insert(name.clone());
+        }
+        projects.push(FlpProject {
+            name,
+            current: Some(current.clone()),
+            backups: sort_backups(backups.unwrap_or_default()),
+        });
+    }
+
+    // Any backup lineage that never got attached to a current file --
+    // either nothing shares its name, or the name was ambiguous with no
+    // unique preferred match -- becomes its own backup-only project.
+    // Archive-before-recycle: never dropped just because there was
+    // nothing unambiguous to pair it with.
+    for (name, paths) in backups_by_name {
+        if attached_names.contains(&name) {
+            continue;
+        }
+        projects.push(FlpProject {
+            name,
+            current: None,
+            backups: sort_backups(paths),
+        });
+    }
+
+    projects
+}
+
+fn flp_lineage_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|f| f.to_str())
+        .and_then(|f| f.strip_suffix(".flp"))
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Oldest first by filesystem modification time, with the path itself as
+/// a deterministic tie-break when two backups report the same (or an
+/// unreadable) modification time — see [`FlpProject::backups`].
+fn sort_backups(mut backups: Vec<PathBuf>) -> Vec<PathBuf> {
+    backups.sort_by(|a, b| {
+        let mtime = |p: &Path| {
+            std::fs::metadata(p)
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+        };
+        mtime(a).cmp(&mtime(b)).then_with(|| a.cmp(b))
+    });
+    backups
 }
 
 /// If `filename` matches FL Studio's own autosave naming,
@@ -532,5 +597,73 @@ mod tests {
         touch(&dir.path().join("nested/deeper/B.flp"));
         let projects = discover_flp_projects(dir.path());
         assert_eq!(projects.len(), 2);
+    }
+
+    #[test]
+    fn same_named_current_files_in_different_folders_are_never_dropped() {
+        // Reproduces the bug this fix closes: two unrelated projects that
+        // happen to share a filename used to be bucketed into one lineage
+        // and only one of them ever got archived. SongA/beat.flp and
+        // SongB/beat.flp are unrelated projects; Backup/beat.flp is a
+        // third, unrelated file that happens to live in the Backup/
+        // folder without matching FL's autosave naming (so it is an
+        // ordinary current file, not an autosave); Backup/beat (autosaved
+        // at 1h00).flp is a real autosave. All four must be discovered
+        // and none silently merged away.
+        let dir = tempfile::tempdir().unwrap();
+        touch(&dir.path().join("SongA/beat.flp"));
+        touch(&dir.path().join("SongB/beat.flp"));
+        touch(&dir.path().join("Backup/beat.flp"));
+        touch(&dir.path().join("Backup/beat (autosaved at 1h00).flp"));
+
+        let projects = discover_flp_projects(dir.path());
+
+        let all_currents: Vec<&PathBuf> =
+            projects.iter().filter_map(|p| p.current.as_ref()).collect();
+        assert_eq!(
+            all_currents.len(),
+            3,
+            "all three current files sharing the name 'beat' must be discovered: {projects:?}"
+        );
+        assert!(all_currents.contains(&&dir.path().join("SongA/beat.flp")));
+        assert!(all_currents.contains(&&dir.path().join("SongB/beat.flp")));
+        assert!(all_currents.contains(&&dir.path().join("Backup/beat.flp")));
+
+        // The name is ambiguous (three current files share it), so the
+        // one real autosave must not be silently guessed onto any of
+        // them -- it survives as its own backup-only lineage instead.
+        let total_backups: usize = projects.iter().map(|p| p.backups.len()).sum();
+        assert_eq!(
+            total_backups, 1,
+            "the one real autosave must not be dropped: {projects:?}"
+        );
+        let backup_only: Vec<&FlpProject> =
+            projects.iter().filter(|p| p.current.is_none()).collect();
+        assert_eq!(backup_only.len(), 1);
+        assert_eq!(backup_only[0].backups.len(), 1);
+    }
+
+    #[test]
+    fn an_unambiguous_current_far_from_the_backup_dir_is_still_preferred_over_a_nearer_ambiguity() {
+        // Two current files share the name "Song": one lives under the
+        // same Projects root as the Backup/ folder, the other lives
+        // entirely elsewhere in the tree. The nearby one is the
+        // unambiguous preferred match.
+        let dir = tempfile::tempdir().unwrap();
+        touch(&dir.path().join("Projects/MySong/Song.flp"));
+        touch(
+            &dir.path()
+                .join("Projects/Backup/Song (autosaved at 1h00).flp"),
+        );
+        touch(&dir.path().join("Elsewhere/Song.flp"));
+
+        let projects = discover_flp_projects(dir.path());
+        let with_backups: Vec<&FlpProject> =
+            projects.iter().filter(|p| !p.backups.is_empty()).collect();
+        assert_eq!(with_backups.len(), 1, "{projects:?}");
+        assert_eq!(
+            with_backups[0].current,
+            Some(dir.path().join("Projects/MySong/Song.flp"))
+        );
     }
 }

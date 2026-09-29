@@ -22,20 +22,25 @@
 //!
 //! # Version support
 //!
-//! **≤ v24 is fully supported.** Whitelist extraction covers channel
-//! names, pattern names, plugin (generator/effect) names, mixer insert
-//! names, a best-effort arrangement name, tempo, and the header/version
-//! fields.
+//! **≤ v24 is fully supported, across two different real on-disk shapes.**
+//! FL Studio changed how a channel's own name is stored somewhere between
+//! FL 11.1.0 and FL 12.3.0 (measured on real files; see `extract.rs`'s
+//! `NEW_CHANNEL_SCHEME_MIN_MAJOR` doc for the exact evidence and the
+//! unmeasured 11.2–11.9 gap) — this crate reads whichever shape the file's
+//! own declared version says it should have, rather than assuming one
+//! scheme for every version the way this crate's first pass did.
 //!
 //! **v25+ is partial, by design, not by oversight**
 //! ([issue #7](https://github.com/sep-lab/Wit/issues/7)): an unsolved,
 //! offset-dependent obfuscation keystream corrupts scalar (fixed-width)
 //! events on v25-era files. This crate's own event-stream walk still
 //! resyncs correctly (see `frame.rs`'s id-172 exception, verified against
-//! 5 real v25.2.5 files this session), and every *text* event this crate
-//! whitelists decodes cleanly and correctly on those same files — measured
-//! this session, not assumed. Only [`extract::Tempo`], the one scalar
-//! field this crate reads, degrades to
+//! 5 real v25.2.5 files this session), and channel/plugin names decode
+//! cleanly and match the file's own declared channel count on those same
+//! 5 files — measured this session, not assumed. Mixer insert names are
+//! **unverified rather than confirmed** on v25 (id 204 never occurred on
+//! any of those 5 fixtures). [`extract::Tempo`], the one scalar field
+//! this crate reads, degrades to
 //! [`extract::Tempo::PartialV25ScalarsUnreadable`] instead of a number
 //! that looks plausible but was measured to be garbage (a real v25 file's
 //! `Tempo` dword decoded to 252,566.982 BPM).
@@ -43,20 +48,39 @@
 //! # Divergences from `experiments/flp_parse.py`
 //!
 //! The Python prototype is frozen (never edited) and was never run
-//! against a v25 file, so it is not a golden reference for that case.
-//! Every divergence is named where it happens, and summarized here:
+//! against an FL 12+ or v25 file, so it is not a golden reference for
+//! either. Every divergence is named where it happens, and summarized
+//! here:
 //!
 //! 1. **`frame.rs`: event id 172 is read as 3 bytes, not the general
 //!    dword rule's 4** — the v25 resync fix issue #7 names. Verified
-//!    inert (id 172 never appears) on real pre-v25 files.
-//! 2. **`extract.rs`: tempo (id 156), mixer insert names (id 204), and a
-//!    best-effort arrangement name (id 241) are new** — the prototype's
-//!    `EVENT_NAMES` table never named these as semantic fields; it only
-//!    ever printed a raw, generic text row for whatever id happened to
-//!    fall in `TEXT_EVENTS`. All three (with per-id confidence noted in
-//!    `extract.rs`) were identified and verified against real files this
-//!    session, not carried over from any existing documentation.
-//! 3. **`compare.rs` has no Python counterpart at all** — `flp_parse.py`
+//!    inert (id 172 never appears) on 61 real pre-v25 files spanning FL
+//!    8.5–20.8; FL 21–24 were not available to check, so this is applied
+//!    unconditionally rather than gated on the file's own version — see
+//!    `frame.rs`'s doc comment for why gating on version isn't possible
+//!    without a chicken-and-egg re-walk, and the measured evidence that
+//!    makes doing so low-priority anyway.
+//! 2. **`extract.rs`: which id holds a channel's name depends on the
+//!    file's FL major version** — a real-material check across FL
+//!    8.5–25.2 (see `NEW_CHANNEL_SCHEME_MIN_MAJOR`'s doc) found this
+//!    crate's first pass, which read id 192 (`ChanName`) on every
+//!    version, was wrong for FL >= 12: that id is either absent (FL
+//!    12–24) or holds the FL Studio build string, not a channel name
+//!    (v25). The real channel name on FL >= 12 is the first `PluginName`
+//!    (203) inside each channel's own `NewChan` (64) block — verified by
+//!    an exact match against the file's declared channel count on 42 real
+//!    FL 12–20 files plus all 5 real v25 fixtures checked.
+//! 3. **`extract.rs`: tempo (id 156) and a best-effort arrangement name
+//!    (id 241) are new** — neither is decoded as a *semantic* field by
+//!    the prototype (which only ever prints one generic, unlabelled text
+//!    row per id in `TEXT_EVENTS`, `flp_parse.py`'s own `EVENT_NAMES`
+//!    table already names id 204 `"InsertName"`, so that specific id is
+//!    not new information here, only the act of extracting it into a
+//!    structured field is). Tempo and the arrangement-name guess were
+//!    identified and verified (with per-id confidence noted in
+//!    `extract.rs`) against real files this session, not carried over
+//!    from any existing documentation.
+//! 4. **`compare.rs` has no Python counterpart at all** — `flp_parse.py`
 //!    never compares two files.
 
 mod compare;
@@ -86,12 +110,21 @@ mod tests {
 
     #[test]
     fn parse_end_to_end_on_a_minimal_synthetic_project() {
+        // FL >= 12 shape, byte for byte as measured on real files this
+        // session: NewChan (64, word), DefPluginName (201, empty --
+        // a plain Sampler channel), PluginName (203, the channel's own
+        // display name) -- see extract.rs's NEW_CHANNEL_SCHEME_MIN_MAJOR.
         let mut events = Vec::new();
         events.push(199u8); // Version, latin-1
         let version = b"20.8.3.2304\0";
         events.push(version.len() as u8); // varint fits in one byte
         events.extend_from_slice(version);
-        events.push(192); // ChanName
+        events.push(64); // NewChan (word)
+        events.extend_from_slice(&0u16.to_le_bytes());
+        events.push(201); // DefPluginName, empty
+        events.push(1); // varint length 1 (just the NUL terminator)
+        events.push(0);
+        events.push(203); // PluginName -- the channel's display name
         let name = b"Kick\0";
         events.push(name.len() as u8);
         events.extend_from_slice(name);

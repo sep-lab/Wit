@@ -22,17 +22,33 @@
 //! Python prototype was never run against a v25 file and does not special-
 //! case it, so `flp_parse.py` desyncs on one and cannot be used as a golden
 //! reference here. This session verified the fix directly against 5 real
-//! FL 25.2.5 files (a current save and 4 of its own `Backup/` autosaves):
-//! under the naive 4-byte rule, 2 of the 5 fail outright with a payload
-//! that runs past EOF partway through the stream, and the other 3 reach a
-//! clean EOF only by coincidence, with mutually inconsistent event counts
-//! (1540–1652) for what should be near-identical consecutive saves of one
-//! project. Treating id 172 as 3 bytes gives a clean EOF on all 5, with
+//! FL 25.2.5 files (a current save, inferred from its name and folder to
+//! be the same project as the 4 autosaves below, and 4 of that project's
+//! own `Backup/` autosaves): under the naive 4-byte rule, 2 of the 5 fail
+//! outright — a varint prefix that runs longer than [`MAX_VARINT_BYTES`]
+//! bytes, around event 60 — and the other 3 reach a clean EOF only by
+//! coincidence, with mutually inconsistent event counts (1540–1652) for
+//! what should be near-identical consecutive saves of one project.
+//! Treating id 172 as 3 bytes gives a clean EOF on all 5, with
 //! self-consistent counts (1616–1710) and correctly decoded text after the
-//! resync point. Id 172 was not observed at all — count zero — in either
-//! of two real pre-v25 files checked (FL 10.0.0, FL 20.8.3), so this
-//! special case is inert for the versions the rest of this crate treats as
-//! fully readable; it exists purely to let the walker resync on v25.
+//! resync point. Id 172 was not observed at all — count zero — across 61
+//! real pre-v25 files checked, spanning FL 8.5.0 through FL 20.8.1 (this
+//! crate's own `WIT_FIXTURES` corpus plus a wider read-only spot-check
+//! against FL Studio 20's bundled demo projects, off-repository), so this
+//! special case is empirically inert for every pre-v25 version actually
+//! measured.
+//!
+//! **Not gated on the file's own declared version, deliberately.** The
+//! obvious safer design — apply the 3-byte rule only when the `Version`
+//! text event (id 199) says `>= 25` — runs into a chicken-and-egg problem:
+//! `Version` is itself one of the events this same walk discovers, so the
+//! walker cannot know the version until *after* it has already decided how
+//! wide every fixed-width event before that point is. A two-pass re-walk
+//! would resolve that, at real complexity cost, to defend against a risk
+//! that is unmeasured rather than observed: **FL 21–24 were not available
+//! to check**, so it remains possible one of those versions legitimately
+//! uses id 172 as an ordinary 4-byte dword field, which this reader would
+//! then misparse. Documented here rather than silently assumed away.
 
 use std::fmt;
 

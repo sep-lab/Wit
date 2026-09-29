@@ -123,9 +123,23 @@ pub fn scan(root: &Path, store: &Store, registry: &Registry, now: i64) -> ScanRe
         // (no current file — see FlpProject::current's doc) has no such
         // path, so it falls back to the same synthesized-key trick the
         // Ableton lineage loop above uses: the first backup's parent
-        // directory plus the lineage name.
+        // directory plus the lineage name. Both branches are prefixed
+        // with a `flp::` namespace and their own sub-tag: without it, an
+        // FL backup-only key (`{parent}::{name}`) is textually identical
+        // in shape to the Ableton lineage key just above, and the two
+        // could collide in the registry if a `Backup/` folder ever held
+        // both an FL autosave chain and an Ableton lineage with the same
+        // name. This does not make the *current* branch stable across
+        // the rare transition where a backup-only lineage later gains a
+        // matching current file — that would still land under a
+        // different key (the `current` branch) and create a second
+        // registry row rather than reusing the first one. Nothing is
+        // lost when that happens (the old row's versions are untouched),
+        // but the two rows are not merged — a known, accepted limitation
+        // of keying by "what's stably knowable now" rather than by a
+        // durable per-project id FL itself does not expose.
         let bundle_key = match &project.current {
-            Some(current) => current.to_string_lossy().into_owned(),
+            Some(current) => format!("flp::current::{}", current.to_string_lossy()),
             None => {
                 let parent = project
                     .backups
@@ -133,7 +147,7 @@ pub fn scan(root: &Path, store: &Store, registry: &Registry, now: i64) -> ScanRe
                     .and_then(|p| p.parent())
                     .map(|p| p.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                format!("{parent}::{}", project.name)
+                format!("flp::backup-only::{parent}::{}", project.name)
             }
         };
         let Ok(project_id) = registry.upsert_project(&project.name, &bundle_key, "flstudio") else {
@@ -368,6 +382,59 @@ mod tests {
 
         let projects = registry.list_projects().unwrap();
         assert_eq!(projects[0].version_count, 1);
+    }
+
+    #[test]
+    fn rescanning_a_backup_only_flp_lineage_is_idempotent() {
+        let (library, store_dir, db_dir) = setup();
+        touch(
+            &library
+                .path()
+                .join("Backup/untitled (autosaved at 5h56).flp"),
+            b"orphaned backup bytes",
+        );
+
+        let store = Store::open(store_dir.path()).unwrap();
+        let registry = Registry::open(db_dir.path().join("wit.db")).unwrap();
+        let first = scan(library.path(), &store, &registry, 1000);
+        assert_eq!(first.new_versions_ingested, 1);
+
+        let second = scan(library.path(), &store, &registry, 2000);
+        assert_eq!(
+            second.new_versions_ingested, 0,
+            "the backup-only project's key must stay stable across an unchanged rescan"
+        );
+        assert_eq!(registry.list_projects().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn flp_and_ableton_synthesized_keys_never_collide_in_the_same_backup_folder() {
+        // Both a backup-only FL lineage and an Ableton lineage can, in
+        // principle, synthesize a key of the same textual shape
+        // ({parent}::{name}) if they share a Backup/ folder and a name --
+        // the flp:: namespace prefix on the FL side must keep them apart.
+        let (library, store_dir, db_dir) = setup();
+        touch(
+            &library.path().join("Backup/shared (autosaved at 1h00).flp"),
+            b"flp backup bytes",
+        );
+        touch(
+            &library.path().join("Backup/shared [2026-05-05 095412].als"),
+            b"als save bytes",
+        );
+
+        let store = Store::open(store_dir.path()).unwrap();
+        let registry = Registry::open(db_dir.path().join("wit.db")).unwrap();
+        let result = scan(library.path(), &store, &registry, 1000);
+
+        assert_eq!(result.flp_projects_found, 1);
+        assert_eq!(result.ableton_lineages_found, 1);
+        let projects = registry.list_projects().unwrap();
+        assert_eq!(
+            projects.len(),
+            2,
+            "the FL and Ableton lineages named 'shared' must be two distinct projects: {projects:?}"
+        );
     }
 
     #[test]

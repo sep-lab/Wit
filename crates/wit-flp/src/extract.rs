@@ -2,51 +2,101 @@
 //! port of the *decisions* `experiments/flp_parse.py` makes about which
 //! ids matter (`EVENT_NAMES`, `TEXT_EVENTS`, `decode_text`'s UTF-16LE-vs-
 //! latin-1 heuristic), extended with the specific ids this crate's
-//! whitelist asks for that the prototype only ever printed as raw text
-//! rows, never named as semantic fields (tempo, mixer insert names,
-//! arrangement names).
+//! whitelist asks for that the prototype only ever printed as a raw,
+//! untyped text row (tempo, and a structured read of mixer insert /
+//! arrangement names rather than a generic listing).
 //!
-//! **Every id below except `ARRANGEMENT_NAME` is independently verified
-//! this session against real files spanning three FL major versions (10,
-//! 20, 25) — not merely carried over from the prototype's `EVENT_NAMES`
-//! table, which never decoded any of them as a semantic value.** See each
-//! constant's doc comment for the specific evidence.
+//! **The channel-name scheme changed between FL Studio eras — measured,
+//! not assumed.** A first pass of this module read every channel's name
+//! from a single id (192, `ChanName`) on every version, because that is
+//! what one real FL 10.0.0 file and `flp_parse.py`'s own `EVENT_NAMES`
+//! table suggested. A wider real-material check (spanning FL 8.5 through
+//! FL 25.2.5, including this crate's own `WIT_FIXTURES` corpus plus FL
+//! Studio 20's bundled demo projects, read-only, off-repository) showed
+//! that was wrong for every version at or after FL 12: id 192 either
+//! never appears (FL 12–24, checked on dozens of real files) or holds
+//! something that is not a channel name at all — the literal string
+//! `"FL Studio 25.2.5.5055.5055"` on every one of 5 real v25 files
+//! checked. [`extract`] therefore branches on the FL major version — see
+//! [`NEW_CHANNEL_SCHEME_MIN_MAJOR`] — and the two eras get two different,
+//! independently verified extraction paths. See each constant's doc
+//! comment for the specific evidence.
 
 use crate::frame::{Header, RawEvent};
 use std::fmt;
 
-/// `ChanName` — a channel's display name. Verified: decodes real channel
-/// names (`"Kick"`, `"808 Kick"`, `"reFX Nexus #3"`) across FL 10/20/25
-/// fixtures this session.
+/// `NewChan` — marks the start of a new channel in the event stream.
+/// Present in every FL version checked; only meaningful (as a block
+/// boundary) under the new channel-name scheme — see
+/// [`NEW_CHANNEL_SCHEME_MIN_MAJOR`].
+const NEW_CHAN: u8 = 64;
+/// `ChanName` — a channel's display name, but **only on FL < 12**.
+/// Verified on real files: decodes real names (`"Kick"`, `"Xtra Bass"`,
+/// `"Clap"`, ...) on every real fixture checked from FL 8.5.0 through FL
+/// 11.1.0. **Never read as a channel name on FL >= 12 or v25** — see
+/// [`NEW_CHANNEL_SCHEME_MIN_MAJOR`]'s doc for why: it is absent outright
+/// on FL 12–24, and something else entirely (the FL Studio build string)
+/// on v25.
 const CHAN_NAME: u8 = 192;
 /// `PatName` — a pattern's display name. Verified: decodes real pattern
-/// names (e.g. `"Choir"`) on an FL 10 fixture this session.
+/// names (e.g. `"Choir"`) on an FL 10 fixture this session. Unaffected by
+/// the channel-name scheme change (patterns are a separate object from
+/// channels).
 const PAT_NAME: u8 = 193;
 /// `Version` — the FL Studio build that wrote the file, e.g. `"25.2.5.5055"`.
-/// This is also how [`is_v25_or_later`] decides whether the scalar keystream
-/// (issue #7) applies.
+/// This is also how [`major_version`] decides which channel-name scheme
+/// applies and whether the v25 scalar keystream (issue #7) applies.
 const VERSION: u8 = 199;
-/// `DefPluginName` — a plugin's default/generic name (e.g. `"Fruity
-/// Wrapper"`, `"FLEX"`, `"Sytrus"`). Verified on real files this session.
+/// `DefPluginName` — the underlying plugin/generator *type*'s own name
+/// (e.g. `"Fruity Wrapper"`, `"FPC"`, `"Harmor"`, `"Sytrus"`). Verified on
+/// real files across every FL era checked (8.5 through 25.2.5): this
+/// field's meaning did not change, only how it is scoped to a channel
+/// did (see [`NEW_CHANNEL_SCHEME_MIN_MAJOR`]). Empty for a plain Sampler
+/// channel with no separate plugin/generator — measured on real FL 20/25
+/// files: a channel using nothing but FL's built-in sampler carries a
+/// zero-length `DefPluginName`, so an empty payload here is a real "no
+/// plugin" fact, not a decode failure, and [`push_text`]'s blank-drop
+/// behaviour is exactly what is wanted for it.
 const DEF_PLUGIN_NAME: u8 = 201;
-/// `PluginName` — a plugin's specific instance/preset name (e.g.
-/// `"808 Kick"`, `"FLEX Bass"`). Verified on real files this session.
-/// [`Extracted::plugin_names`] merges this with [`DEF_PLUGIN_NAME`] — the
-/// crate's whitelist asks for "plugin (generator/effect) names" as one
-/// category, and real files showed both ids contributing genuinely
-/// different plugin names depending on whether a channel wraps a VST
-/// (`DefPluginName` = "Fruity Wrapper", the real plugin name is inside the
-/// opaque, unread VST chunk) or is an FL-native plugin (`PluginName` =
-/// the actual instrument, e.g. "808 Kick").
+/// `PluginName` — **on FL >= 12, this is the channel's own display name**
+/// (e.g. `"808 Kick"`, `"FLEX Bass"`, `"Drumpad"`, `"clapBuildup"`),
+/// appearing once per channel immediately after that channel's
+/// [`NEW_CHAN`]/[`DEF_PLUGIN_NAME`] pair — verified by cross-checking the
+/// count of "first `PluginName` after each `NewChan`" against the file's
+/// own declared channel count (`FLhd.channels`) on 42 real FL 12–20 files
+/// plus all 5 real v25 files in this crate's `WIT_FIXTURES` corpus: an
+/// exact match, every time, on every file. **On FL < 12 this id is never
+/// read at all** in the current extraction — real files from that era do
+/// not show it appearing tightly bound to `NewChan` the way FL >= 12
+/// does, so treating it as a channel name there is unverified; genuine
+/// pre-12 channel names come from [`CHAN_NAME`] instead.
 const PLUGIN_NAME: u8 = 203;
+/// The FL major version at and after which channel names are read from
+/// [`PLUGIN_NAME`] inside a [`NEW_CHAN`] block, and [`CHAN_NAME`] is never
+/// read as a channel name at all. **Measured boundary, not a documented
+/// one:** every real fixture checked at FL 11.1.0 and below has real
+/// channel names on id 192 and no `NewChan`-then-`PluginName` pattern;
+/// every real fixture checked at FL 12.3.0 and above (43 files) plus
+/// every FL 20/25 fixture in `WIT_FIXTURES` has the new pattern and zero
+/// occurrences of id 192 (v25 is the one exception that has a non-zero,
+/// non-channel-name occurrence of it — see [`CHAN_NAME`]). **FL
+/// 11.2–11.9 was never observed** (no fixture available in that exact
+/// range), so this constant is a boundary chosen to match that gap
+/// conservatively — a file that reports itself as FL 11.2–11.9 falls back
+/// to the pre-12 (`ChanName`) path here, which is untested for that
+/// specific range rather than wrong by measurement.
+const NEW_CHANNEL_SCHEME_MIN_MAJOR: u32 = 12;
 /// `InsertName` — a mixer insert's display name (only present when a user
 /// renamed it from FL's default numbered name). Verified: decodes real
-/// insert names (`"Dream bell"`, `"REC"`) across two real fixtures this
-/// session — this is the "mixer insert names if the prototype has them"
-/// the crate's whitelist asks for; `flp_parse.py` never named this id
-/// (192-207 render generically as an untyped text row), but it is inside
-/// that prototype's own `TEXT_EVENTS` range and decodes cleanly with its
-/// same heuristic.
+/// insert names (`"Dream bell"`, `"REC"`) on two real pre-v25 fixtures
+/// this session. `flp_parse.py`'s own `EVENT_NAMES` table already names
+/// this id `"InsertName"` — the prototype never *extracts* it as a
+/// structured field (192–207 all render as one generic, unlabelled text
+/// row in its output), but the id itself is not new information here.
+/// **Unverified on v25**: id 204 occurs zero times across all 5 real v25
+/// fixtures in this crate's `WIT_FIXTURES` corpus (none of those projects
+/// renamed an insert from its default name), so whether this id still
+/// means the same thing on v25 has not actually been observed either way.
 const INSERT_NAME: u8 = 204;
 /// `Tempo` — dword, `round(BPM * 1000)`. **Not documented anywhere this
 /// crate cites** (absent from `flp_parse.py`'s `EVENT_NAMES`); identified
@@ -55,8 +105,12 @@ const INSERT_NAME: u8 = 204;
 /// BPM. On a real FL 20.8.3 fixture, id 156's single occurrence decoded
 /// to exactly `130000` -> `130.0` BPM — an exact multiple of 1000 by
 /// chance is a low-probability coincidence, which is the evidence this is
-/// the right id, not just a plausible-looking number. See
-/// [`is_v25_or_later`] for why this id is untrustworthy on v25+.
+/// the right id, not just a plausible-looking number. **Absent on the
+/// real FL 10.0.0 fixture checked** (id 156 occurs zero times there) —
+/// tempo reads as [`Tempo::Unknown`] on that file, not a wrong number;
+/// this crate does not have a fixture old enough to say exactly which
+/// pre-11 versions have it, if any. See [`is_v25_or_later`] for why this
+/// id is untrustworthy on v25+.
 const TEMPO: u8 = 156;
 /// An empirically observed, **undocumented and unverified-beyond-this-
 /// session** id that decoded to the literal text `"Arrangement"` on two
@@ -106,25 +160,34 @@ pub fn decode_text(payload: &[u8]) -> String {
         .to_string()
 }
 
-/// Whether `version` (the raw `Version` text event, e.g. `"25.2.5.5055"`)
-/// is FL Studio 25 or later — the boundary
-/// [issue #7](https://github.com/sep-lab/Wit/issues/7) names for the
-/// unsolved scalar keystream. Parses only the leading major-version
-/// component; `None` (never treated as v25+) if it isn't a plain integer,
-/// which is the conservative direction — an unparseable version string
-/// should not silently suppress a real tempo reading.
+/// The leading major-version component of `version` (e.g. `"25.2.5.5055"`
+/// -> `Some(25)`), or `None` if it isn't a plain integer. `None` is the
+/// conservative direction everywhere this is used: an unparseable version
+/// string falls back to the pre-FL-12 extraction path and never silently
+/// suppresses a real tempo reading.
 pub fn major_version(version: &str) -> Option<u32> {
     version.split('.').next()?.parse().ok()
 }
 
+/// Whether `version` is FL Studio 25 or later — the boundary
+/// [issue #7](https://github.com/sep-lab/Wit/issues/7) names for the
+/// unsolved scalar keystream.
 fn is_v25_or_later(version: &str) -> bool {
     major_version(version).is_some_and(|major| major >= 25)
+}
+
+/// Whether `version` uses the new (FL >= 12) channel-name scheme — see
+/// [`NEW_CHANNEL_SCHEME_MIN_MAJOR`].
+fn uses_new_channel_scheme(version: &str) -> bool {
+    major_version(version).is_some_and(|major| major >= NEW_CHANNEL_SCHEME_MIN_MAJOR)
 }
 
 /// A tempo reading, honest about the one case it cannot trust.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Tempo {
-    /// No `Tempo` event was found at all.
+    /// No `Tempo` event was found at all — either a version old enough
+    /// not to have one (measured: the real FL 10.0.0 fixture checked has
+    /// none), or a genuinely unreadable file.
     #[default]
     Unknown,
     Known(f64),
@@ -149,9 +212,13 @@ pub enum FormatStatus {
     /// FL Studio v25+ ([issue #7](https://github.com/sep-lab/Wit/issues/7)):
     /// scalar (fixed-width) events are under an unsolved obfuscation
     /// keystream, so extraction is restricted to variable-length (text)
-    /// events only — every name field on [`Extracted`] is still read
-    /// normally (measured this session: real channel/plugin/insert names
-    /// decode cleanly on v25 fixtures), but [`Extracted::tempo`] is
+    /// events only. Channel and plugin names are still read normally
+    /// (measured this session: real channel/plugin names decode cleanly
+    /// and match the file's own declared channel count on all 5 v25
+    /// fixtures checked) — but [`Extracted::mixer_insert_names`] is
+    /// **unverified rather than confirmed** on v25 (id 204 never occurred
+    /// on any of those 5 fixtures, so this is an absence of evidence, not
+    /// evidence of correctness), and [`Extracted::tempo`] is
     /// [`Tempo::PartialV25ScalarsUnreadable`] rather than a number that
     /// looks plausible but was never verified.
     PartialV25ScalarsUnreadable,
@@ -170,13 +237,23 @@ pub struct Extracted {
     pub fl_version: Option<String>,
     pub format_status: FormatStatus,
     pub tempo: Tempo,
-    /// `ChanName` values, in event-stream order (not deduplicated — a
-    /// project can genuinely have two channels with the same name, and
-    /// that is a fact about the project, not noise to collapse).
+    /// One name per channel, in channel order. Sourced from [`CHAN_NAME`]
+    /// on FL < 12, or from the first [`PLUGIN_NAME`] inside each
+    /// [`NEW_CHAN`] block on FL >= 12 — see
+    /// [`NEW_CHANNEL_SCHEME_MIN_MAJOR`]. Not deduplicated — a project can
+    /// genuinely have two channels with the same name, and that is a fact
+    /// about the project, not noise to collapse.
     pub channel_names: Vec<String>,
     pub pattern_names: Vec<String>,
-    /// `DefPluginName` and `PluginName` merged — see [`PLUGIN_NAME`]'s doc
-    /// comment for why both matter.
+    /// The underlying plugin/generator type's own name
+    /// ([`DEF_PLUGIN_NAME`]) for every channel that has one — empty
+    /// (Sampler-only) channels contribute nothing here, per
+    /// [`DEF_PLUGIN_NAME`]'s doc comment. **No longer merged with
+    /// [`PLUGIN_NAME`]** (a change from this crate's first pass): on FL
+    /// major version 12 and above, [`PLUGIN_NAME`] is the channel's own
+    /// display name, not a second plugin name, and folding it in here
+    /// doubled every channel-name change into a spurious pair of "plugin
+    /// added/removed" lines.
     pub plugin_names: Vec<String>,
     pub mixer_insert_names: Vec<String>,
     /// Best-effort — see [`ARRANGEMENT_NAME_GUESS`]. Always empty rather
@@ -207,6 +284,16 @@ impl fmt::Display for Tempo {
     }
 }
 
+/// Per-channel extraction state, reset at every [`NEW_CHAN`] event. Only
+/// meaningful under the new (FL >= 12) channel-name scheme; unused
+/// otherwise.
+#[derive(Default)]
+struct ChannelBlockState {
+    in_block: bool,
+    def_plugin_name_taken: bool,
+    plugin_name_taken: bool,
+}
+
 /// Extract every whitelisted field from an already-walked event stream.
 pub fn extract(header: &Header, events: &[RawEvent<'_>]) -> Extracted {
     let fl_version = events
@@ -214,6 +301,7 @@ pub fn extract(header: &Header, events: &[RawEvent<'_>]) -> Extracted {
         .find(|e| e.id == VERSION)
         .map(|e| decode_text(e.payload));
     let v25_plus = fl_version.as_deref().is_some_and(is_v25_or_later);
+    let new_channel_scheme = fl_version.as_deref().is_some_and(uses_new_channel_scheme);
 
     let mut out = Extracted {
         header_format: header.format,
@@ -229,11 +317,41 @@ pub fn extract(header: &Header, events: &[RawEvent<'_>]) -> Extracted {
         ..Extracted::default()
     };
 
+    let mut block = ChannelBlockState::default();
+
     for event in events {
         match event.id {
-            CHAN_NAME => push_text(&mut out.channel_names, event.payload),
+            NEW_CHAN if new_channel_scheme => {
+                block = ChannelBlockState {
+                    in_block: true,
+                    ..ChannelBlockState::default()
+                };
+            }
+            CHAN_NAME if !new_channel_scheme => {
+                push_text(&mut out.channel_names, event.payload);
+            }
+            DEF_PLUGIN_NAME if new_channel_scheme => {
+                if block.in_block && !block.def_plugin_name_taken {
+                    block.def_plugin_name_taken = true;
+                    push_text(&mut out.plugin_names, event.payload);
+                }
+            }
+            DEF_PLUGIN_NAME => {
+                // Pre-FL-12: DefPluginName always names a plugin, with no
+                // channel-display-name role to disambiguate from.
+                push_text(&mut out.plugin_names, event.payload);
+            }
+            PLUGIN_NAME if new_channel_scheme => {
+                if block.in_block && !block.plugin_name_taken {
+                    block.plugin_name_taken = true;
+                    push_text(&mut out.channel_names, event.payload);
+                }
+            }
+            // Pre-FL-12: PluginName's real-file behaviour was never
+            // verified as either a channel name or a plugin name (see
+            // PLUGIN_NAME's doc comment) — read nothing from it rather
+            // than guess.
             PAT_NAME => push_text(&mut out.pattern_names, event.payload),
-            DEF_PLUGIN_NAME | PLUGIN_NAME => push_text(&mut out.plugin_names, event.payload),
             INSERT_NAME => push_text(&mut out.mixer_insert_names, event.payload),
             ARRANGEMENT_NAME_GUESS => push_text(&mut out.arrangement_names, event.payload),
             TEMPO if v25_plus => out.tempo = Tempo::PartialV25ScalarsUnreadable,
@@ -270,6 +388,12 @@ mod tests {
         out.extend_from_slice(&body);
         out
     }
+
+    // Literal byte ids throughout this test module, not the crate's own
+    // constants (192, 193, 199, 201, 203, 204, 241, 64) — pinning the
+    // wire format independently of any future rename/typo in extract.rs
+    // itself, matching the reviewer note that these must be pinned by
+    // literal bytes.
 
     fn latin1_text(id: u8, s: &str) -> Vec<u8> {
         let mut payload = s.as_bytes().to_vec();
@@ -310,6 +434,30 @@ mod tests {
         out
     }
 
+    fn word_event(id: u8, value: u16) -> Vec<u8> {
+        let mut out = vec![id];
+        out.extend_from_slice(&value.to_le_bytes());
+        out
+    }
+
+    /// A real FL >= 12 channel block, byte for byte as measured on real
+    /// files this session: `NewChan` (64, word), then `DefPluginName`
+    /// (201, empty for a plain Sampler channel), then `PluginName` (203,
+    /// the channel's own display name).
+    fn new_scheme_channel(display_name: &str) -> Vec<u8> {
+        let mut out = word_event(64, 0);
+        out.extend(latin1_text(201, ""));
+        out.extend(latin1_text(203, display_name));
+        out
+    }
+
+    fn new_scheme_channel_with_plugin(display_name: &str, plugin: &str) -> Vec<u8> {
+        let mut out = word_event(64, 0);
+        out.extend(latin1_text(201, plugin));
+        out.extend(latin1_text(203, display_name));
+        out
+    }
+
     fn container(event_bytes: Vec<Vec<u8>>) -> Vec<u8> {
         let events: Vec<u8> = event_bytes.into_iter().flatten().collect();
         let mut out = header_bytes(0, 1, 96);
@@ -325,46 +473,137 @@ mod tests {
         extract(&header, &events)
     }
 
+    // ---- pre-FL-12 (id 192) path ------------------------------------- //
+
     #[test]
-    fn channel_and_pattern_names_are_extracted() {
+    fn pre_fl12_channel_and_pattern_names_are_extracted_from_192_and_193() {
         let e = extracted_of(vec![
-            latin1_text(CHAN_NAME, "Kick"),
-            latin1_text(PAT_NAME, "Choir"),
+            latin1_text(199, "10.0.0"),
+            latin1_text(192, "Kick"),
+            latin1_text(193, "Choir"),
         ]);
         assert_eq!(e.channel_names, vec!["Kick".to_string()]);
         assert_eq!(e.pattern_names, vec!["Choir".to_string()]);
     }
 
     #[test]
-    fn def_plugin_name_and_plugin_name_both_feed_plugin_names() {
+    fn pre_fl12_def_plugin_name_feeds_plugin_names() {
         let e = extracted_of(vec![
-            latin1_text(DEF_PLUGIN_NAME, "Fruity Wrapper"),
-            latin1_text(PLUGIN_NAME, "808 Kick"),
+            latin1_text(199, "10.0.0"),
+            latin1_text(201, "Fruity Wrapper"),
         ]);
+        assert_eq!(e.plugin_names, vec!["Fruity Wrapper".to_string()]);
+    }
+
+    #[test]
+    fn pre_fl12_plugin_name_203_is_never_read_as_a_channel_or_plugin_name() {
+        // Real pre-FL-12 files do not show 203 tightly bound to NewChan
+        // the way FL >= 12 does, and its actual role there was never
+        // verified -- read nothing rather than guess.
+        let e = extracted_of(vec![latin1_text(199, "10.0.0"), latin1_text(203, "Sytrus")]);
+        assert!(e.channel_names.is_empty());
+        assert!(e.plugin_names.is_empty());
+    }
+
+    #[test]
+    fn no_version_event_falls_back_to_the_pre_fl12_path() {
+        let e = extracted_of(vec![latin1_text(192, "Kick")]);
+        assert_eq!(e.channel_names, vec!["Kick".to_string()]);
+    }
+
+    // ---- FL >= 12 (NewChan/201/203 block) path ----------------------- //
+
+    #[test]
+    fn fl12_plus_reads_channel_names_from_203_inside_a_newchan_block() {
+        let mut events = vec![latin1_text(199, "20.8.3.2304")];
+        events.push(new_scheme_channel("808 Kick"));
+        events.push(new_scheme_channel("FLEX Bass"));
+        let e = extracted_of(events);
         assert_eq!(
-            e.plugin_names,
-            vec!["Fruity Wrapper".to_string(), "808 Kick".to_string()]
+            e.channel_names,
+            vec!["808 Kick".to_string(), "FLEX Bass".to_string()]
         );
     }
 
     #[test]
+    fn fl12_plus_never_reads_192_as_a_channel_name() {
+        // Measured this session: on v25, id 192 holds the FL Studio build
+        // string, not a channel name; on FL 12-24 it does not appear at
+        // all. Either way it must never contribute to channel_names here.
+        let mut events = vec![latin1_text(199, "25.2.5.5055")];
+        events.push(latin1_text(192, "FL Studio 25.2.5.5055.5055"));
+        events.push(new_scheme_channel("808 Kick"));
+        let e = extracted_of(events);
+        assert_eq!(e.channel_names, vec!["808 Kick".to_string()]);
+    }
+
+    #[test]
+    fn fl12_plus_takes_plugin_name_only_from_non_empty_def_plugin_name() {
+        let mut events = vec![latin1_text(199, "20.8.3.2304")];
+        events.push(new_scheme_channel("clapBuildup")); // Sampler channel: empty 201
+        events.push(new_scheme_channel_with_plugin("Drums", "FPC"));
+        let e = extracted_of(events);
+        assert_eq!(
+            e.channel_names,
+            vec!["clapBuildup".to_string(), "Drums".to_string()]
+        );
+        assert_eq!(e.plugin_names, vec!["FPC".to_string()]);
+    }
+
+    #[test]
+    fn fl12_plus_only_takes_the_first_201_and_203_per_channel_block() {
+        // A device chain can carry more than one 201/203 per channel (an
+        // effect's own name, for instance) -- only the first of each,
+        // right after NewChan, is the channel's own identity.
+        let mut events = vec![latin1_text(199, "20.8.3.2304"), word_event(64, 0)];
+        events.push(latin1_text(201, "Harmor"));
+        events.push(latin1_text(203, "Pluck 1"));
+        events.push(latin1_text(201, "Fruity Reeverb")); // a device further down the chain
+        events.push(latin1_text(203, "Reverb Slot"));
+        let e = extracted_of(events);
+        assert_eq!(e.channel_names, vec!["Pluck 1".to_string()]);
+        assert_eq!(e.plugin_names, vec!["Harmor".to_string()]);
+    }
+
+    #[test]
+    fn a_channel_add_reports_one_channel_not_a_doubled_plugin_pair() {
+        // The bug this fix closes: comparing two extractions where one
+        // channel was added must show exactly one new channel name, not
+        // two "plugin" entries (one for 201, one for 203).
+        let mut old_events = vec![latin1_text(199, "25.2.5.5055")];
+        old_events.push(new_scheme_channel("808 Kick"));
+        let mut new_events = vec![latin1_text(199, "25.2.5.5055")];
+        new_events.push(new_scheme_channel("808 Kick"));
+        new_events.push(new_scheme_channel_with_plugin("Drumpad", "FPC"));
+        let old = extracted_of(old_events);
+        let new = extracted_of(new_events);
+        assert_eq!(old.channel_names, vec!["808 Kick".to_string()]);
+        assert_eq!(
+            new.channel_names,
+            vec!["808 Kick".to_string(), "Drumpad".to_string()]
+        );
+        assert_eq!(new.plugin_names, vec!["FPC".to_string()]);
+    }
+
+    #[test]
     fn insert_names_are_extracted() {
-        let e = extracted_of(vec![latin1_text(INSERT_NAME, "Dream bell")]);
+        let e = extracted_of(vec![latin1_text(204, "Dream bell")]);
         assert_eq!(e.mixer_insert_names, vec!["Dream bell".to_string()]);
     }
 
     #[test]
     fn arrangement_name_guess_is_extracted_but_kept_separate() {
-        let e = extracted_of(vec![latin1_text(ARRANGEMENT_NAME_GUESS, "Arrangement")]);
+        let e = extracted_of(vec![latin1_text(241, "Arrangement")]);
         assert_eq!(e.arrangement_names, vec!["Arrangement".to_string()]);
     }
 
     #[test]
     fn blank_text_events_are_dropped() {
         let e = extracted_of(vec![
-            latin1_text(CHAN_NAME, ""),
-            latin1_text(CHAN_NAME, "   "),
-            latin1_text(CHAN_NAME, "Real"),
+            latin1_text(199, "10.0.0"),
+            latin1_text(192, ""),
+            latin1_text(192, "   "),
+            latin1_text(192, "Real"),
         ]);
         assert_eq!(e.channel_names, vec!["Real".to_string()]);
     }
@@ -372,8 +611,8 @@ mod tests {
     #[test]
     fn tempo_decodes_as_bpm_times_1000() {
         let e = extracted_of(vec![
-            latin1_text(VERSION, "20.8.3.2304"),
-            dword_event(TEMPO, 130_000),
+            latin1_text(199, "20.8.3.2304"),
+            dword_event(156, 130_000),
         ]);
         assert_eq!(e.tempo, Tempo::Known(130.0));
         assert_eq!(e.format_status, FormatStatus::Complete);
@@ -381,7 +620,9 @@ mod tests {
 
     #[test]
     fn no_tempo_event_is_unknown_not_zero() {
-        let e = extracted_of(vec![latin1_text(VERSION, "20.8.3.2304")]);
+        // Measured: the real FL 10.0.0 fixture in WIT_FIXTURES has no
+        // Tempo (156) event at all.
+        let e = extracted_of(vec![latin1_text(199, "10.0.0")]);
         assert_eq!(e.tempo, Tempo::Unknown);
     }
 
@@ -391,24 +632,11 @@ mod tests {
         // 252566982 -- obvious garbage. Whatever value is present, v25
         // must never surface it as Tempo::Known.
         let e = extracted_of(vec![
-            latin1_text(VERSION, "25.2.5.5055"),
-            dword_event(TEMPO, 252_566_982),
+            latin1_text(199, "25.2.5.5055"),
+            dword_event(156, 252_566_982),
         ]);
         assert_eq!(e.tempo, Tempo::PartialV25ScalarsUnreadable);
         assert_eq!(e.format_status, FormatStatus::PartialV25ScalarsUnreadable);
-    }
-
-    #[test]
-    fn v25_still_extracts_names_normally() {
-        // Measured this session: real channel/plugin names decode cleanly
-        // on v25 fixtures -- only scalar (fixed-width) events are unsafe.
-        let e = extracted_of(vec![
-            latin1_text(VERSION, "25.2.5.5055"),
-            latin1_text(CHAN_NAME, "808 Kick"),
-            latin1_text(PLUGIN_NAME, "FLEX Bass"),
-        ]);
-        assert_eq!(e.channel_names, vec!["808 Kick".to_string()]);
-        assert_eq!(e.plugin_names, vec!["FLEX Bass".to_string()]);
     }
 
     #[test]
@@ -419,22 +647,30 @@ mod tests {
     }
 
     #[test]
-    fn unparseable_version_is_never_treated_as_v25() {
+    fn new_channel_scheme_boundary_is_major_12() {
+        assert!(!uses_new_channel_scheme("11.9.9.9999"));
+        assert!(uses_new_channel_scheme("12.0.0.0"));
+        assert!(uses_new_channel_scheme("25.2.5.5055"));
+    }
+
+    #[test]
+    fn unparseable_version_is_never_treated_as_v25_or_new_scheme() {
         assert!(!is_v25_or_later("not-a-version"));
+        assert!(!uses_new_channel_scheme("not-a-version"));
         assert_eq!(major_version("not-a-version"), None);
     }
 
     #[test]
     fn utf16_text_decodes_including_non_latin_scripts() {
         // AGENTS.md/task: a Persian name must survive the UTF-16LE path.
-        let e = extracted_of(vec![utf16_text(CHAN_NAME, "آواز")]);
+        let e = extracted_of(vec![latin1_text(199, "10.0.0"), utf16_text(192, "آواز")]);
         assert_eq!(e.channel_names, vec!["آواز".to_string()]);
     }
 
     #[test]
     fn latin1_three_letter_names_are_not_mistaken_for_utf16() {
         for name in ["Hat", "Kik", "Bss"] {
-            let e = extracted_of(vec![latin1_text(CHAN_NAME, name)]);
+            let e = extracted_of(vec![latin1_text(199, "10.0.0"), latin1_text(192, name)]);
             assert_eq!(e.channel_names, vec![name.to_string()]);
         }
     }

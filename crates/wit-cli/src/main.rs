@@ -492,54 +492,117 @@ fn flp_probe(a: &std::path::Path, b: Option<&std::path::Path>) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Strip control characters (including bare `\r`/`\n` and terminal escape
+/// sequences) from a name before it ever reaches a `println!`. Names come
+/// from an untrusted file's own bytes; nothing stops a crafted (or merely
+/// corrupt) payload from decoding to text that contains one, and printing
+/// it verbatim would let that text move the cursor or otherwise interfere
+/// with the terminal it's printed to.
+fn sanitize_for_print(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).collect()
+}
+
+fn render_names_for_print(names: &[String]) -> String {
+    names
+        .iter()
+        .map(|n| sanitize_for_print(n))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Plain words for a tempo reading — matches `flp-probe --help`'s own
+/// description of the v25 case ("can't read yet"), rather than
+/// `Tempo`'s `Display` impl, which is worded for engineering diagnostics
+/// ("partial: v25 scalars unreadable") rather than a musician-facing CLI.
+fn render_tempo(tempo: wit_flp::Tempo) -> String {
+    match tempo {
+        wit_flp::Tempo::Unknown => "unknown".to_string(),
+        wit_flp::Tempo::Known(bpm) => format!("{bpm:.3} BPM"),
+        wit_flp::Tempo::PartialV25ScalarsUnreadable => "can't read yet".to_string(),
+    }
+}
+
 fn print_flp_summary(path: &std::path::Path, e: &wit_flp::Extracted) {
     println!("  {}", path.display());
     println!(
         "    FL Studio version: {}  channels: {}  tempo: {}",
         e.fl_version.as_deref().unwrap_or("unknown"),
         e.channels,
-        e.tempo
+        render_tempo(e.tempo)
     );
     if !e.channel_names.is_empty() {
-        println!("    channel names: {}", e.channel_names.join(", "));
+        println!(
+            "    channel names: {}",
+            render_names_for_print(&e.channel_names)
+        );
     }
     if !e.pattern_names.is_empty() {
-        println!("    pattern names: {}", e.pattern_names.join(", "));
+        println!(
+            "    pattern names: {}",
+            render_names_for_print(&e.pattern_names)
+        );
     }
     if !e.plugin_names.is_empty() {
-        println!("    plugin names: {}", e.plugin_names.join(", "));
+        println!(
+            "    plugin names: {}",
+            render_names_for_print(&e.plugin_names)
+        );
     }
     if !e.mixer_insert_names.is_empty() {
         println!(
             "    mixer insert names: {}",
-            e.mixer_insert_names.join(", ")
+            render_names_for_print(&e.mixer_insert_names)
         );
     }
     if !e.arrangement_names.is_empty() {
-        println!("    arrangement names: {}", e.arrangement_names.join(", "));
+        println!(
+            "    arrangement names: {}",
+            render_names_for_print(&e.arrangement_names)
+        );
     }
     if e.format_status == wit_flp::FormatStatus::PartialV25ScalarsUnreadable {
         println!(
             "    note: this FL Studio version scrambles some numeric settings that Wit \
-             can't unscramble yet — the names above are still trustworthy"
+             can't unscramble yet — channel, pattern and plugin names above are still \
+             trustworthy; mixer insert names on this FL Studio version have not been \
+             checked against a real project and may not be"
         );
     }
 }
 
 fn render_flp_change(change: &wit_flp::FlChange) -> String {
+    let n = |name: &str| sanitize_for_print(name);
     match change {
-        wit_flp::FlChange::ChannelAdded { name } => format!("channel added: '{name}'"),
-        wit_flp::FlChange::ChannelRemoved { name } => format!("channel removed: '{name}'"),
+        wit_flp::FlChange::ChannelAdded { name } => format!("channel added: '{}'", n(name)),
+        wit_flp::FlChange::ChannelRemoved { name } => format!("channel removed: '{}'", n(name)),
         wit_flp::FlChange::ChannelRenamed { old, new } => {
-            format!("channel renamed: '{old}' -> '{new}'")
+            format!("channel renamed: '{}' -> '{}'", n(old), n(new))
         }
-        wit_flp::FlChange::PatternAdded { name } => format!("pattern added: '{name}'"),
-        wit_flp::FlChange::PatternRemoved { name } => format!("pattern removed: '{name}'"),
+        wit_flp::FlChange::PatternAdded { name } => format!("pattern added: '{}'", n(name)),
+        wit_flp::FlChange::PatternRemoved { name } => format!("pattern removed: '{}'", n(name)),
         wit_flp::FlChange::PatternRenamed { old, new } => {
-            format!("pattern renamed: '{old}' -> '{new}'")
+            format!("pattern renamed: '{}' -> '{}'", n(old), n(new))
         }
-        wit_flp::FlChange::PluginAdded { name } => format!("plugin added: '{name}'"),
-        wit_flp::FlChange::PluginRemoved { name } => format!("plugin removed: '{name}'"),
+        wit_flp::FlChange::PluginAdded { name } => format!("plugin added: '{}'", n(name)),
+        wit_flp::FlChange::PluginRemoved { name } => format!("plugin removed: '{}'", n(name)),
+        wit_flp::FlChange::MixerInsertAdded { name } => {
+            format!("mixer insert added: '{}'", n(name))
+        }
+        wit_flp::FlChange::MixerInsertRemoved { name } => {
+            format!("mixer insert removed: '{}'", n(name))
+        }
+        wit_flp::FlChange::MixerInsertRenamed { old, new } => {
+            format!("mixer insert renamed: '{}' -> '{}'", n(old), n(new))
+        }
+        wit_flp::FlChange::ArrangementAdded { name } => {
+            format!("arrangement added: '{}'", n(name))
+        }
+        wit_flp::FlChange::ArrangementRemoved { name } => {
+            format!("arrangement removed: '{}'", n(name))
+        }
+        wit_flp::FlChange::ArrangementRenamed { old, new } => {
+            format!("arrangement renamed: '{}' -> '{}'", n(old), n(new))
+        }
         wit_flp::FlChange::TempoChanged { from_bpm, to_bpm } => {
             format!("tempo: {from_bpm} -> {to_bpm} BPM")
         }
