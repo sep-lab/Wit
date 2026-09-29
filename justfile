@@ -23,7 +23,16 @@ test-rust:
 lint: lint-python lint-rust
 
 lint-python:
-    ruff check experiments/ tests/
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # tools/lab/ (stdlib-only Python, PLAN-V2 Phase B) lands from a separate
+    # lane; include it once it exists so `just lint` matches CI exactly
+    # (.github/workflows/ci.yml's lint job) without an edit here when it does.
+    dirs=(experiments/ tests/)
+    if [ -d tools ]; then
+        dirs+=(tools/)
+    fi
+    ruff check "${dirs[@]}"
 
 lint-rust:
     cargo fmt --all --check
