@@ -35,6 +35,10 @@ impl std::fmt::Debug for Offset {
 pub struct Clock {
     pub now: Timestamp,
     pub offset: Offset,
+    /// "Today", "Yesterday" and weekday names. Turn off for anything read
+    /// later than it is made (a share page, a pilot report), where a
+    /// relative day would go stale: labels then always carry the date.
+    pub relative_days: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,7 +73,14 @@ impl Clock {
         Clock {
             now,
             offset: Offset::Fixed(utc_offset_minutes),
+            relative_days: true,
         }
+    }
+
+    /// The same clock with absolute day labels ("Thu 24 Sep").
+    pub fn absolute(mut self) -> Self {
+        self.relative_days = false;
+        self
     }
 
     fn offset_minutes(&self, t: Timestamp) -> i32 {
@@ -101,6 +112,14 @@ impl Clock {
     pub fn day_label(&self, t: Timestamp) -> String {
         let c = self.civil(t);
         let today = self.civil(self.now);
+        let month = MONTHS[(c.month - 1) as usize];
+        if !self.relative_days {
+            return if c.year == today.year {
+                format!("{} {} {month}", WEEKDAYS[c.weekday], c.day)
+            } else {
+                format!("{} {month} {}", c.day, c.year)
+            };
+        }
         match today.local_day - c.local_day {
             0 => "Today".to_string(),
             1 => "Yesterday".to_string(),
@@ -186,6 +205,13 @@ mod tests {
     }
 
     #[test]
+    fn absolute_labels_never_go_stale() {
+        let t = 1_790_291_100; // Thu 24 Sep 2026 23:05 UTC
+        let c = clock_at(t + 60).absolute();
+        assert_eq!(c.moment_label(Timestamp(t)), "Thu 24 Sep 23:05");
+    }
+
+    #[test]
     fn utc_offset_moves_the_day() {
         let t = 1_790_291_100; // Thu 23:05 UTC
         let tehran = Clock::fixed(Timestamp(t + 3 * 86_400), 210);
@@ -198,6 +224,7 @@ mod tests {
         let t0 = 1_790_000_000;
         let clock = Clock {
             now: Timestamp(t0 + 5 * 86_400),
+            relative_days: true,
             offset: Offset::PerInstant(Arc::new(
                 move |t: Timestamp| {
                     if t.0 < t0 {

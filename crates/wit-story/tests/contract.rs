@@ -239,3 +239,72 @@ fn ids_carry_no_names() {
         }
     }
 }
+
+/// Live writes its first autosave into `Backup/` after the set was saved by
+/// hand. The song's ids must not change when that happens.
+#[test]
+fn ableton_ids_survive_the_first_autosave() {
+    let demo = tempfile::tempdir().unwrap();
+    wit_demo::build_demo_library(&demo.path().join("d")).unwrap();
+    let backup = demo.path().join("d/Ableton/Coastline Project/Backup");
+    let mut saves: Vec<std::path::PathBuf> = std::fs::read_dir(&backup)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    saves.sort();
+
+    let lib_dir = tempfile::tempdir().unwrap();
+    let root = lib_dir.path().join("lib");
+    let set = root.join("Song Project/Coastline.als");
+    std::fs::create_dir_all(set.parent().unwrap()).unwrap();
+    let stamp = |p: &std::path::Path, secs: u64| {
+        std::fs::File::options()
+            .write(true)
+            .open(p)
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+            .unwrap();
+    };
+    std::fs::copy(&saves[4], &set).unwrap();
+    stamp(&set, 1_767_645_857);
+    let ids = |lib: &Library| -> Vec<String> {
+        let story = &lib.stories[0];
+        let mut v = vec![story.song_id.0.clone(), story.id.0.clone()];
+        v.extend(
+            story
+                .sessions
+                .iter()
+                .flat_map(|s| s.moments.iter().map(|m| m.id.0.clone())),
+        );
+        v
+    };
+    let before = ids(&build_library(&root, "lib", &fixture_clock()));
+
+    let auto = root.join("Song Project/Backup/Coastline [2026-01-05 200133].als");
+    std::fs::create_dir_all(auto.parent().unwrap()).unwrap();
+    std::fs::copy(&saves[3], &auto).unwrap();
+    stamp(&auto, 1_767_643_293);
+    let lib = build_library(&root, "lib", &fixture_clock());
+    assert_eq!(lib.stories.len(), 1, "one lineage");
+    let after = ids(&lib);
+    assert_eq!(after[0], before[0], "song id");
+    assert_eq!(after[1], before[1], "story id");
+    assert!(
+        after.contains(&before[2]),
+        "the hand save keeps its moment id"
+    );
+}
+
+/// The same folder layout under two watched roots must not collide.
+#[test]
+fn ids_are_unique_across_watched_folders() {
+    let a = tempfile::tempdir().unwrap();
+    let b = tempfile::tempdir().unwrap();
+    wit_demo::build_demo_library(a.path()).unwrap();
+    wit_demo::build_demo_library(b.path()).unwrap();
+    let la = build_library(a.path(), "~/Music", &fixture_clock());
+    let lb = build_library(b.path(), "~/Documents", &fixture_clock());
+    for (x, y) in la.shelf.iter().zip(lb.shelf.iter()) {
+        assert_ne!(x.song_id, y.song_id);
+    }
+}

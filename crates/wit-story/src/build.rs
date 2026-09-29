@@ -26,13 +26,18 @@ const NEVER_CHANGED: &str = "Your project is never changed.";
 
 /// Build the whole library under `root`: every Logic/GarageBand project and
 /// Ableton lineage Wit can discover, the Shelf, and the trust panel.
-/// `root_label` is how the owner sees the folder ("~/Music/Logic"); it goes
-/// into the trust panel instead of the real path.
+///
+/// `root_label` is how the owner sees the folder ("~/Music/Logic"). It goes
+/// into the trust panel instead of the real path, **and it scopes every id**
+/// (song, story, moment), so the same layout under two watched folders never
+/// collides. The caller must therefore pass a label that is unique across
+/// watched folders and never changes for a folder: changing it changes every
+/// id under it.
 pub fn build_library(root: &Path, root_label: &str, clock: &Clock) -> Library {
     let mut songs: Vec<(ShelfCard, Vec<Story>)> = Vec::new();
 
     for project in wit_index::discover_logic_projects(root) {
-        let stories = logic_stories(&project, root, clock);
+        let stories = logic_stories(&project, root, root_label, clock);
         if let Some(mut card) = shelf_card(&stories) {
             // Logic saves a window picture inside each alternative: free
             // artwork. The app fetches it by song id; the Story holds no path.
@@ -47,7 +52,7 @@ pub fn build_library(root: &Path, root_label: &str, clock: &Clock) -> Library {
         }
     }
     for lineage in wit_index::discover_ableton_lineages(root) {
-        let story = ableton_story(&lineage, root, clock);
+        let story = ableton_story(&lineage, root, root_label, clock);
         if let Some(card) = shelf_card(std::slice::from_ref(&story)) {
             songs.push((card, vec![story]));
         }
@@ -277,32 +282,58 @@ fn heat(sentences: &[Sentence]) -> Vec<TrackHeat> {
         .collect()
 }
 
-/// "14 changes Wit can see: 9 added, 3 removed, 2 renamed" — for busy
+/// "14 changes Wit can see: 9 regions added, 3 new audio files, 2 probable
+/// renames" — for busy
 /// saves only. Counts extracted, named changes (sentences), never container
 /// records.
 fn summary(sentences: &[Sentence]) -> Option<String> {
     if sentences.len() <= SUMMARY_THRESHOLD {
         return None;
     }
-    // (singular, plural) per kind of change, in first-seen order.
+    // (singular, plural) per kind of change, in first-seen order. The noun
+    // comes from what the sentence is about (its first name span), so a busy
+    // save reads "12 regions added", not "12 added"; an inferred sentence is
+    // counted as a probable one, keeping its hedge.
     let mut groups: Vec<((&str, &str), usize)> = Vec::new();
     for s in sentences {
-        let noun = match s.icon {
-            Icon::Add => ("added", "added"),
-            Icon::Remove => ("removed", "removed"),
-            Icon::Move => ("moved", "moved"),
-            Icon::Trim => ("resized", "resized"),
-            Icon::Duplicate => ("duplicated", "duplicated"),
-            Icon::Rename => ("renamed", "renamed"),
-            Icon::Record => ("sample swap", "sample swaps"),
-            Icon::Mix | Icon::Mute => ("mix change", "mix changes"),
-            Icon::Plugin => ("plugin change", "plugin changes"),
-            Icon::AudioFile => ("audio file change", "audio file changes"),
-            Icon::Midi | Icon::Automation => {
+        let about = s
+            .spans
+            .iter()
+            .find(|sp| sp.kind != SpanKind::Plain)
+            .map(|sp| sp.kind);
+        let noun = match (s.icon, about) {
+            (Icon::Rename, _) if s.confidence == Confidence::Inferred => {
+                ("probable rename", "probable renames")
+            }
+            (Icon::Add, Some(SpanKind::Region)) => ("region added", "regions added"),
+            (Icon::Remove, Some(SpanKind::Region)) => ("region removed", "regions removed"),
+            (Icon::Add, Some(SpanKind::Track)) => ("track added", "tracks added"),
+            (Icon::Remove, Some(SpanKind::Track)) => ("track removed", "tracks removed"),
+            (Icon::Add, Some(SpanKind::Name)) => {
+                ("new track or MIDI region", "new tracks or MIDI regions")
+            }
+            (Icon::Remove, Some(SpanKind::Name)) => (
+                "track or MIDI region removed",
+                "tracks or MIDI regions removed",
+            ),
+            (Icon::Add, _) => ("addition", "additions"),
+            (Icon::Remove, _) => ("removal", "removals"),
+            (Icon::AudioFile, _) if s.text.starts_with("New") => {
+                ("new audio file", "new audio files")
+            }
+            (Icon::AudioFile, _) => ("audio file removed", "audio files removed"),
+            (Icon::Move, _) => ("move", "moves"),
+            (Icon::Trim, _) => ("resize", "resizes"),
+            (Icon::Duplicate, _) => ("duplicate", "duplicates"),
+            (Icon::Rename, _) => ("rename", "renames"),
+            (Icon::Record, _) => ("sample swap", "sample swaps"),
+            (Icon::Mix | Icon::Mute, _) => ("mix change", "mix changes"),
+            (Icon::Plugin, _) => ("plugin change", "plugin changes"),
+            (Icon::Midi | Icon::Automation, _) => {
                 ("MIDI or automation change", "MIDI or automation changes")
             }
-            Icon::Marker => ("marker change", "marker changes"),
-            Icon::Tempo | Icon::Key | Icon::Meter | Icon::Tracks => {
+            (Icon::Marker, _) => ("marker change", "marker changes"),
+            (Icon::Tempo | Icon::Key | Icon::Meter | Icon::Tracks, _) => {
                 ("song setting", "song settings")
             }
         };
@@ -368,10 +399,20 @@ impl DawFacts {
     fn capability(&self) -> Vec<CapabilityNote> {
         let mut notes = Vec::new();
         match self.daw {
-            Daw::Logic | Daw::GarageBand => notes.push(CapabilityNote {
-                tier: Some(self.tier),
-                text: format!("Wit can't see knob and fader moves in {} yet.", self.label),
-            }),
+            Daw::Logic | Daw::GarageBand => {
+                notes.push(CapabilityNote {
+                    tier: Some(self.tier),
+                    text: format!("Wit can't see knob and fader moves in {} yet.", self.label),
+                });
+                notes.push(CapabilityNote {
+                    tier: Some(self.tier),
+                    text: format!(
+                        "Wit can't tell {}'s tracks apart yet, so there's no track strip for \
+                         this song.",
+                        self.label
+                    ),
+                });
+            }
             Daw::Ableton => {
                 notes.push(CapabilityNote {
                     tier: Some(self.tier),
@@ -955,13 +996,21 @@ fn group_sessions(moments: Vec<Moment>, clock: &Clock) -> Vec<Session> {
 }
 
 /// One Story per Logic alternative.
-pub fn logic_stories(project: &LogicProject, root: &Path, clock: &Clock) -> Vec<Story> {
+pub fn logic_stories(
+    project: &LogicProject,
+    root: &Path,
+    root_label: &str,
+    clock: &Clock,
+) -> Vec<Story> {
     let facts = DawFacts::logic(project.kind);
     let prefix = match project.kind {
         LogicKind::Logic => "logic",
         LogicKind::GarageBand => "garageband",
     };
-    let song_id = song_id(prefix, &relative_key(&project.bundle_path, root));
+    let song_id = song_id(
+        prefix,
+        &format!("{root_label}/{}", relative_key(&project.bundle_path, root)),
+    );
     let many = project.alternatives.len() > 1;
 
     // Logic doesn't record which alternative another was made from, so
@@ -1041,14 +1090,27 @@ pub fn logic_stories(project: &LogicProject, root: &Path, clock: &Clock) -> Vec<
 }
 
 /// One Story for an Ableton lineage (a set and its `Backup/` autosaves).
-pub fn ableton_story(lineage: &AbletonLineage, root: &Path, clock: &Clock) -> Story {
+pub fn ableton_story(
+    lineage: &AbletonLineage,
+    root: &Path,
+    root_label: &str,
+    clock: &Clock,
+) -> Story {
+    // The set's own folder: a save in `Backup/` belongs to the folder above
+    // it. Otherwise the id would change the first time Live writes an
+    // autosave, because `Backup/…` can sort before the set itself.
     let dir = lineage
         .saves
-        .first()
-        .and_then(|p| p.parent())
-        .map(|p| relative_key(p, root))
+        .iter()
+        .filter_map(|p| p.parent())
+        .map(|d| match d.file_name() {
+            Some(n) if n == "Backup" => d.parent().unwrap_or(d),
+            _ => d,
+        })
+        .map(|d| relative_key(d, root))
+        .min()
         .unwrap_or_default();
-    let song_id = song_id("ableton", &format!("{dir}/{}", lineage.name));
+    let song_id = song_id("ableton", &format!("{root_label}/{dir}/{}", lineage.name));
     let mut saves: Vec<Save> = lineage
         .saves
         .iter()
@@ -1121,6 +1183,19 @@ fn shelf_card(stories: &[Story]) -> Option<ShelfCard> {
             .map(|m| m.label.clone()),
         moments_kept,
         copies,
+        copies_label: newest.header.family_label.as_ref().map(|_| {
+            let all_alternatives = newest.family.as_ref().is_some_and(|f| {
+                f.members
+                    .iter()
+                    .all(|m| matches!(m.relation, Relation::Alternative))
+            });
+            match (copies, all_alternatives) {
+                (1, true) => "+1 alternative".to_string(),
+                (n, true) => format!("+{n} alternatives"),
+                (1, false) => "+1 copy".to_string(),
+                (n, false) => format!("+{n} copies"),
+            }
+        }),
         artwork: Artwork::Generated { seed },
         digest,
         story_ids: story_ids.into_iter().map(|(_, id)| id).collect(),

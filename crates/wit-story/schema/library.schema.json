@@ -436,7 +436,7 @@
           "minimum": 0
         },
         "label": {
-          "description": "Credits whoever actually kept the saves: \"41 moments kept · Logic\nkeeps 10\" once Wit has kept some, \"10 moments from Logic's own\nbackups\" while every moment is still the DAW's.",
+          "description": "Credits whoever actually kept the saves: \"41 moments kept · Logic\nkeeps 10\" once Wit has kept some, \"10 moments on disk · Logic keeps\n10\" while every moment is still the DAW's own.",
           "type": "string"
         },
         "moments": {
@@ -525,7 +525,7 @@
           }
         },
         "note": {
-          "description": "The line shown when there are no sentences (\"No change Wit can see.\nProbably a mix move, or you just hit save. Wit kept it anyway.\").",
+          "description": "The line shown when there are no sentences (\"No change Wit can see —\nmaybe a knob or fader move, or you just hit save.\"). It says Wit kept\na copy only for a [`MomentSource::KeptByWit`] moment.",
           "type": [
             "string",
             "null"
@@ -550,7 +550,7 @@
           "type": "string"
         },
         "summary": {
-          "description": "A one-line digest when there are many sentences (\"14 changes Wit can\nsee: 9 added, 3 removed, 2 renamed\"), so the card and timeline stay\nreadable on a busy save. `None` for three sentences or fewer.",
+          "description": "A one-line digest when there are many sentences (\"14 changes Wit can\nsee: 9 regions added, 3 new audio files, 2 probable renames\"), so the card and timeline stay\nreadable on a busy save. `None` for three sentences or fewer.",
           "type": [
             "string",
             "null"
@@ -1082,6 +1082,13 @@
           "format": "uint32",
           "minimum": 0
         },
+        "copies_label": {
+          "description": "The badge text: \"+1 alternative\", \"+2 copies\". `None` = no badge.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "daw": {
           "$ref": "#/$defs/Daw"
         },
@@ -1321,7 +1328,7 @@
           "$ref": "#/$defs/SongId"
         },
         "tracks": {
-          "description": "Heat-strip rows, in the DAW's track order where known.",
+          "description": "Heat-strip rows. Empty when Wit can't tell the DAW's tracks apart yet\n(Logic today; a capability note says so). Ableton rows are in\ntrack-id order until display order is read.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/TrackLane"

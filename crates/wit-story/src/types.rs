@@ -33,7 +33,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Bumped on any breaking change to these types.
-pub const SCHEMA_VERSION: u32 = 1;
+///
+/// 2 (2026-09-29): ids are scoped by the watched folder, and an Ableton
+/// song's id no longer depends on which save sorts first.
+pub const SCHEMA_VERSION: u32 = 2;
 
 macro_rules! id_type {
     ($(#[$meta:meta])* $name:ident) => {
@@ -105,6 +108,8 @@ pub struct ShelfCard {
     /// Other members of this song's family (copies, alternatives,
     /// restores) — the "+2 copies" badge. 0 = no badge.
     pub copies: u32,
+    /// The badge text: "+1 alternative", "+2 copies". `None` = no badge.
+    pub copies_label: Option<String>,
     pub artwork: Artwork,
     /// The tray's one line for this song. Worded "no changes Wit can see",
     /// never "nothing new".
@@ -129,7 +134,9 @@ pub struct Story {
     pub id: StoryId,
     pub song_id: SongId,
     pub header: SongHeader,
-    /// Heat-strip rows, in the DAW's track order where known.
+    /// Heat-strip rows. Empty when Wit can't tell the DAW's tracks apart yet
+    /// (Logic today; a capability note says so). Ableton rows are in
+    /// track-id order until display order is read.
     pub tracks: Vec<TrackLane>,
     /// Oldest first. Saves more than 45 minutes apart start a new session.
     pub sessions: Vec<Session>,
@@ -177,8 +184,8 @@ pub struct KeptSummary {
     /// has since recycled them).
     pub kept_by_wit: u32,
     /// Credits whoever actually kept the saves: "41 moments kept · Logic
-    /// keeps 10" once Wit has kept some, "10 moments from Logic's own
-    /// backups" while every moment is still the DAW's.
+    /// keeps 10" once Wit has kept some, "10 moments on disk · Logic keeps
+    /// 10" while every moment is still the DAW's own.
     pub label: String,
 }
 
@@ -247,11 +254,12 @@ pub struct Moment {
     /// Compared with [`Moment::compared_with`].
     pub sentences: Vec<Sentence>,
     /// A one-line digest when there are many sentences ("14 changes Wit can
-    /// see: 9 added, 3 removed, 2 renamed"), so the card and timeline stay
+    /// see: 9 regions added, 3 new audio files, 2 probable renames"), so the card and timeline stay
     /// readable on a busy save. `None` for three sentences or fewer.
     pub summary: Option<String>,
-    /// The line shown when there are no sentences ("No change Wit can see.
-    /// Probably a mix move, or you just hit save. Wit kept it anyway.").
+    /// The line shown when there are no sentences ("No change Wit can see —
+    /// maybe a knob or fader move, or you just hit save."). It says Wit kept
+    /// a copy only for a [`MomentSource::KeptByWit`] moment.
     pub note: Option<String>,
     /// Sparse heat-strip column for this moment.
     pub track_heat: Vec<TrackHeat>,
