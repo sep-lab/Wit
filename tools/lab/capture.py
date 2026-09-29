@@ -131,6 +131,9 @@ class _ChangedDuringCopy(Exception):
     pass
 
 
+NON_REGULAR = "  ! skipping %s: it is not a regular file (FIFO, socket or device) and is never opened"
+
+
 def _log(msg: str) -> None:
     print(msg, flush=True)
 
@@ -170,11 +173,12 @@ def classify(daw: str, rel: str) -> Optional[str]:
     return None
 
 
-def collect(run_real: Path, daw: str) -> List[Dict]:
+def collect(run_real: Path, daw: str, warn=None) -> List[Dict]:
     """
     Walk the run folder (no symlink following) and return the snapshot set:
     [{"path", "role", "size", "mtime_ns"}], sorted by path. Raises SafetyError if
-    any symlink under the run folder points outside it.
+    any symlink under the run folder points outside it. A FIFO, socket or device
+    named like a project file is never opened; `warn(relpath)` is told about it.
     """
     base = str(run_real)
     out = []
@@ -202,6 +206,8 @@ def collect(run_real: Path, daw: str) -> List[Dict]:
                 continue
             st = os.lstat(full)
             if not stat.S_ISREG(st.st_mode):
+                if warn is not None:
+                    warn(rel)
                 continue  # a FIFO, socket or device named like a project file is never opened
             out.append({"path": rel, "role": role, "size": st.st_size, "mtime_ns": st.st_mtime_ns})
     out.sort(key=lambda e: e["path"])
@@ -262,8 +268,15 @@ def wait_for_save(run_real: Path, daw: str, prev_files: Optional[List[Dict]], al
     """
     deadline = clock() + timeout
     last_sig, since, judged, last_note = None, clock(), None, None
+    warned = set()
+
+    def warn(rel: str) -> None:
+        if rel not in warned:  # once per path, not once per poll
+            warned.add(rel)
+            log(NON_REGULAR % rel)
+
     while True:
-        entries = collect(run_real, daw)
+        entries = collect(run_real, daw, warn)
         sig = signature(entries)
         now = clock()
         if sig != last_sig:
@@ -413,7 +426,11 @@ def live_captures(m: Dict) -> List[Dict]:
 
 
 def _step_index(m: Dict, key: str) -> int:
-    return next(i for i, s in enumerate(m["steps"]) if s["key"] == key)
+    for i, s in enumerate(m["steps"]):
+        if s["key"] == key:
+            return i
+    raise ValueError("step %r is not in this run's step list — was manifest.json edited by hand? "
+                     "Fix it or start a new run." % (key,))
 
 
 def _find_step(m: Dict, want: str) -> Optional[Dict]:
@@ -466,7 +483,8 @@ def cmd_init(args) -> int:
         raise FileNotFoundError("project %s does not exist — Save As into %s first"
                                 % (labcore.redact(args.project), labcore.redact(rd)))
     _check_project_kind(daw, project)
-    entries = collect(rd, daw)  # also refuses escaping symlinks anywhere in the run folder
+    # collect() also refuses escaping symlinks anywhere in the run folder.
+    entries = collect(rd, daw, lambda rel: _log(NON_REGULAR % rel))
 
     cdir = corpus_run_dir(daw, run)
     mpath = cdir / "manifest.json"
@@ -519,6 +537,8 @@ def cmd_watch(args) -> int:
 
     step = _find_step(m, args.step) if args.step else (
         _find_step(m, m["current_step"]) if m["current_step"] else None)
+    if step is None and not args.step and m["current_step"]:
+        _step_index(m, m["current_step"])  # raises the clear hand-edited-manifest error
     if step is None:
         _log("nothing to watch: %s" % ("no such step for %s: %s" % (daw, args.step) if args.step
                                          else "the run is complete"))
@@ -590,6 +610,7 @@ def cmd_watch(args) -> int:
         "edit": step["edit"],
         "expected": step["expected"],
         "target": step.get("target"),
+        "track_effects": {k: step[k] for k in ("adds_track", "renames_track", "deletes_track") if step.get(k)},
         "captured_at": captured_at,
         "stable_for_s": round(stable_for, 2),
         "allow_identical": allow_identical,
@@ -633,6 +654,7 @@ def cmd_next(args) -> int:
     if cur is None:
         _log("the run is complete: %d captured, %d skipped" % (len(live_captures(m)), len(m["skipped"])))
         return EXIT_OK
+    i = _step_index(m, cur)  # a hand-edited, unknown step is a clear error, not "no capture yet"
     done = any(c["key"] == cur for c in live_captures(m)) or any(s["key"] == cur for s in m["skipped"])
     if args.skip:
         if not done:
@@ -641,7 +663,6 @@ def cmd_next(args) -> int:
         _log("step %s has no capture yet. Run `capture.py watch` after saving, or "
              "`capture.py next --skip \"why\"` if this DAW cannot do it." % cur)
         return EXIT_ERROR
-    i = _step_index(m, cur)
     nxt = m["steps"][i + 1] if i + 1 < len(m["steps"]) else None
     m["current_step"] = nxt["key"] if nxt else None
     save_manifest(mpath, m)
@@ -675,9 +696,9 @@ def cmd_status(args) -> int:
         _log(" %s%s %-4s %-24s%s" % (cur, mark, s["key"], s["id"], extra))
     _log("%d of %d captured, %d skipped" % (len(captured), len(m["steps"]), len(skipped)))
     if m["current_step"]:
-        step = _find_step(m, m["current_step"])
+        index = _step_index(m, m["current_step"])
         _log("")
-        _log(lab_steps.format_instructions(step, daw, len(m["steps"]), _step_index(m, step["key"]) + 1))
+        _log(lab_steps.format_instructions(m["steps"][index], daw, len(m["steps"]), index + 1))
     else:
         _log("the run is complete")
     return EXIT_OK
