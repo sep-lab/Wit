@@ -446,7 +446,7 @@ ordering, and more). [PR #28](https://github.com/sep-lab/Wit/pull/28) fixed all 
 whichever bug is found next:
 
 ```bash
-python3 -m pytest tests/ -q -rx     # 293 passed, 13 skipped (real-fixture opt-ins), 0 xfail
+python3 -m pytest tests/ -q -rx     # 357 passed, 16 skipped (real-fixture opt-ins), 0 xfail
 ```
 
 You do not need to be a systems programmer. If you have shipped a session to a

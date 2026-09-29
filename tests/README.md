@@ -114,8 +114,8 @@ The suite used to carry **21 strict `xfail`s pinning 13 real defects** found whi
 these tests, each documented in full in its `reason=` string.
 [PR #28](https://github.com/sep-lab/Wit/pull/28) fixed all 13, closing
 [issue #10](https://github.com/sep-lab/Wit/issues/10) — run
-`python3 -m pytest tests/ -q -rx` yourself and there are **0 `xfail`s today** (293 passed,
-13 skipped, all real-fixture/timing opt-ins). The strict-xfail rule in "Adding a test"
+`python3 -m pytest tests/ -q -rx` yourself and there are **0 `xfail`s today** (357 passed,
+16 skipped, all real-fixture/timing opt-ins). The strict-xfail rule in "Adding a test"
 above stays in force for whichever bug is found next; this table is kept as the record of
 what it caught last time, not as a list of open bugs:
 

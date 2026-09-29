@@ -74,8 +74,8 @@ Each ADR lists what evidence would overturn it. Bring that evidence, or leave th
 
 ## Testing
 
-`tests/` holds **306 tests** (pytest, run with `python3 -m pytest tests/ -q`; measured via
-`python3 -m pytest tests/ -q -rx`: 293 passed, 13 skipped, 0 xfail). CI runs them
+`tests/` holds **373 tests** (pytest, run with `python3 -m pytest tests/ -q`; measured via
+`python3 -m pytest tests/ -q -rx`: 357 passed, 16 skipped, 0 xfail). CI runs them
 on Python 3.9/3.11/3.13 across ubuntu and macOS with a coverage floor.
 
 Two rules specific to this suite:
