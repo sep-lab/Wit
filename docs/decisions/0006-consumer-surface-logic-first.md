@@ -1,7 +1,8 @@
 # ADR-0006: The first product is a Logic-first, read-only comprehension surface
 
-- **Status:** Accepted
+- **Status:** Accepted, amended
 - **Date:** 2026-08-06
+- **Amended by:** [ADR-0007](0007-restore-as-copy.md) (decision 4: restore may write a new copy), [ADR-0008](0008-cross-platform-pilot.md) (the macOS-only surface)
 
 ## Context
 

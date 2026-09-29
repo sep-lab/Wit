@@ -172,7 +172,9 @@ fn write_logic_bundle(
     chain: &[SongSpec],
     version: [u8; 2],
     with_backups: bool,
+    times: &[i64],
 ) -> Result<usize, DemoError> {
+    debug_assert_eq!(chain.len(), times.len());
     let alt_dir = bundle.join("Alternatives").join(alternative);
     let (backups, current) = chain.split_at(chain.len() - 1);
 
@@ -184,13 +186,16 @@ fn write_logic_bundle(
                 .join(format!("{slot:02}"))
                 .join("ProjectData");
             write(&path, &logic::build_project_data(spec, version))?;
+            stamp(&path, times[slot])?;
             written += 1;
         }
     }
+    let current_path = alt_dir.join("ProjectData");
     write(
-        &alt_dir.join("ProjectData"),
+        &current_path,
         &logic::build_project_data(&current[0], version),
     )?;
+    stamp(&current_path, times[times.len() - 1])?;
     written += 1;
 
     Ok(written)
@@ -261,6 +266,46 @@ const ALS_TIMESTAMPS: [&str; 5] = [
     "2026-01-05 204417",
 ];
 
+/// Save times, Unix seconds UTC. Fixed, never `now()`, so the tree is
+/// byte-identical *and* time-identical run to run, and the app's session
+/// grouping (saves more than 45 minutes apart start a new session) has
+/// something realistic to group: Coastline is three evening sessions across
+/// a week. These are invented, like everything else in the demo library.
+const COASTLINE_TIMES: [i64; 10] = [
+    1_790_021_520,
+    1_790_023_620,
+    1_790_026_200,
+    1_790_103_900,
+    1_790_106_060,
+    1_790_108_280,
+    1_790_110_920,
+    1_790_288_040,
+    1_790_289_660,
+    1_790_291_100,
+];
+const NIGHT_BUS_TIMES: [i64; 3] = [1_790_187_000, 1_790_189_520, 1_790_191_800];
+const NIGHT_BUS_ALT_TIMES: [i64; 2] = [1_790_193_900, 1_790_196_000];
+const KITCHEN_JAM_TIMES: [i64; 1] = [1_790_421_600];
+/// The same instants as [`ALS_TIMESTAMPS`], read as UTC.
+const ALS_TIMES: [i64; 5] = [
+    1_767_521_700,
+    1_767_522_612,
+    1_767_525_525,
+    1_767_643_293,
+    1_767_645_857,
+];
+
+/// Set a file's modification time — the only clock the app reads for when a
+/// save happened.
+fn stamp(path: &Path, unix_secs: i64) -> Result<(), DemoError> {
+    let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(unix_secs as u64);
+    std::fs::File::options()
+        .write(true)
+        .open(path)?
+        .set_modified(t)?;
+    Ok(())
+}
+
 /// Build the whole demo library under `dest`.
 ///
 /// Refuses unless `dest` is missing or an empty directory. Deterministic:
@@ -281,19 +326,28 @@ pub fn build_demo_library(dest: &Path) -> Result<DemoLibrary, DemoError> {
         &coastline_chain(),
         VERSION_LOGIC,
         true,
+        &COASTLINE_TIMES,
     )?;
 
     // Logic — a second project with two alternatives, so the Shelf shows
     // more than one card and Logic's own branching is represented.
     let night_bus = dest.join("Logic/Night Bus.logicx");
     let night_bus_chain = night_bus_chain();
-    total_versions += write_logic_bundle(&night_bus, "000", &night_bus_chain, VERSION_LOGIC, true)?;
+    total_versions += write_logic_bundle(
+        &night_bus,
+        "000",
+        &night_bus_chain,
+        VERSION_LOGIC,
+        true,
+        &NIGHT_BUS_TIMES,
+    )?;
     total_versions += write_logic_bundle(
         &night_bus,
         "001",
         &night_bus_chain[..2],
         VERSION_LOGIC,
         true,
+        &NIGHT_BUS_ALT_TIMES,
     )?;
 
     // GarageBand — one alternative, no backups. That is the real shape:
@@ -305,13 +359,19 @@ pub fn build_demo_library(dest: &Path) -> Result<DemoLibrary, DemoError> {
         &night_bus_chain[..1],
         VERSION_GARAGEBAND,
         false,
+        &KITCHEN_JAM_TIMES,
     )?;
 
     // Ableton — one lineage of 5 autosaves, in Live's own Backup/ layout.
     let backup_dir = dest.join("Ableton/Coastline Project/Backup");
-    for (spec, stamp) in coastline_als_chain().iter().zip(ALS_TIMESTAMPS) {
-        let path = backup_dir.join(format!("Coastline [{stamp}].als"));
+    for ((spec, name_stamp), when) in coastline_als_chain()
+        .iter()
+        .zip(ALS_TIMESTAMPS)
+        .zip(ALS_TIMES)
+    {
+        let path = backup_dir.join(format!("Coastline [{name_stamp}].als"));
         write(&path, &ableton::build_als(spec)?)?;
+        stamp(&path, when)?;
         total_versions += 1;
     }
 
@@ -425,6 +485,27 @@ mod tests {
         // ...and the next pair does have something to say.
         let c = wit_als::parse_file(&lineage.saves[2]).unwrap();
         assert!(!wit_diff::diff(&b, &c).is_empty());
+    }
+
+    #[test]
+    fn saves_carry_fixed_times_so_sessions_are_reproducible() {
+        let (_dir, lib) = built();
+        let projects = wit_index::discover_logic_projects(&lib.root);
+        let coastline = projects.iter().find(|p| p.name == "Coastline").unwrap();
+        let times: Vec<i64> = coastline
+            .all_versions()
+            .iter()
+            .map(|p| {
+                std::fs::metadata(p)
+                    .unwrap()
+                    .modified()
+                    .unwrap()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64
+            })
+            .collect();
+        assert_eq!(times, COASTLINE_TIMES.to_vec());
     }
 
     #[test]

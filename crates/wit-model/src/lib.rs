@@ -20,7 +20,7 @@ mod change;
 mod fmt;
 mod model;
 
-pub use change::{render_text, ChangeRecord, MixField, MixValue};
+pub use change::{render_text, BarPos, ChangeRecord, MixField, MixValue, TimeSignature};
 pub use fmt::{fmt_num, round3, round_places};
 pub use model::{Clip, Device, Fingerprint, Model, Track, TrackId, TrackKind};
 

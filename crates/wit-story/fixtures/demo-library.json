@@ -1,0 +1,1826 @@
+{
+  "schema_version": 1,
+  "shelf": [
+    {
+      "song_id": "garageband:d0a4d491d8137d0d",
+      "title": "Kitchen Jam",
+      "daw": "garage_band",
+      "last_worked": 1790421600,
+      "last_worked_label": "Today 11:20",
+      "moments_kept": 1,
+      "copies": 0,
+      "artwork": {
+        "kind": "generated",
+        "seed": 3257129171
+      },
+      "digest": "1 moment so far",
+      "story_ids": [
+        "garageband:d0a4d491d8137d0d#000"
+      ]
+    },
+    {
+      "song_id": "logic:2c11169f4ce16736",
+      "title": "Coastline",
+      "daw": "logic",
+      "last_worked": 1790291100,
+      "last_worked_label": "Thu 23:05",
+      "moments_kept": 10,
+      "copies": 0,
+      "artwork": {
+        "kind": "generated",
+        "seed": 3977148397
+      },
+      "digest": "2 changes Wit can see in your last session",
+      "story_ids": [
+        "logic:2c11169f4ce16736#000"
+      ]
+    },
+    {
+      "song_id": "logic:8c005a6f56311456",
+      "title": "Night Bus",
+      "daw": "logic",
+      "last_worked": 1790196000,
+      "last_worked_label": "Wed 20:40",
+      "moments_kept": 5,
+      "copies": 1,
+      "artwork": {
+        "kind": "generated",
+        "seed": 680535311
+      },
+      "digest": "1 change Wit can see in your last session",
+      "story_ids": [
+        "logic:8c005a6f56311456#001",
+        "logic:8c005a6f56311456#000"
+      ]
+    },
+    {
+      "song_id": "ableton:9f6f7bd24d192524",
+      "title": "Coastline",
+      "daw": "ableton",
+      "last_worked": 1767645857,
+      "last_worked_label": "5 Jan 20:44",
+      "moments_kept": 5,
+      "copies": 0,
+      "artwork": {
+        "kind": "generated",
+        "seed": 4283841061
+      },
+      "digest": "4 changes Wit can see in your last session",
+      "story_ids": [
+        "ableton:9f6f7bd24d192524"
+      ]
+    }
+  ],
+  "stories": [
+    {
+      "id": "garageband:d0a4d491d8137d0d#000",
+      "song_id": "garageband:d0a4d491d8137d0d",
+      "header": {
+        "title": "Kitchen Jam",
+        "lineage": null,
+        "daw": "garage_band",
+        "daw_label": "GarageBand",
+        "tempo_bpm": 88.0,
+        "key": null,
+        "time_signature": null,
+        "last_worked": 1790421600,
+        "subtitle": "GarageBand · 88 BPM · last worked Today 11:20",
+        "kept": {
+          "moments": 1,
+          "daw_keeps": null,
+          "kept_by_wit": 0,
+          "label": "1 moment on disk · GarageBand keeps no backups"
+        },
+        "family_label": null
+      },
+      "tracks": [],
+      "sessions": [
+        {
+          "id": "s0",
+          "started": 1790421600,
+          "ended": 1790421600,
+          "duration": null,
+          "label": "Today · morning",
+          "moments": [
+            {
+              "id": "garageband:d0a4d491d8137d0d#000@1790421600",
+              "at": 1790421600,
+              "label": "Today 11:20",
+              "heading": "The oldest moment",
+              "subheading": "Today 11:20 · nothing earlier to compare with",
+              "compared_with": null,
+              "source": {
+                "kind": "logic_current",
+                "alternative": "000"
+              },
+              "source_label": "current save",
+              "verdict": "first",
+              "weight": 0,
+              "sentences": [],
+              "summary": null,
+              "note": "The oldest save Wit has for this song.",
+              "track_heat": [],
+              "listen": [],
+              "actions": {
+                "listen": false,
+                "open_as_copy": false,
+                "send": false
+              }
+            }
+          ]
+        }
+      ],
+      "overview": null,
+      "capability": [
+        {
+          "tier": "structure",
+          "text": "Wit can't see knob and fader moves in GarageBand yet."
+        },
+        {
+          "tier": null,
+          "text": "Your project is never changed."
+        }
+      ],
+      "family": null,
+      "send_ready": null
+    },
+    {
+      "id": "logic:2c11169f4ce16736#000",
+      "song_id": "logic:2c11169f4ce16736",
+      "header": {
+        "title": "Coastline",
+        "lineage": null,
+        "daw": "logic",
+        "daw_label": "Logic",
+        "tempo_bpm": 124.0,
+        "key": null,
+        "time_signature": null,
+        "last_worked": 1790291100,
+        "subtitle": "Logic · 124 BPM · last worked Thu 23:05",
+        "kept": {
+          "moments": 10,
+          "daw_keeps": 10,
+          "kept_by_wit": 0,
+          "label": "10 moments on disk · Logic keeps 10"
+        },
+        "family_label": null
+      },
+      "tracks": [],
+      "sessions": [
+        {
+          "id": "s0",
+          "started": 1790021520,
+          "ended": 1790026200,
+          "duration": {
+            "secs": 4680,
+            "source": "save_times"
+          },
+          "label": "Mon · evening · about 1h 20m",
+          "moments": [
+            {
+              "id": "logic:2c11169f4ce16736#000@1790021520",
+              "at": 1790021520,
+              "label": "Mon 20:12",
+              "heading": "The oldest moment",
+              "subheading": "Mon 20:12 · nothing earlier to compare with",
+              "compared_with": null,
+              "source": {
+                "kind": "logic_backup",
+                "alternative": "000",
+                "slot": "00"
+              },
+              "source_label": "Logic backup 00",
+              "verdict": "first",
+              "weight": 0,
+              "sentences": [],
+              "summary": null,
+              "note": "The oldest save Wit has for this song.",
+              "track_heat": [],
+              "listen": [],
+              "actions": {
+                "listen": false,
+                "open_as_copy": false,
+                "send": false
+              }
+            },
+            {
+              "id": "logic:2c11169f4ce16736#000@1790023620",
+              "at": 1790023620,
+              "label": "Mon 20:47",
+              "heading": "Routine save",
+              "subheading": "Mon 20:47 · compared with the save at Mon 20:12",
+              "compared_with": "logic:2c11169f4ce16736#000@1790021520",
+              "source": {
+                "kind": "logic_backup",
+                "alternative": "000",
+                "slot": "01"
+              },
+              "source_label": "Logic backup 01",
+              "verdict": "nothing_visible",
+              "weight": 0,
+              "sentences": [],
+              "summary": null,
+              "note": "No change Wit can see — maybe a knob or fader move, or you just hit save.",
+              "track_heat": [],
+              "listen": [],
+              "actions": {
+                "listen": false,
+                "open_as_copy": false,
+                "send": false
+              }
+            },
+            {
+              "id": "logic:2c11169f4ce16736#000@1790026200",
+              "at": 1790026200,
+              "label": "Mon 21:30",
+              "heading": "What changed at Mon 21:30",
+              "subheading": "compared with the save at Mon 20:47",
+              "compared_with": "logic:2c11169f4ce16736#000@1790023620",
+              "source": {
+                "kind": "logic_backup",
+                "alternative": "000",
+                "slot": "02"
+              },
+              "source_label": "Logic backup 02",
+              "verdict": "changed",
+              "weight": 1,
+              "sentences": [
+                {
+                  "icon": "add",
+                  "text": "Added region 'Chorus Rhodes'",
+                  "spans": [
+                    {
+                      "kind": "plain",
+                      "text": "Added region '"
+                    },
+                    {
+                      "kind": "region",
+                      "text": "Chorus Rhodes"
+                    },
+                    {
+                      "kind": "plain",
+                      "text": "'"
+                    }
+                  ],
+                  "track": null,
+                  "lane": null,
+                  "place": null,
+                  "place_label": null,
+                  "confidence": "exact",
+                  "tier": "structure"
+                }
+              ],
+              "summary": null,
+              "note": null,
+              "track_heat": [],
+              "listen": [],
+              "actions": {
+                "listen": false,
+                "open_as_copy": false,
+                "send": false
+              }
+            }
+          ]
+        },
+        {
+          "id": "s1",
+          "started": 1790103900,
+          "ended": 1790110920,
+          "duration": {
+            "secs": 7020,
+            "source": "save_times"
+          },
+          "label": "Tue · evening · about 1h 55m",
+          "moments": [
+            {
+              "id": "logic:2c11169f4ce16736#000@1790103900",
+              "at": 1790103900,
+              "label": "Tue 19:05",
+              "heading": "What changed at Tue 19:05",
+              "subheading": "compared with the save at Mon 21:30",
+              "compared_with": "logic:2c11169f4ce16736#000@1790026200",
+              "source": {
+                "kind": "logic_backup",
+                "alternative": "000",
+                "slot": "03"
+              },
+              "source_label": "Logic backup 03",
+              "verdict": "changed",
+              "weight": 1,
+              "sentences": [
+                {
+                  "icon": "rename",
+                  "text": "Probably renamed 'Upright Bass' to 'Upright Bass (DI)'",
+                  "spans": [
+                    {
+                      "kind": "plain",
+                      "text": "Probably renamed '"
+                    },
+                    {
+                      "kind": "name",
+                      "text": "Upright Bass"
+                    },
+                    {
+                      "kind": "plain",
+                      "text": "' to '"
+                    },
+                    {
+                      "kind": "name",
+                      "text": "Upright Bass (DI)"
+                    },
+                    {
+                      "kind": "plain",
+                      "text": "'"
+                    }
+                  ],
+                  "track": null,
+                  "lane": null,
+                  "place": null,
+                  "place_label": null,
+                  "confidence": "inferred",
+                  "tier": "structure"
+                }
+              ],
+              "summary": null,
+              "note": null,
+              "track_heat": [],
+              "listen": [],
+              "actions": {
+                "listen": false,
+                "open_as_copy": false,
+                "send": false
+              }
+            },
+            {
+              "id": "logic:2c11169f4ce16736#000@1790106060",
+              "at": 1790106060,
+              "label": "Tue 19:41",
+              "heading": "Routine save",
+              "subheading": "Tue 19:41 · compared with the save at Tue 19:05",
+              "compared_with": "logic:2c11169f4ce16736#000@1790103900",
+              "source": {
+                "kind": "logic_backup",
+                "alternative": "000",
+                "slot": "04"
+              },
+              "source_label": "Logic backup 04",
+              "verdict": "nothing_visible",
+              "weight": 0,
+              "sentences": [],
+              "summary": null,
+              "note": "No change Wit can see — maybe a knob or fader move, or you just hit save.",
+              "track_heat": [],
+              "listen": [],
+              "actions": {
+                "listen": false,
+                "open_as_copy": false,
+                "send": false
+              }
+            },
+            {
+              "id": "logic:2c11169f4ce16736#000@1790108280",
+              "at": 1790108280,
+              "label": "Tue 20:18",
+              "heading": "What changed at Tue 20:18",
+              "subheading": "compared with the save at Tue 19:41",
+              "compared_with": "logic:2c11169f4ce16736#000@1790106060",
+              "source": {
+                "kind": "logic_backup",
+                "alternative": "000",
+                "slot": "05"
+              },
+              "source_label": "Logic backup 05",
+              "verdict": "changed",
+              "weight": 1,
+              "sentences": [
+                {
+                  "icon": "tempo",
+                  "text": "Tempo 120 → 124 BPM",
+                  "spans": [
+                    {
+                      "kind": "plain",
+                      "text": "Tempo "
+                    },
+                    {
+                      "kind": "value",
+                      "text": "120 → 124 BPM"
+                    }
+                  ],
+                  "track": null,
+                  "lane": null,
+                  "place": null,
+                  "place_label": null,
+                  "confidence": "exact",
+                  "tier": "structure"
+                }
+              ],
+              "summary": null,
+              "note": null,
+              "track_heat": [],
+              "listen": [],
+              "actions": {
+                "listen": false,
+                "open_as_copy": false,
+                "send": false
+              }
+            },
+            {
+              "id": "logic:2c11169f4ce16736#000@1790110920",
+              "at": 1790110920,
+              "label": "Tue 21:02",
+              "heading": "What changed at Tue 21:02",
+              "subheading": "compared with the save at Tue 20:18",
+              "compared_with": "logic:2c11169f4ce16736#000@1790108280",
+              "source": {
+                "kind": "logic_backup",
+                "alternative": "000",
+                "slot": "06"
+              },
+              "source_label": "Logic backup 06",
+              "verdict": "changed",
+              "weight": 2,
+              "sentences": [
+                {
+                  "icon": "add",
+                  "text": "Added region 'Brushed Kit'",
+                  "spans": [
+                    {
+                      "kind": "plain",
+                      "text": "Added region '"
+                    },
+                    {
+                      "kind": "region",
+                      "text": "Brushed Kit"
+                    },
+                    {
+                      "kind": "plain",
+                      "text": "'"
+                    }
+                  ],
+                  "track": null,
+                  "lane": null,
+                  "place": null,
+                  "place_label": null,
+                  "confidence": "exact",
+                  "tier": "structure"
+                },
+                {
+                  "icon": "audio_file",
+                  "text": "New audio file 'Brushed Kit 124.caf'",
+                  "spans": [
+                    {
+                      "kind": "plain",
+                      "text": "New audio file '"
+                    },
+                    {
+                      "kind": "file",
+                      "text": "Brushed Kit 124.caf"
+                    },
+                    {
+                      "kind": "plain",
+                      "text": "'"
+                    }
+                  ],
+                  "track": null,
+                  "lane": null,
+                  "place": null,
+                  "place_label": null,
+                  "confidence": "exact",
+                  "tier": "structure"
+                }
+              ],
+              "summary": null,
+              "note": null,
+              "track_heat": [],
+              "listen": [],
+              "actions": {
+                "listen": false,
+                "open_as_copy": false,
+                "send": false
+              }
+            }
+          ]
+        },
+        {
+          "id": "s2",
+          "started": 1790288040,
+          "ended": 1790291100,
+          "duration": {
+            "secs": 3060,
+            "source": "save_times"
+          },
+          "label": "Thu · night · about 50m",
+          "moments": [
+            {
+              "id": "logic:2c11169f4ce16736#000@1790288040",
+              "at": 1790288040,
+              "label": "Thu 22:14",
+              "heading": "Routine save",
+              "subheading": "Thu 22:14 · compared with the save at Tue 21:02",
+              "compared_with": "logic:2c11169f4ce16736#000@1790110920",
+              "source": {
+                "kind": "logic_backup",
+                "alternative": "000",
+                "slot": "07"
+              },
+              "source_label": "Logic backup 07",
+              "verdict": "nothing_visible",
+              "weight": 0,
+              "sentences": [],
+              "summary": null,
+              "note": "No change Wit can see — maybe a knob or fader move, or you just hit save.",
+              "track_heat": [],
+              "listen": [],
+              "actions": {
+                "listen": false,
+                "open_as_copy": false,
+                "send": false
+              }
+            },
+            {
+              "id": "logic:2c11169f4ce16736#000@1790289660",
+              "at": 1790289660,
+              "label": "Thu 22:41",
+              "heading": "What changed at Thu 22:41",
+              "subheading": "compared with the save at Thu 22:14",
+              "compared_with": "logic:2c11169f4ce16736#000@1790288040",
+              "source": {
+                "kind": "logic_backup",
+                "alternative": "000",
+                "slot": "08"
+              },
+              "source_label": "Logic backup 08",
+              "verdict": "changed",
+              "weight": 1,
+              "sentences": [
+                {
+                  "icon": "add",
+                  "text": "New track or MIDI region 'Wurli Pad'",
+                  "spans": [
+                    {
+                      "kind": "plain",
+                      "text": "New track or MIDI region '"
+                    },
+                    {
+                      "kind": "name",
+                      "text": "Wurli Pad"
+                    },
+                    {
+                      "kind": "plain",
+                      "text": "'"
+                    }
+                  ],
+                  "track": null,
+                  "lane": null,
+                  "place": null,
+                  "place_label": null,
+                  "confidence": "exact",
+                  "tier": "structure"
+                }
+              ],
+              "summary": null,
+              "note": null,
+              "track_heat": [],
+              "listen": [],
+              "actions": {
+                "listen": false,
+                "open_as_copy": false,
+                "send": false
+              }
+            },
+            {
+              "id": "logic:2c11169f4ce16736#000@1790291100",
+              "at": 1790291100,
+              "label": "Thu 23:05",
+              "heading": "What changed at Thu 23:05",
+              "subheading": "compared with the save at Thu 22:41",
+              "compared_with": "logic:2c11169f4ce16736#000@1790289660",
+              "source": {
+                "kind": "logic_current",
+                "alternative": "000"
+              },
+              "source_label": "current save",
+              "verdict": "changed",
+              "weight": 1,
+              "sentences": [
+                {
+                  "icon": "add",
+                  "text": "Added region 'Chorus Rhodes 2'",
+                  "spans": [
+                    {
+                      "kind": "plain",
+                      "text": "Added region '"
+                    },
+                    {
+                      "kind": "region",
+                      "text": "Chorus Rhodes 2"
+                    },
+                    {
+                      "kind": "plain",
+                      "text": "'"
+                    }
+                  ],
+                  "track": null,
+                  "lane": null,
+                  "place": null,
+                  "place_label": null,
+                  "confidence": "exact",
+                  "tier": "structure"
+                }
+              ],
+              "summary": null,
+              "note": null,
+              "track_heat": [],
+              "listen": [],
+              "actions": {
+                "listen": false,
+                "open_as_copy": false,
+                "send": false
+              }
+            }
+          ]
+        }
+      ],
+      "overview": {
+        "from": "logic:2c11169f4ce16736#000@1790021520",
+        "to": "logic:2c11169f4ce16736#000@1790291100",
+        "heading": "Since Mon",
+        "subheading": "from the oldest moment Wit has to the newest",
+        "verdict": "changed",
+        "sentences": [
+          {
+            "icon": "tempo",
+            "text": "Tempo 120 → 124 BPM",
+            "spans": [
+              {
+                "kind": "plain",
+                "text": "Tempo "
+              },
+              {
+                "kind": "value",
+                "text": "120 → 124 BPM"
+              }
+            ],
+            "track": null,
+            "lane": null,
+            "place": null,
+            "place_label": null,
+            "confidence": "exact",
+            "tier": "structure"
+          },
+          {
+            "icon": "rename",
+            "text": "Probably renamed 'Upright Bass' to 'Upright Bass (DI)'",
+            "spans": [
+              {
+                "kind": "plain",
+                "text": "Probably renamed '"
+              },
+              {
+                "kind": "name",
+                "text": "Upright Bass"
+              },
+              {
+                "kind": "plain",
+                "text": "' to '"
+              },
+              {
+                "kind": "name",
+                "text": "Upright Bass (DI)"
+              },
+              {
+                "kind": "plain",
+                "text": "'"
+              }
+            ],
+            "track": null,
+            "lane": null,
+            "place": null,
+            "place_label": null,
+            "confidence": "inferred",
+            "tier": "structure"
+          },
+          {
+            "icon": "add",
+            "text": "New track or MIDI region 'Wurli Pad'",
+            "spans": [
+              {
+                "kind": "plain",
+                "text": "New track or MIDI region '"
+              },
+              {
+                "kind": "name",
+                "text": "Wurli Pad"
+              },
+              {
+                "kind": "plain",
+                "text": "'"
+              }
+            ],
+            "track": null,
+            "lane": null,
+            "place": null,
+            "place_label": null,
+            "confidence": "exact",
+            "tier": "structure"
+          },
+          {
+            "icon": "add",
+            "text": "Added region 'Chorus Rhodes'",
+            "spans": [
+              {
+                "kind": "plain",
+                "text": "Added region '"
+              },
+              {
+                "kind": "region",
+                "text": "Chorus Rhodes"
+              },
+              {
+                "kind": "plain",
+                "text": "'"
+              }
+            ],
+            "track": null,
+            "lane": null,
+            "place": null,
+            "place_label": null,
+            "confidence": "exact",
+            "tier": "structure"
+          },
+          {
+            "icon": "add",
+            "text": "Added region 'Brushed Kit'",
+            "spans": [
+              {
+                "kind": "plain",
+                "text": "Added region '"
+              },
+              {
+                "kind": "region",
+                "text": "Brushed Kit"
+              },
+              {
+                "kind": "plain",
+                "text": "'"
+              }
+            ],
+            "track": null,
+            "lane": null,
+            "place": null,
+            "place_label": null,
+            "confidence": "exact",
+            "tier": "structure"
+          },
+          {
+            "icon": "add",
+            "text": "Added region 'Chorus Rhodes 2'",
+            "spans": [
+              {
+                "kind": "plain",
+                "text": "Added region '"
+              },
+              {
+                "kind": "region",
+                "text": "Chorus Rhodes 2"
+              },
+              {
+                "kind": "plain",
+                "text": "'"
+              }
+            ],
+            "track": null,
+            "lane": null,
+            "place": null,
+            "place_label": null,
+            "confidence": "exact",
+            "tier": "structure"
+          },
+          {
+            "icon": "audio_file",
+            "text": "New audio file 'Brushed Kit 124.caf'",
+            "spans": [
+              {
+                "kind": "plain",
+                "text": "New audio file '"
+              },
+              {
+                "kind": "file",
+                "text": "Brushed Kit 124.caf"
+              },
+              {
+                "kind": "plain",
+                "text": "'"
+              }
+            ],
+            "track": null,
+            "lane": null,
+            "place": null,
+            "place_label": null,
+            "confidence": "exact",
+            "tier": "structure"
+          }
+        ],
+        "summary": "7 changes Wit can see: 1 song setting, 1 renamed, 4 added, 1 audio file change",
+        "note": null,
+        "track_heat": [],
+        "listen": []
+      },
+      "capability": [
+        {
+          "tier": "structure",
+          "text": "Wit can't see knob and fader moves in Logic yet."
+        },
+        {
+          "tier": null,
+          "text": "Your project is never changed."
+        }
+      ],
+      "family": null,
+      "send_ready": null
+    },
+    {
+      "id": "logic:8c005a6f56311456#001",
+      "song_id": "logic:8c005a6f56311456",
+      "header": {
+        "title": "Night Bus",
+        "lineage": "Alternative 2",
+        "daw": "logic",
+        "daw_label": "Logic",
+        "tempo_bpm": 88.0,
+        "key": null,
+        "time_signature": null,
+        "last_worked": 1790196000,
+        "subtitle": "Logic · 88 BPM · last worked Wed 20:40",
+        "kept": {
+          "moments": 2,
+          "daw_keeps": 10,
+          "kept_by_wit": 0,
+          "label": "2 moments on disk · Logic keeps 10"
+        },
+        "family_label": "2 alternatives of this song"
+      },
+      "tracks": [],
+      "sessions": [
+        {
+          "id": "s0",
+          "started": 1790193900,
+          "ended": 1790196000,
+          "duration": {
+            "secs": 2100,
+            "source": "save_times"
+          },
+          "label": "Wed · evening · about 35m",
+          "moments": [
+            {
+              "id": "logic:8c005a6f56311456#001@1790193900",
+              "at": 1790193900,
+              "label": "Wed 20:05",
+              "heading": "The oldest moment",
+              "subheading": "Wed 20:05 · nothing earlier to compare with",
+              "compared_with": null,
+              "source": {
+                "kind": "logic_backup",
+                "alternative": "001",
+                "slot": "00"
+              },
+              "source_label": "Logic backup 00",
+              "verdict": "first",
+              "weight": 0,
+              "sentences": [],
+              "summary": null,
+              "note": "The oldest save Wit has for this song.",
+              "track_heat": [],
+              "listen": [],
+              "actions": {
+                "listen": false,
+                "open_as_copy": false,
+                "send": false
+              }
+            },
+            {
+              "id": "logic:8c005a6f56311456#001@1790196000",
+              "at": 1790196000,
+              "label": "Wed 20:40",
+              "heading": "What changed at Wed 20:40",
+              "subheading": "compared with the save at Wed 20:05",
+              "compared_with": "logic:8c005a6f56311456#001@1790193900",
+              "source": {
+                "kind": "logic_current",
+                "alternative": "001"
+              },
+              "source_label": "current save",
+              "verdict": "changed",
+              "weight": 1,
+              "sentences": [
+                {
+                  "icon": "add",
+                  "text": "Added region 'Verse'",
+                  "spans": [
+                    {
+                      "kind": "plain",
+                      "text": "Added region '"
+                    },
+                    {
+                      "kind": "region",
+                      "text": "Verse"
+                    },
+                    {
+                      "kind": "plain",
+                      "text": "'"
+                    }
+                  ],
+                  "track": null,
+                  "lane": null,
+                  "place": null,
+                  "place_label": null,
+                  "confidence": "exact",
+                  "tier": "structure"
+                }
+              ],
+              "summary": null,
+              "note": null,
+              "track_heat": [],
+              "listen": [],
+              "actions": {
+                "listen": false,
+                "open_as_copy": false,
+                "send": false
+              }
+            }
+          ]
+        }
+      ],
+      "overview": {
+        "from": "logic:8c005a6f56311456#001@1790193900",
+        "to": "logic:8c005a6f56311456#001@1790196000",
+        "heading": "Since Wed",
+        "subheading": "from the oldest moment Wit has to the newest",
+        "verdict": "changed",
+        "sentences": [
+          {
+            "icon": "add",
+            "text": "Added region 'Verse'",
+            "spans": [
+              {
+                "kind": "plain",
+                "text": "Added region '"
+              },
+              {
+                "kind": "region",
+                "text": "Verse"
+              },
+              {
+                "kind": "plain",
+                "text": "'"
+              }
+            ],
+            "track": null,
+            "lane": null,
+            "place": null,
+            "place_label": null,
+            "confidence": "exact",
+            "tier": "structure"
+          }
+        ],
+        "summary": null,
+        "note": null,
+        "track_heat": [],
+        "listen": []
+      },
+      "capability": [
+        {
+          "tier": "structure",
+          "text": "Wit can't see knob and fader moves in Logic yet."
+        },
+        {
+          "tier": null,
+          "text": "Your project is never changed."
+        }
+      ],
+      "family": {
+        "members": [
+          {
+            "song_id": "logic:8c005a6f56311456",
+            "story_id": "logic:8c005a6f56311456#000",
+            "title": "Night Bus · Alternative 1",
+            "relation": {
+              "kind": "alternative"
+            },
+            "parent": null,
+            "last_worked": 1790191800,
+            "is_current": false
+          },
+          {
+            "song_id": "logic:8c005a6f56311456",
+            "story_id": "logic:8c005a6f56311456#001",
+            "title": "Night Bus · Alternative 2",
+            "relation": {
+              "kind": "alternative"
+            },
+            "parent": null,
+            "last_worked": 1790196000,
+            "is_current": true
+          }
+        ],
+        "evidence": [
+          {
+            "kind": "same_project"
+          }
+        ]
+      },
+      "send_ready": null
+    },
+    {
+      "id": "logic:8c005a6f56311456#000",
+      "song_id": "logic:8c005a6f56311456",
+      "header": {
+        "title": "Night Bus",
+        "lineage": "Alternative 1",
+        "daw": "logic",
+        "daw_label": "Logic",
+        "tempo_bpm": 88.0,
+        "key": null,
+        "time_signature": null,
+        "last_worked": 1790191800,
+        "subtitle": "Logic · 88 BPM · last worked Wed 19:30",
+        "kept": {
+          "moments": 3,
+          "daw_keeps": 10,
+          "kept_by_wit": 0,
+          "label": "3 moments on disk · Logic keeps 10"
+        },
+        "family_label": "2 alternatives of this song"
+      },
+      "tracks": [],
+      "sessions": [
+        {
+          "id": "s0",
+          "started": 1790187000,
+          "ended": 1790191800,
+          "duration": {
+            "secs": 4800,
+            "source": "save_times"
+          },
+          "label": "Wed · evening · about 1h 20m",
+          "moments": [
+            {
+              "id": "logic:8c005a6f56311456#000@1790187000",
+              "at": 1790187000,
+              "label": "Wed 18:10",
+              "heading": "The oldest moment",
+              "subheading": "Wed 18:10 · nothing earlier to compare with",
+              "compared_with": null,
+              "source": {
+                "kind": "logic_backup",
+                "alternative": "000",
+                "slot": "00"
+              },
+              "source_label": "Logic backup 00",
+              "verdict": "first",
+              "weight": 0,
+              "sentences": [],
+              "summary": null,
+              "note": "The oldest save Wit has for this song.",
+              "track_heat": [],
+              "listen": [],
+              "actions": {
+                "listen": false,
+                "open_as_copy": false,
+                "send": false
+              }
+            },
+            {
+              "id": "logic:8c005a6f56311456#000@1790189520",
+              "at": 1790189520,
+              "label": "Wed 18:52",
+              "heading": "What changed at Wed 18:52",
+              "subheading": "compared with the save at Wed 18:10",
+              "compared_with": "logic:8c005a6f56311456#000@1790187000",
+              "source": {
+                "kind": "logic_backup",
+                "alternative": "000",
+                "slot": "01"
+              },
+              "source_label": "Logic backup 01",
+              "verdict": "changed",
+              "weight": 1,
+              "sentences": [
+                {
+                  "icon": "add",
+                  "text": "Added region 'Verse'",
+                  "spans": [
+                    {
+                      "kind": "plain",
+                      "text": "Added region '"
+                    },
+                    {
+                      "kind": "region",
+                      "text": "Verse"
+                    },
+                    {
+                      "kind": "plain",
+                      "text": "'"
+                    }
+                  ],
+                  "track": null,
+                  "lane": null,
+                  "place": null,
+                  "place_label": null,
+                  "confidence": "exact",
+                  "tier": "structure"
+                }
+              ],
+              "summary": null,
+              "note": null,
+              "track_heat": [],
+              "listen": [],
+              "actions": {
+                "listen": false,
+                "open_as_copy": false,
+                "send": false
+              }
+            },
+            {
+              "id": "logic:8c005a6f56311456#000@1790191800",
+              "at": 1790191800,
+              "label": "Wed 19:30",
+              "heading": "What changed at Wed 19:30",
+              "subheading": "compared with the save at Wed 18:52",
+              "compared_with": "logic:8c005a6f56311456#000@1790189520",
+              "source": {
+                "kind": "logic_current",
+                "alternative": "000"
+              },
+              "source_label": "current save",
+              "verdict": "changed",
+              "weight": 1,
+              "sentences": [
+                {
+                  "icon": "add",
+                  "text": "New track or MIDI region 'Sub'",
+                  "spans": [
+                    {
+                      "kind": "plain",
+                      "text": "New track or MIDI region '"
+                    },
+                    {
+                      "kind": "name",
+                      "text": "Sub"
+                    },
+                    {
+                      "kind": "plain",
+                      "text": "'"
+                    }
+                  ],
+                  "track": null,
+                  "lane": null,
+                  "place": null,
+                  "place_label": null,
+                  "confidence": "exact",
+                  "tier": "structure"
+                }
+              ],
+              "summary": null,
+              "note": null,
+              "track_heat": [],
+              "listen": [],
+              "actions": {
+                "listen": false,
+                "open_as_copy": false,
+                "send": false
+              }
+            }
+          ]
+        }
+      ],
+      "overview": {
+        "from": "logic:8c005a6f56311456#000@1790187000",
+        "to": "logic:8c005a6f56311456#000@1790191800",
+        "heading": "Since Wed",
+        "subheading": "from the oldest moment Wit has to the newest",
+        "verdict": "changed",
+        "sentences": [
+          {
+            "icon": "add",
+            "text": "New track or MIDI region 'Sub'",
+            "spans": [
+              {
+                "kind": "plain",
+                "text": "New track or MIDI region '"
+              },
+              {
+                "kind": "name",
+                "text": "Sub"
+              },
+              {
+                "kind": "plain",
+                "text": "'"
+              }
+            ],
+            "track": null,
+            "lane": null,
+            "place": null,
+            "place_label": null,
+            "confidence": "exact",
+            "tier": "structure"
+          },
+          {
+            "icon": "add",
+            "text": "Added region 'Verse'",
+            "spans": [
+              {
+                "kind": "plain",
+                "text": "Added region '"
+              },
+              {
+                "kind": "region",
+                "text": "Verse"
+              },
+              {
+                "kind": "plain",
+                "text": "'"
+              }
+            ],
+            "track": null,
+            "lane": null,
+            "place": null,
+            "place_label": null,
+            "confidence": "exact",
+            "tier": "structure"
+          }
+        ],
+        "summary": null,
+        "note": null,
+        "track_heat": [],
+        "listen": []
+      },
+      "capability": [
+        {
+          "tier": "structure",
+          "text": "Wit can't see knob and fader moves in Logic yet."
+        },
+        {
+          "tier": null,
+          "text": "Your project is never changed."
+        }
+      ],
+      "family": {
+        "members": [
+          {
+            "song_id": "logic:8c005a6f56311456",
+            "story_id": "logic:8c005a6f56311456#000",
+            "title": "Night Bus · Alternative 1",
+            "relation": {
+              "kind": "alternative"
+            },
+            "parent": null,
+            "last_worked": 1790191800,
+            "is_current": true
+          },
+          {
+            "song_id": "logic:8c005a6f56311456",
+            "story_id": "logic:8c005a6f56311456#001",
+            "title": "Night Bus · Alternative 2",
+            "relation": {
+              "kind": "alternative"
+            },
+            "parent": null,
+            "last_worked": 1790196000,
+            "is_current": false
+          }
+        ],
+        "evidence": [
+          {
+            "kind": "same_project"
+          }
+        ]
+      },
+      "send_ready": null
+    },
+    {
+      "id": "ableton:9f6f7bd24d192524",
+      "song_id": "ableton:9f6f7bd24d192524",
+      "header": {
+        "title": "Coastline",
+        "lineage": null,
+        "daw": "ableton",
+        "daw_label": "Live",
+        "tempo_bpm": 124.0,
+        "key": null,
+        "time_signature": null,
+        "last_worked": 1767645857,
+        "subtitle": "Live · 124 BPM · last worked 5 Jan 20:44",
+        "kept": {
+          "moments": 5,
+          "daw_keeps": 10,
+          "kept_by_wit": 0,
+          "label": "5 moments on disk · Live keeps 10"
+        },
+        "family_label": null
+      },
+      "tracks": [
+        {
+          "key": "8",
+          "name": "Rhodes",
+          "color": null
+        },
+        {
+          "key": "9",
+          "name": "Upright Bass",
+          "color": null
+        }
+      ],
+      "sessions": [
+        {
+          "id": "s0",
+          "started": 1767521700,
+          "ended": 1767522612,
+          "duration": {
+            "secs": 912,
+            "source": "save_times"
+          },
+          "label": "4 Jan · morning · about 15m · from 10:15",
+          "moments": [
+            {
+              "id": "ableton:9f6f7bd24d192524@1767521700",
+              "at": 1767521700,
+              "label": "4 Jan 10:15",
+              "heading": "The oldest moment",
+              "subheading": "4 Jan 10:15 · nothing earlier to compare with",
+              "compared_with": null,
+              "source": {
+                "kind": "ableton_autosave"
+              },
+              "source_label": "Live autosave",
+              "verdict": "first",
+              "weight": 0,
+              "sentences": [],
+              "summary": null,
+              "note": "The oldest save Wit has for this song.",
+              "track_heat": [],
+              "listen": [],
+              "actions": {
+                "listen": false,
+                "open_as_copy": false,
+                "send": false
+              }
+            },
+            {
+              "id": "ableton:9f6f7bd24d192524@1767522612",
+              "at": 1767522612,
+              "label": "4 Jan 10:30",
+              "heading": "Saved again, nothing changed",
+              "subheading": "4 Jan 10:30 · compared with the save at 4 Jan 10:15",
+              "compared_with": "ableton:9f6f7bd24d192524@1767521700",
+              "source": {
+                "kind": "ableton_autosave"
+              },
+              "source_label": "Live autosave",
+              "verdict": "identical",
+              "weight": 0,
+              "sentences": [],
+              "summary": null,
+              "note": "Saved again with nothing changed.",
+              "track_heat": [],
+              "listen": [],
+              "actions": {
+                "listen": false,
+                "open_as_copy": false,
+                "send": false
+              }
+            }
+          ]
+        },
+        {
+          "id": "s1",
+          "started": 1767525525,
+          "ended": 1767525525,
+          "duration": null,
+          "label": "4 Jan · morning · from 11:18",
+          "moments": [
+            {
+              "id": "ableton:9f6f7bd24d192524@1767525525",
+              "at": 1767525525,
+              "label": "4 Jan 11:18",
+              "heading": "What changed at 4 Jan 11:18",
+              "subheading": "compared with the save at 4 Jan 10:30",
+              "compared_with": "ableton:9f6f7bd24d192524@1767522612",
+              "source": {
+                "kind": "ableton_autosave"
+              },
+              "source_label": "Live autosave",
+              "verdict": "changed",
+              "weight": 1,
+              "sentences": [
+                {
+                  "icon": "mix",
+                  "text": "Volume on Rhodes: −2.0 → −5.6 dB",
+                  "spans": [
+                    {
+                      "kind": "plain",
+                      "text": "Volume on "
+                    },
+                    {
+                      "kind": "track",
+                      "text": "Rhodes"
+                    },
+                    {
+                      "kind": "plain",
+                      "text": ": "
+                    },
+                    {
+                      "kind": "value",
+                      "text": "−2.0 → −5.6 dB"
+                    }
+                  ],
+                  "track": "Rhodes",
+                  "lane": 0,
+                  "place": null,
+                  "place_label": null,
+                  "confidence": "exact",
+                  "tier": "semantic"
+                }
+              ],
+              "summary": null,
+              "note": null,
+              "track_heat": [
+                {
+                  "track": 0,
+                  "level": 1
+                }
+              ],
+              "listen": [],
+              "actions": {
+                "listen": false,
+                "open_as_copy": false,
+                "send": false
+              }
+            }
+          ]
+        },
+        {
+          "id": "s2",
+          "started": 1767643293,
+          "ended": 1767645857,
+          "duration": {
+            "secs": 2564,
+            "source": "save_times"
+          },
+          "label": "5 Jan · evening · about 45m",
+          "moments": [
+            {
+              "id": "ableton:9f6f7bd24d192524@1767643293",
+              "at": 1767643293,
+              "label": "5 Jan 20:01",
+              "heading": "What changed at 5 Jan 20:01",
+              "subheading": "compared with the save at 4 Jan 11:18",
+              "compared_with": "ableton:9f6f7bd24d192524@1767525525",
+              "source": {
+                "kind": "ableton_autosave"
+              },
+              "source_label": "Live autosave",
+              "verdict": "changed",
+              "weight": 2,
+              "sentences": [
+                {
+                  "icon": "plugin",
+                  "text": "Added AutoFilter on Rhodes",
+                  "spans": [
+                    {
+                      "kind": "plain",
+                      "text": "Added "
+                    },
+                    {
+                      "kind": "plugin",
+                      "text": "AutoFilter"
+                    },
+                    {
+                      "kind": "plain",
+                      "text": " on "
+                    },
+                    {
+                      "kind": "track",
+                      "text": "Rhodes"
+                    }
+                  ],
+                  "track": "Rhodes",
+                  "lane": 0,
+                  "place": null,
+                  "place_label": null,
+                  "confidence": "exact",
+                  "tier": "semantic"
+                },
+                {
+                  "icon": "mute",
+                  "text": "Muted clip 'verse rhodes' on Rhodes",
+                  "spans": [
+                    {
+                      "kind": "plain",
+                      "text": "Muted clip '"
+                    },
+                    {
+                      "kind": "region",
+                      "text": "verse rhodes"
+                    },
+                    {
+                      "kind": "plain",
+                      "text": "' on "
+                    },
+                    {
+                      "kind": "track",
+                      "text": "Rhodes"
+                    }
+                  ],
+                  "track": "Rhodes",
+                  "lane": 0,
+                  "place": null,
+                  "place_label": null,
+                  "confidence": "exact",
+                  "tier": "semantic"
+                }
+              ],
+              "summary": null,
+              "note": null,
+              "track_heat": [
+                {
+                  "track": 0,
+                  "level": 2
+                }
+              ],
+              "listen": [],
+              "actions": {
+                "listen": false,
+                "open_as_copy": false,
+                "send": false
+              }
+            },
+            {
+              "id": "ableton:9f6f7bd24d192524@1767645857",
+              "at": 1767645857,
+              "label": "5 Jan 20:44",
+              "heading": "What changed at 5 Jan 20:44",
+              "subheading": "compared with the save at 5 Jan 20:01",
+              "compared_with": "ableton:9f6f7bd24d192524@1767643293",
+              "source": {
+                "kind": "ableton_autosave"
+              },
+              "source_label": "Live autosave",
+              "verdict": "changed",
+              "weight": 2,
+              "sentences": [
+                {
+                  "icon": "tempo",
+                  "text": "Tempo 120 → 124 BPM",
+                  "spans": [
+                    {
+                      "kind": "plain",
+                      "text": "Tempo "
+                    },
+                    {
+                      "kind": "value",
+                      "text": "120 → 124 BPM"
+                    }
+                  ],
+                  "track": null,
+                  "lane": null,
+                  "place": null,
+                  "place_label": null,
+                  "confidence": "exact",
+                  "tier": "semantic"
+                },
+                {
+                  "icon": "rename",
+                  "text": "Sample 'rhodes take 3.wav' renamed to 'rhodes FINAL.wav'",
+                  "spans": [
+                    {
+                      "kind": "plain",
+                      "text": "Sample '"
+                    },
+                    {
+                      "kind": "file",
+                      "text": "rhodes take 3.wav"
+                    },
+                    {
+                      "kind": "plain",
+                      "text": "' renamed to '"
+                    },
+                    {
+                      "kind": "file",
+                      "text": "rhodes FINAL.wav"
+                    },
+                    {
+                      "kind": "plain",
+                      "text": "'"
+                    }
+                  ],
+                  "track": null,
+                  "lane": null,
+                  "place": null,
+                  "place_label": null,
+                  "confidence": "exact",
+                  "tier": "semantic"
+                }
+              ],
+              "summary": null,
+              "note": null,
+              "track_heat": [],
+              "listen": [],
+              "actions": {
+                "listen": false,
+                "open_as_copy": false,
+                "send": false
+              }
+            }
+          ]
+        }
+      ],
+      "overview": {
+        "from": "ableton:9f6f7bd24d192524@1767521700",
+        "to": "ableton:9f6f7bd24d192524@1767645857",
+        "heading": "Since 4 Jan",
+        "subheading": "from the oldest moment Wit has to the newest",
+        "verdict": "changed",
+        "sentences": [
+          {
+            "icon": "tempo",
+            "text": "Tempo 120 → 124 BPM",
+            "spans": [
+              {
+                "kind": "plain",
+                "text": "Tempo "
+              },
+              {
+                "kind": "value",
+                "text": "120 → 124 BPM"
+              }
+            ],
+            "track": null,
+            "lane": null,
+            "place": null,
+            "place_label": null,
+            "confidence": "exact",
+            "tier": "semantic"
+          },
+          {
+            "icon": "rename",
+            "text": "Sample 'rhodes take 3.wav' renamed to 'rhodes FINAL.wav'",
+            "spans": [
+              {
+                "kind": "plain",
+                "text": "Sample '"
+              },
+              {
+                "kind": "file",
+                "text": "rhodes take 3.wav"
+              },
+              {
+                "kind": "plain",
+                "text": "' renamed to '"
+              },
+              {
+                "kind": "file",
+                "text": "rhodes FINAL.wav"
+              },
+              {
+                "kind": "plain",
+                "text": "'"
+              }
+            ],
+            "track": null,
+            "lane": null,
+            "place": null,
+            "place_label": null,
+            "confidence": "exact",
+            "tier": "semantic"
+          },
+          {
+            "icon": "mix",
+            "text": "Volume on Rhodes: −2.0 → −5.6 dB",
+            "spans": [
+              {
+                "kind": "plain",
+                "text": "Volume on "
+              },
+              {
+                "kind": "track",
+                "text": "Rhodes"
+              },
+              {
+                "kind": "plain",
+                "text": ": "
+              },
+              {
+                "kind": "value",
+                "text": "−2.0 → −5.6 dB"
+              }
+            ],
+            "track": "Rhodes",
+            "lane": 0,
+            "place": null,
+            "place_label": null,
+            "confidence": "exact",
+            "tier": "semantic"
+          },
+          {
+            "icon": "plugin",
+            "text": "Added AutoFilter on Rhodes",
+            "spans": [
+              {
+                "kind": "plain",
+                "text": "Added "
+              },
+              {
+                "kind": "plugin",
+                "text": "AutoFilter"
+              },
+              {
+                "kind": "plain",
+                "text": " on "
+              },
+              {
+                "kind": "track",
+                "text": "Rhodes"
+              }
+            ],
+            "track": "Rhodes",
+            "lane": 0,
+            "place": null,
+            "place_label": null,
+            "confidence": "exact",
+            "tier": "semantic"
+          },
+          {
+            "icon": "mute",
+            "text": "Muted clip 'verse rhodes' on Rhodes",
+            "spans": [
+              {
+                "kind": "plain",
+                "text": "Muted clip '"
+              },
+              {
+                "kind": "region",
+                "text": "verse rhodes"
+              },
+              {
+                "kind": "plain",
+                "text": "' on "
+              },
+              {
+                "kind": "track",
+                "text": "Rhodes"
+              }
+            ],
+            "track": "Rhodes",
+            "lane": 0,
+            "place": null,
+            "place_label": null,
+            "confidence": "exact",
+            "tier": "semantic"
+          }
+        ],
+        "summary": "5 changes Wit can see: 1 song setting, 1 renamed, 2 mix changes, 1 plugin change",
+        "note": null,
+        "track_heat": [
+          {
+            "track": 0,
+            "level": 3
+          }
+        ],
+        "listen": []
+      },
+      "capability": [
+        {
+          "tier": "semantic",
+          "text": "Wit can say a plugin's settings changed, but not how."
+        },
+        {
+          "tier": "semantic",
+          "text": "Wit can't yet see edits inside MIDI clips or automation lanes — only how many notes or lanes there are."
+        },
+        {
+          "tier": null,
+          "text": "Your project is never changed."
+        }
+      ],
+      "family": null,
+      "send_ready": null
+    }
+  ],
+  "trust": {
+    "watched_folders": [
+      "demo library"
+    ],
+    "statements": [
+      "Wit never changes your projects.",
+      "Nothing leaves this computer."
+    ],
+    "counters": {
+      "compares_opened": 0,
+      "shares_created": 0,
+      "restores_made": 0,
+      "since": null,
+      "events": []
+    }
+  }
+}

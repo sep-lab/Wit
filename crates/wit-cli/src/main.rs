@@ -74,6 +74,18 @@ enum Command {
     /// is demoable on a machine with no real Logic library. Refuses to
     /// write into a directory that already has anything in it.
     DemoLibrary { dest: PathBuf },
+    /// Tell the story of every song under `path`: sessions of saves, and in
+    /// plain sentences what changed at each one. Read-only. `--json` prints
+    /// the Story contract (`crates/wit-story`) the app reads.
+    Story {
+        path: PathBuf,
+        #[arg(long)]
+        json: bool,
+        /// Your UTC offset for the time labels, e.g. 120 for UTC+2. Default:
+        /// read from the system clock where possible, else UTC.
+        #[arg(long, allow_hyphen_values = true)]
+        utc_offset_minutes: Option<i32>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -86,6 +98,11 @@ fn main() -> ExitCode {
         Command::Dupes { path } => dupes(&path),
         Command::LogicReport { path } => logic_report(&path),
         Command::DemoLibrary { dest } => demo_library(&dest),
+        Command::Story {
+            path,
+            json,
+            utc_offset_minutes,
+        } => story(&path, json, utc_offset_minutes),
     }
 }
 
@@ -106,6 +123,93 @@ fn demo_library(dest: &std::path::Path) -> ExitCode {
         "  these are synthetic fixtures for Wit's own readers — Logic and Live cannot open them"
     );
     println!("  point the app at: {}", lib.root.display());
+    ExitCode::SUCCESS
+}
+
+/// The local UTC offset in minutes, from `date +%z` where that exists
+/// (macOS, Linux). `None` elsewhere — the caller falls back to UTC and says
+/// so rather than guessing.
+fn system_utc_offset_minutes() -> Option<i32> {
+    let out = std::process::Command::new("date")
+        .arg("+%z")
+        .output()
+        .ok()?;
+    let text = String::from_utf8(out.stdout).ok()?;
+    let t = text.trim();
+    if t.len() != 5 {
+        return None;
+    }
+    let sign = match &t[..1] {
+        "+" => 1,
+        "-" => -1,
+        _ => return None,
+    };
+    let h: i32 = t[1..3].parse().ok()?;
+    let m: i32 = t[3..5].parse().ok()?;
+    Some(sign * (h * 60 + m))
+}
+
+fn story(path: &std::path::Path, json: bool, utc_offset_minutes: Option<i32>) -> ExitCode {
+    if !path.is_dir() {
+        eprintln!("wit: {} is not a folder", path.display());
+        return ExitCode::FAILURE;
+    }
+    let offset = utc_offset_minutes.or_else(system_utc_offset_minutes);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let clock = wit_story::Clock::fixed(wit_story::Timestamp(now), offset.unwrap_or(0));
+    let label = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "this folder".to_string());
+    let library = wit_story::build_library(path, &label, &clock);
+    if json {
+        print!("{}", wit_story::to_json(&library));
+        return ExitCode::SUCCESS;
+    }
+    if library.stories.is_empty() {
+        println!("  no Logic, GarageBand or Live projects found under {label}");
+        return ExitCode::SUCCESS;
+    }
+    if offset.is_none() {
+        println!("  (times are UTC — pass --utc-offset-minutes for local time)");
+    }
+    for story in &library.stories {
+        let h = &story.header;
+        let title = match &h.lineage {
+            Some(l) => format!("{} · {l}", h.title),
+            None => h.title.clone(),
+        };
+        println!("\n{title}\n  {}\n  {}", h.subtitle, h.kept.label);
+        for session in &story.sessions {
+            println!("\n  {}", session.label);
+            for m in &session.moments {
+                println!("    {}  ({})", m.label, m.source_label);
+                if let Some(summary) = &m.summary {
+                    println!("        {summary}");
+                }
+                for s in &m.sentences {
+                    match &s.place_label {
+                        Some(p) => println!("        {}  — {p}", s.text),
+                        None => println!("        {}", s.text),
+                    }
+                }
+                if let Some(note) = &m.note {
+                    println!("        {note}");
+                }
+            }
+        }
+        if let Some(o) = &story.overview {
+            println!("\n  {} ({})", o.heading, o.subheading);
+            for s in &o.sentences {
+                println!("        {}", s.text);
+            }
+        }
+        let notes: Vec<&str> = story.capability.iter().map(|c| c.text.as_str()).collect();
+        println!("\n  {}", notes.join(" "));
+    }
     ExitCode::SUCCESS
 }
 

@@ -11,6 +11,8 @@ One file per decision: the context, the decision, the consequences, and — impo
 | [0004](0004-implementation-stack.md) | Rust core, Python for research | Accepted |
 | [0005](0005-first-daw-target.md) | Ableton Live is the first DAW target | Accepted |
 | [0006](0006-consumer-surface-logic-first.md) | The first product is a Logic-first, read-only comprehension surface | Accepted |
+| [0007](0007-restore-as-copy.md) | Restore a moment as a new copy, never in place (amends 0006) | Accepted |
+| [0008](0008-cross-platform-pilot.md) | The pilot runs on macOS, Windows and Linux, unsigned (amends 0006) | Accepted |
 
 These are settled. Reopening one is welcome, but bring the evidence its
 "What would overturn this" section asks for — that is what the section is for.

@@ -68,7 +68,9 @@ This repository's credibility rests on its numbers being real.
 | Delta chains for project files, content addressing for audio | ADR-0002 |
 | Plugin state is tracked opaquely, never interpreted or ported | ADR-0003 |
 | Ableton is the first DAW target (parser/write-path roadmap) | ADR-0005 |
-| The first *shipped product* is a Logic-first, read-only comprehension surface; no project-file write-path in this slice | ADR-0006 |
+| The first *shipped product* is a Logic-first comprehension surface that never changes a user's project (its original "no write-path" and "macOS-only" parts are amended by ADR-0007 and ADR-0008) | ADR-0006 |
+| Restore only **creates a new copy** inside the Restores folder and never modifies, overwrites or deletes anything that existed before; no write API takes a path to an existing project or restore | ADR-0007 |
+| The pilot ships on macOS, Windows and Linux from one Rust core and one web UI, unsigned, with no updater | ADR-0008 |
 
 Each ADR lists what evidence would overturn it. Bring that evidence, or leave them alone.
 
