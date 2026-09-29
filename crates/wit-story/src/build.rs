@@ -13,7 +13,7 @@ use crate::types::*;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use wit_index::{AbletonLineage, LogicKind, LogicProject};
-use wit_model::{ChangeRecord, Model};
+use wit_model::{BarPos, ChangeRecord, Model, TimeSignature as ModelTimeSignature};
 
 /// Saves further apart than this start a new session (wit-planning/PLAN.md,
 /// "The Story": sessions are clustered by gaps of more than 45 minutes).
@@ -102,6 +102,11 @@ pub fn build_library(root: &Path, root_label: &str, clock: &Clock) -> Library {
 enum Reading {
     Logic {
         extracted: wit_logic::Extracted,
+        /// `MetaData.plist`, read from the save's own sibling file.
+        /// `None` when that file is missing or unreadable — never guessed,
+        /// and every plist-derived fact below degrades honestly when it's
+        /// `None` rather than inventing one.
+        metadata: Option<wit_logic::ProjectMetadata>,
         bytes: Vec<u8>,
     },
     Ableton {
@@ -127,6 +132,13 @@ impl Reading {
         };
         t.filter(|x| x.is_finite())
     }
+
+    fn logic_metadata(&self) -> Option<&wit_logic::ProjectMetadata> {
+        match self {
+            Reading::Logic { metadata, .. } => metadata.as_ref(),
+            _ => None,
+        }
+    }
 }
 
 fn read_logic(path: &Path) -> Reading {
@@ -134,10 +146,17 @@ fn read_logic(path: &Path) -> Reading {
         return Reading::Unreadable;
     };
     match wit_logic::walk(&bytes) {
-        Ok(w) => Reading::Logic {
-            extracted: w.extracted,
-            bytes,
-        },
+        Ok(w) => {
+            // MetaData.plist sits right beside ProjectData, in the
+            // alternative and in every backup slot alike (metadata.rs).
+            let metadata_path = path.with_file_name("MetaData.plist");
+            let metadata = wit_logic::read_metadata_plist(&metadata_path).ok();
+            Reading::Logic {
+                extracted: w.extracted,
+                metadata,
+                bytes,
+            }
+        }
         Err(_) => Reading::Unreadable,
     }
 }
@@ -521,9 +540,18 @@ fn compare(
         // wit-logic's own verdict also counts census changes; a census-only
         // change has no sentence Wit may show (ADR-0006's census-noun ban),
         // so here it reads as "nothing visible", which is the honest wording.
-        (Reading::Logic { extracted: ea, .. }, Reading::Logic { extracted: eb, .. }) => {
-            logic_sentences(ea, eb, facts, roots)
-        }
+        (
+            Reading::Logic {
+                extracted: ea,
+                metadata: ma,
+                bytes: ba,
+            },
+            Reading::Logic {
+                extracted: eb,
+                metadata: mb,
+                bytes: bb,
+            },
+        ) => logic_sentences(ea, eb, ma, mb, ba, bb, facts, roots),
         (Reading::Ableton { model: ma, .. }, Reading::Ableton { model: mb, .. }) => {
             for (id, t) in &mb.tracks {
                 lanes.ensure(&id.0, &t.name);
@@ -556,19 +584,57 @@ fn ordered_unique(names: &[String]) -> Vec<&String> {
     names.iter().filter(|n| seen.insert(n.as_str())).collect()
 }
 
-fn counts(names: &[String]) -> BTreeMap<&str, usize> {
-    let mut m = BTreeMap::new();
-    for n in names {
-        *m.entry(n.as_str()).or_insert(0) += 1;
+/// `MetaData.plist`'s `SongKey`/`SongGenderKey`, combined the way
+/// `SongHeader.key`'s doc comment shows it ("C minor"). `None` unless the
+/// project states a key — never inferred from anything else.
+fn logic_key_label(meta: &wit_logic::ProjectMetadata) -> Option<String> {
+    match (&meta.key, &meta.mode) {
+        (Some(key), Some(mode)) => Some(format!("{key} {mode}")),
+        (Some(key), None) => Some(key.clone()),
+        (None, _) => None,
     }
-    m
 }
 
-/// Logic at the Structure tier: tempo, names in the track list, regions,
-/// audio files. Nothing here is a census count (ADR-0006).
+/// Quarter-note ticks per bar from `MetaData.plist`'s own time signature —
+/// `numerator * 4 / denominator` quarter-note beats per bar, at Logic's
+/// fixed 960-tick-per-quarter-note grid (`wit_logic::TICKS_PER_QUARTER`;
+/// `docs/FORMATS.md`'s region-payload section). `None` when the project
+/// doesn't state a (non-degenerate) time signature.
+fn logic_ticks_per_bar(meta: Option<&wit_logic::ProjectMetadata>) -> Option<f64> {
+    let ts = meta?.time_signature?;
+    if ts.denominator == 0 {
+        return None;
+    }
+    let beats_per_bar = ts.numerator as f64 * 4.0 / ts.denominator as f64;
+    (beats_per_bar.is_finite() && beats_per_bar > 0.0)
+        .then_some(beats_per_bar * wit_logic::TICKS_PER_QUARTER as f64)
+}
+
+/// A placement's raw tick position, converted to a bar using the project's
+/// *actual* time signature when Wit has one — `wit_logic::regions`
+/// deliberately stays at a fixed 4/4 (see that module's doc), so this
+/// honest conversion is `wit-story`'s job. Approximate ("about bar N") when
+/// the time signature isn't known: Wit falls back to
+/// `wit_logic::TICKS_PER_BAR`'s own 4/4 assumption, but says so.
+fn logic_bar_pos(position: u32, ticks_per_bar: Option<f64>) -> BarPos {
+    let tick = position.saturating_sub(wit_logic::REGION_TIME_ORIGIN) as f64;
+    match ticks_per_bar {
+        Some(tpb) => BarPos::exact(tick / tpb + 1.0),
+        None => BarPos::about(tick / wit_logic::TICKS_PER_BAR as f64 + 1.0),
+    }
+}
+
+/// Logic at the Structure tier: tempo, names in the track list, plist facts
+/// (track count, key, time signature), regions, audio files. Nothing here
+/// is a census count (ADR-0006).
+#[allow(clippy::too_many_arguments)]
 fn logic_sentences(
     a: &wit_logic::Extracted,
     b: &wit_logic::Extracted,
+    meta_a: &Option<wit_logic::ProjectMetadata>,
+    meta_b: &Option<wit_logic::ProjectMetadata>,
+    bytes_a: &[u8],
+    bytes_b: &[u8],
     facts: &DawFacts,
     roots: &mut NameRoots,
 ) -> Vec<Sentence> {
@@ -627,32 +693,94 @@ fn logic_sentences(
         }
     }
 
-    // Regions: a name that appears more often now was added (at least
-    // once); less often, removed. Which copy is not knowable from names.
-    let ra = counts(&a.region_names);
-    let rb = counts(&b.region_names);
-    for name in ordered_unique(&b.region_names) {
-        if rb[name.as_str()] > ra.get(name.as_str()).copied().unwrap_or(0) {
+    // Plist-derived facts: the DAW's own stated counts/settings, never a
+    // container tally (ADR-0006's census-noun ban).
+    if let (Some(ma), Some(mb)) = (meta_a, meta_b) {
+        if let (Some(from), Some(to)) = (ma.number_of_tracks, mb.number_of_tracks) {
+            if from != to {
+                out.push(sentence(
+                    &ChangeRecord::TrackCountChanged {
+                        from: from as usize,
+                        to: to as usize,
+                    },
+                    &ctx,
+                ));
+            }
+        }
+        let key_a = logic_key_label(ma);
+        let key_b = logic_key_label(mb);
+        if key_a != key_b {
             out.push(sentence(
-                &ChangeRecord::RegionAdded {
-                    track: None,
-                    name: name.clone(),
-                    at: None,
+                &ChangeRecord::KeyChanged {
+                    from: key_a,
+                    to: key_b,
                 },
                 &ctx,
             ));
         }
+        if let (Some(ts_a), Some(ts_b)) = (ma.time_signature, mb.time_signature) {
+            if (ts_a.numerator, ts_a.denominator) != (ts_b.numerator, ts_b.denominator) {
+                out.push(sentence(
+                    &ChangeRecord::TimeSignatureChanged {
+                        from: ModelTimeSignature {
+                            numerator: ts_a.numerator,
+                            denominator: ts_a.denominator,
+                        },
+                        to: ModelTimeSignature {
+                            numerator: ts_b.numerator,
+                            denominator: ts_b.denominator,
+                        },
+                    },
+                    &ctx,
+                ));
+            }
+        }
     }
-    for name in ordered_unique(&a.region_names) {
-        if ra[name.as_str()] > rb.get(name.as_str()).copied().unwrap_or(0) {
-            out.push(sentence(
-                &ChangeRecord::RegionRemoved {
-                    track: None,
-                    name: name.clone(),
-                    at: None,
+
+    // Regions on the timeline: the placement-level diff from `regions.rs`,
+    // exact wherever it decodes cleanly on both sides. Bars use the
+    // project's own time signature (from `meta_b`, the newer save's own
+    // statement) when Wit has one; otherwise the position is "about". A
+    // family holding more than one region object is named honestly
+    // ("Stem (one of N copies)") rather than guessing which copy moved —
+    // see `wit_logic::regions`' module doc. When either side fails to parse
+    // (a shape this port doesn't handle), Wit says nothing about regions for
+    // this pair rather than falling back to a guess.
+    let ticks_per_bar = logic_ticks_per_bar(meta_b.as_ref());
+    if let (Ok(song_a), Ok(song_b)) = (
+        wit_logic::parse_regions_bytes(bytes_a),
+        wit_logic::parse_regions_bytes(bytes_b),
+    ) {
+        for change in wit_logic::diff_placements(&song_a, &song_b) {
+            let record = match change {
+                wit_logic::PlacementChange::Moved { label, from, to } => {
+                    ChangeRecord::RegionMoved {
+                        track: Some(format!("track {}", to.0)),
+                        name: label,
+                        from: logic_bar_pos(from.1, ticks_per_bar),
+                        to: logic_bar_pos(to.1, ticks_per_bar),
+                    }
+                }
+                wit_logic::PlacementChange::Added {
+                    label,
+                    track,
+                    position,
+                } => ChangeRecord::RegionAdded {
+                    track: Some(format!("track {track}")),
+                    name: label,
+                    at: Some(logic_bar_pos(position, ticks_per_bar)),
                 },
-                &ctx,
-            ));
+                wit_logic::PlacementChange::Removed {
+                    label,
+                    track,
+                    position,
+                } => ChangeRecord::RegionRemoved {
+                    track: Some(format!("track {track}")),
+                    name: label,
+                    at: Some(logic_bar_pos(position, ticks_per_bar)),
+                },
+            };
+            out.push(sentence(&record, &ctx));
         }
     }
 
@@ -688,6 +816,11 @@ struct StoryMeta {
     lineage: Option<String>,
     facts: DawFacts,
     family: Option<Family>,
+    /// A capability note when `Resources/ProjectInformation.plist` names a
+    /// Logic newer than `wit_logic::KNOWN_MAX_MAJOR_VERSION` — `None` for
+    /// every other DAW, and for Logic whenever Wit can't read that plist or
+    /// the project isn't newer.
+    newer_daw_warning: Option<String>,
 }
 
 /// Moment ids come from the save's own time, so they don't shift when the
@@ -719,9 +852,21 @@ fn assemble(meta: StoryMeta, saves: Vec<Save>, read: fn(&Path) -> Reading, clock
     let mut prev: Option<(Reading, usize)> = None;
     let mut first: Option<(Reading, usize)> = None;
     let mut last_tempo = None;
+    let mut last_key: Option<String> = None;
+    let mut last_time_sig: Option<ModelTimeSignature> = None;
 
     for (i, save) in saves.iter().enumerate() {
         let reading = read(&save.path);
+        if let Some(meta) = reading.logic_metadata() {
+            last_key = logic_key_label(meta).or(last_key);
+            last_time_sig = meta
+                .time_signature
+                .map(|ts| ModelTimeSignature {
+                    numerator: ts.numerator,
+                    denominator: ts.denominator,
+                })
+                .or(last_time_sig);
+        }
         if first.is_none() {
             if let Reading::Ableton { model, .. } = &reading {
                 for (id, t) in &model.tracks {
@@ -885,6 +1030,14 @@ fn assemble(meta: StoryMeta, saves: Vec<Save>, read: fn(&Path) -> Reading, clock
         }
     });
 
+    let mut capability = facts.capability();
+    if let Some(note) = meta.newer_daw_warning {
+        capability.push(CapabilityNote {
+            tier: Some(facts.tier),
+            text: note,
+        });
+    }
+
     Story {
         id: meta.story_id,
         song_id: meta.song_id,
@@ -894,8 +1047,8 @@ fn assemble(meta: StoryMeta, saves: Vec<Save>, read: fn(&Path) -> Reading, clock
             daw: facts.daw,
             daw_label: facts.label.to_string(),
             tempo_bpm: last_tempo,
-            key: None,
-            time_signature: None,
+            key: last_key,
+            time_signature: last_time_sig.map(|ts| ts.to_string()),
             last_worked,
             subtitle: subtitle.join(" · "),
             kept: KeptSummary {
@@ -909,7 +1062,7 @@ fn assemble(meta: StoryMeta, saves: Vec<Save>, read: fn(&Path) -> Reading, clock
         tracks: lanes.lanes,
         sessions,
         overview,
-        capability: facts.capability(),
+        capability,
         family: meta.family,
         send_ready: None,
     }
@@ -1023,6 +1176,7 @@ pub fn logic_stories(
         &format!("{root_label}/{}", relative_key(&project.bundle_path, root)),
     );
     let many = project.alternatives.len() > 1;
+    let newer_daw_warning = newer_logic_warning(project);
 
     // Logic doesn't record which alternative another was made from, so
     // they are siblings, not a tree.
@@ -1092,6 +1246,7 @@ pub fn logic_stories(
                     lineage: many.then(|| format!("Alternative {}", i + 1)),
                     facts,
                     family,
+                    newer_daw_warning: newer_daw_warning.clone(),
                 },
                 saves,
                 read_logic,
@@ -1099,6 +1254,24 @@ pub fn logic_stories(
             )
         })
         .collect()
+}
+
+/// A capability note when the bundle's `Resources/ProjectInformation.plist`
+/// names a Logic build newer than `wit_logic::KNOWN_MAX_MAJOR_VERSION` — the
+/// one early-warning signal Wit has that a save may use a shape nothing
+/// here has been verified against. `None` when that plist is missing,
+/// unreadable, doesn't name a version, or names one Wit already knows.
+fn newer_logic_warning(project: &LogicProject) -> Option<String> {
+    let info_path = project
+        .bundle_path
+        .join("Resources/ProjectInformation.plist");
+    let info = wit_logic::read_project_information(&info_path).ok()?;
+    let last_saved_from = info.last_saved_from?;
+    wit_logic::is_newer_than_known(&last_saved_from).then(|| {
+        "This project was last saved from a newer Logic than Wit has verified — some facts \
+         here may be incomplete."
+            .to_string()
+    })
 }
 
 /// One Story for an Ableton lineage (a set and its `Backup/` autosaves).
@@ -1151,6 +1324,7 @@ pub fn ableton_story(
             lineage: None,
             facts: DawFacts::ableton(),
             family: None,
+            newer_daw_warning: None,
         },
         saves,
         read_ableton,

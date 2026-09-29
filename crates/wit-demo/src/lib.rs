@@ -165,7 +165,10 @@ fn night_bus_chain() -> Vec<SongSpec> {
 /// the newest save, and `Project File Backups/NN/ProjectData` for the older
 /// ones — the exact layout `wit-index::discover` walks, and the real
 /// on-disk shape (backups oldest-first in slots `00`..`09`, current save
-/// outside them).
+/// outside them). Every `ProjectData` gets a sibling `MetaData.plist`
+/// (`logic::build_metadata_plist`), matching the real bundle shape
+/// `wit-logic::metadata` reads from — a save without one would be a shape
+/// no real Logic project has.
 fn write_logic_bundle(
     bundle: &Path,
     alternative: &str,
@@ -186,6 +189,10 @@ fn write_logic_bundle(
                 .join(format!("{slot:02}"))
                 .join("ProjectData");
             write(&path, &logic::build_project_data(spec, version))?;
+            write(
+                &path.with_file_name("MetaData.plist"),
+                &logic::build_metadata_plist(spec),
+            )?;
             stamp(&path, times[slot])?;
             written += 1;
         }
@@ -194,6 +201,10 @@ fn write_logic_bundle(
     write(
         &current_path,
         &logic::build_project_data(&current[0], version),
+    )?;
+    write(
+        &current_path.with_file_name("MetaData.plist"),
+        &logic::build_metadata_plist(&current[0]),
     )?;
     stamp(&current_path, times[times.len() - 1])?;
     written += 1;

@@ -170,6 +170,16 @@ uses the logical one. Both conventions are in use, so state which you mean.
 
 ### Region payloads — [verified]
 
+**[ported to Rust]** `crates/wit-logic/src/regions.rs` now ports the region-object decode,
+the event-grid walk and the placement move-pairing diff below into the shipping crate
+(previously this map existed only in `experiments/logic_region_map.py`, per the note at
+the end of this section) — parsing, not the placement-level "which copy" report; see that
+module's own doc for exactly what carried over and what didn't (the UUID-keyed
+rename/resize diff and the library-`--scan` diagnostics stayed Python-only, as `wit-story`
+had no use for them yet). `wit-logic/src/metadata.rs` similarly ports `MetaData.plist` and
+`Resources/ProjectInformation.plist` reading (`NumberOfTracks`, key, mode, time signature,
+sample rate, BPM, the audio file list, `LastSavedFrom`) into the shipping crate.
+
 The container census says *"79 regions became 96"*. These two payloads say *which*
 region, and where it went. All offsets are **record-relative** (from the start of the
 36-byte record header); payload-relative = record − `0x24`. Fields sit on **2-byte**
@@ -372,9 +382,12 @@ which holds on the chain (0 of 96 change).
 Region add/remove/rename/resize and placement moves are readable, and
 `experiments/logic_region_map.py` prints them. What is **not** demonstrated is
 parameter-level diff: what a fader moved to, what a plugin knob became. Those payloads
-are unmapped. Do not describe Logic support as "semantic diff" until that lands — and
-note that `wit-logic`, the shipping crate, does not yet read any of the fields above;
-the map exists in `experiments/` only.
+are unmapped. Do not describe Logic support as "semantic diff" until that lands.
+`wit-logic/src/regions.rs` **[ported to Rust]** now reads the region-object and
+placement-grid fields above and the move-pairing diff (`wit-story`'s Logic path wires
+region added/removed/moved sentences from it); the UUID-keyed rename/resize diff and the
+library-wide `--scan` diagnostics remain `experiments/`-only, since nothing downstream
+uses them yet.
 
 ### Start from LogicProFormatWriter, not from scratch — [cited]
 

@@ -1,9 +1,15 @@
 //! `wit logic-report` (M2.5, [issue #15](https://github.com/sep-lab/Wit/issues/15)):
 //! the library-wide "reality gate". Walks every discovered Logic/GarageBand
-//! alternative's chain — `Project File Backups/00`–`09` (oldest first) then
-//! the current `ProjectData`, matching [`LogicAlternative`]'s own field
-//! order — compares every consecutive pair at `wit-logic`'s Structure
-//! honesty tier, and reports the three statistics the issue asks for:
+//! alternative's chain — every backup plus the current `ProjectData`,
+//! ordered by **file modification time** (see
+//! [`discover::sort_by_save_time`], not [`LogicAlternative`]'s own
+//! slot-name field order: the `Project File Backups/00`–`09` slots are a
+//! ring, so on a project old enough to have wrapped once, slot order and
+//! save order disagree. (Found in review: an earlier version of this
+//! function paired backups in slot order and so mis-paired a wrapped
+//! chain — every real project old enough to fill all 10 slots has one.)
+//! — compares every consecutive pair at `wit-logic`'s Structure honesty
+//! tier, and reports the three statistics the issue asks for:
 //!
 //! - % of saves with **any** structural change Wit can see
 //!   ([`LogicLibraryReport::structural_change_percent`])
@@ -18,7 +24,7 @@
 //! or modifies anything under the library root, the same discipline
 //! `discover.rs` and `dupes.rs` already follow.
 
-use crate::discover::discover_logic_projects;
+use crate::discover::{discover_logic_projects, sort_by_save_time};
 use std::path::{Path, PathBuf};
 
 /// One consecutive-pair comparison within a single alternative's chain.
@@ -102,8 +108,12 @@ pub fn logic_report(root: &Path) -> LogicLibraryReport {
         for alt in &project.alternatives {
             report.alternatives_scanned += 1;
 
-            let mut chain: Vec<&PathBuf> = alt.backups.iter().collect();
-            chain.push(&alt.current);
+            let mut chain: Vec<&PathBuf> = alt
+                .backups
+                .iter()
+                .chain(std::iter::once(&alt.current))
+                .collect();
+            sort_by_save_time(&mut chain);
 
             let mut walks: Vec<(&PathBuf, wit_logic::Walked)> = Vec::new();
             for path in chain {
@@ -172,6 +182,75 @@ mod tests {
     fn write(path: &Path, bytes: &[u8]) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, bytes).unwrap();
+    }
+
+    fn stamp(path: &Path, unix_secs: u64) {
+        let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(unix_secs);
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(t)
+            .unwrap();
+    }
+
+    #[test]
+    fn backups_are_paired_by_mtime_not_by_slot_when_the_ring_has_wrapped() {
+        // The ring already wrapped once: slots 08 and 09 hold the OLDEST two
+        // saves (written before the wrap), slots 00 and 01 hold the next two
+        // (written after wrapping past 09), and the current save is newest
+        // of all. Slot-alphabetical order (00, 01, 08, 09, current)
+        // disagrees with real chronological order (08, 09, 00, 01, current)
+        // — exactly the shape that made the original slot-order pairing
+        // wrong on any real project old enough to have filled all 10 slots.
+        let dir = tempfile::tempdir().unwrap();
+        let bundle = dir.path().join("Song.logicx");
+        let alt = bundle.join("Alternatives/000");
+        let make = |n: u8| build_container(&[(b"karT", vec![n; 8])]);
+
+        let chronological: Vec<(PathBuf, Vec<u8>, u64)> = vec![
+            (
+                alt.join("Project File Backups/08/ProjectData"),
+                make(8),
+                1_000,
+            ),
+            (
+                alt.join("Project File Backups/09/ProjectData"),
+                make(9),
+                2_000,
+            ),
+            (
+                alt.join("Project File Backups/00/ProjectData"),
+                make(0),
+                3_000,
+            ),
+            (
+                alt.join("Project File Backups/01/ProjectData"),
+                make(1),
+                4_000,
+            ),
+            (alt.join("ProjectData"), make(255), 5_000),
+        ];
+        for (path, bytes, secs) in &chronological {
+            write(path, bytes);
+            stamp(path, *secs);
+        }
+
+        let report = logic_report(dir.path());
+        assert_eq!(report.total_pairs(), 4);
+        let got: Vec<(PathBuf, PathBuf)> = report
+            .pairs
+            .iter()
+            .map(|p| (p.older.clone(), p.newer.clone()))
+            .collect();
+        let expected: Vec<(PathBuf, PathBuf)> = chronological
+            .windows(2)
+            .map(|w| (w[0].0.clone(), w[1].0.clone()))
+            .collect();
+        assert_eq!(
+            got, expected,
+            "pairs must follow save (mtime) order, not slot-name order"
+        );
     }
 
     #[test]

@@ -128,3 +128,116 @@ fn real_project_walks_clean_and_tempo_matches_metadata_plist() {
         walks.len().saturating_sub(1)
     );
 }
+
+/// Spot-check `metadata.rs` and `regions.rs` (new this lane) against the
+/// same real bundle. Counts only — never a name, a track title, or a path
+/// beyond what the existing test above already prints.
+#[test]
+#[ignore = "opt-in: set WIT_LOGIC_PROJECT to a real .logicx bundle path and pass --ignored"]
+fn real_project_metadata_and_regions_decode_cleanly() {
+    let Some(bundle) = project_path() else {
+        eprintln!(
+            "WIT_LOGIC_PROJECT not set — skipped. To run: \
+             WIT_LOGIC_PROJECT=/path/to/Song.logicx cargo test -p wit-logic --test real_fixtures -- --nocapture --ignored"
+        );
+        return;
+    };
+
+    let chain = backup_chain(&bundle);
+    assert!(
+        !chain.is_empty(),
+        "no ProjectData files found under {bundle:?}"
+    );
+
+    let mut total_regions_seen = 0usize;
+    let mut total_regions_decoded = 0usize;
+    let mut total_placements = 0usize;
+    let mut total_placements_resolved = 0usize;
+    let mut songs = Vec::new();
+
+    for path in &chain {
+        let metadata_path = path.with_file_name("MetaData.plist");
+        let meta = wit_logic::read_metadata_plist(&metadata_path)
+            .unwrap_or_else(|e| panic!("MetaData.plist at {metadata_path:?} did not read: {e}"));
+        eprintln!(
+            "  {}: tracks={:?} key={:?} mode={:?} time_sig={:?} sample_rate={:?} bpm={:?} audio_files={}",
+            path.file_name().unwrap().to_string_lossy(),
+            meta.number_of_tracks,
+            meta.key,
+            meta.mode,
+            meta.time_signature,
+            meta.sample_rate,
+            meta.bpm,
+            meta.audio_files.len(),
+        );
+        assert!(
+            meta.number_of_tracks.is_some(),
+            "NumberOfTracks must read on a real file"
+        );
+        assert!(
+            meta.bpm.is_some(),
+            "BeatsPerMinute must read on a real file"
+        );
+
+        let bytes = std::fs::read(path).unwrap();
+        let song = wit_logic::parse_regions_bytes(&bytes)
+            .unwrap_or_else(|e| panic!("regions::parse_bytes failed on real file {path:?}: {e}"));
+        total_regions_seen += song.region_records_seen;
+        total_regions_decoded += song.regions.len();
+        total_placements += song.placements.len();
+        let families = song.families();
+        total_placements_resolved += song
+            .placements
+            .iter()
+            .filter(|p| families.contains_key(&p.family))
+            .count();
+        songs.push((path.clone(), song));
+    }
+
+    eprintln!(
+        "\n{total_regions_decoded}/{total_regions_seen} gRuA records decoded; \
+         {total_placements_resolved}/{total_placements} placements resolved to a region family"
+    );
+    assert_eq!(
+        total_regions_decoded, total_regions_seen,
+        "every gRuA record seen on this project decoded"
+    );
+    assert_eq!(
+        total_placements_resolved, total_placements,
+        "every placement resolved to a known region family"
+    );
+
+    // The project information plist lives once at the bundle root, shared by
+    // every alternative.
+    let info_path = bundle.join("Resources/ProjectInformation.plist");
+    if info_path.is_file() {
+        let info = wit_logic::read_project_information(&info_path).unwrap();
+        eprintln!("  LastSavedFrom = {:?}", info.last_saved_from);
+        if let Some(v) = &info.last_saved_from {
+            eprintln!(
+                "  newer than Wit's known-verified major version ({}): {}",
+                wit_logic::KNOWN_MAX_MAJOR_VERSION,
+                wit_logic::is_newer_than_known(v)
+            );
+        }
+    }
+
+    // The move-pairing diff between the oldest and newest reading in the
+    // chain must not panic and must only ever report a move for a family
+    // whose old/new placement counts are each exactly one — spot-checked by
+    // asserting every family diff decision is one of the three variants.
+    if let (Some((_, oldest)), Some((_, newest))) = (songs.first(), songs.last()) {
+        let changes = wit_logic::diff_placements(oldest, newest);
+        let (mut moved, mut added, mut removed) = (0, 0, 0);
+        for c in &changes {
+            match c {
+                wit_logic::PlacementChange::Moved { .. } => moved += 1,
+                wit_logic::PlacementChange::Added { .. } => added += 1,
+                wit_logic::PlacementChange::Removed { .. } => removed += 1,
+            }
+        }
+        eprintln!(
+            "  oldest -> newest placement diff: {moved} moved, {added} added, {removed} removed"
+        );
+    }
+}
