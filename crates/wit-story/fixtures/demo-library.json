@@ -60,16 +60,16 @@
       "song_id": "ableton:17a8b3f3ee05ceb6",
       "title": "Coastline",
       "daw": "ableton",
-      "last_worked": 1767645857,
-      "last_worked_label": "5 Jan 20:44",
-      "moments_kept": 5,
+      "last_worked": 1767646157,
+      "last_worked_label": "5 Jan 20:49",
+      "moments_kept": 6,
       "copies": 0,
       "copies_label": null,
       "artwork": {
         "kind": "generated",
         "seed": 3286561944
       },
-      "digest": "4 changes Wit can see in your last session",
+      "digest": "5 changes Wit can see in your last session",
       "story_ids": [
         "ableton:17a8b3f3ee05ceb6"
       ]
@@ -1328,14 +1328,14 @@
         "daw_label": "Live",
         "tempo_bpm": 124.0,
         "key": null,
-        "time_signature": null,
-        "last_worked": 1767645857,
-        "subtitle": "Live · 124 BPM · last worked 5 Jan 20:44",
+        "time_signature": "4/4",
+        "last_worked": 1767646157,
+        "subtitle": "Live · 124 BPM · last worked 5 Jan 20:49",
         "kept": {
-          "moments": 5,
+          "moments": 6,
           "daw_keeps": 10,
           "kept_by_wit": 0,
-          "label": "5 moments on disk · Live keeps 10"
+          "label": "6 moments on disk · Live keeps 10"
         },
         "family_label": null
       },
@@ -1482,12 +1482,12 @@
         {
           "id": "s2",
           "started": 1767643293,
-          "ended": 1767645857,
+          "ended": 1767646157,
           "duration": {
-            "secs": 2564,
+            "secs": 2864,
             "source": "save_times"
           },
-          "label": "5 Jan · evening · about 45m",
+          "label": "5 Jan · evening · about 50m",
           "moments": [
             {
               "id": "ableton:17a8b3f3ee05ceb6@1767643293",
@@ -1505,7 +1505,7 @@
               "sentences": [
                 {
                   "icon": "plugin",
-                  "text": "Added AutoFilter on Rhodes",
+                  "text": "Added Auto Filter (Legacy) on Rhodes",
                   "spans": [
                     {
                       "kind": "plain",
@@ -1513,7 +1513,7 @@
                     },
                     {
                       "kind": "plugin",
-                      "text": "AutoFilter"
+                      "text": "Auto Filter (Legacy)"
                     },
                     {
                       "kind": "plain",
@@ -1651,13 +1651,77 @@
                 "open_as_copy": false,
                 "send": false
               }
+            },
+            {
+              "id": "ableton:17a8b3f3ee05ceb6@1767646157",
+              "at": 1767646157,
+              "label": "5 Jan 20:49",
+              "heading": "What changed at 5 Jan 20:49",
+              "subheading": "compared with the save at 5 Jan 20:44",
+              "compared_with": "ableton:17a8b3f3ee05ceb6@1767645857",
+              "source": {
+                "kind": "ableton_autosave"
+              },
+              "source_label": "Live autosave",
+              "verdict": "changed",
+              "weight": 1,
+              "sentences": [
+                {
+                  "icon": "move",
+                  "text": "Moved clip 'verse rhodes' on Rhodes",
+                  "spans": [
+                    {
+                      "kind": "plain",
+                      "text": "Moved clip '"
+                    },
+                    {
+                      "kind": "region",
+                      "text": "verse rhodes"
+                    },
+                    {
+                      "kind": "plain",
+                      "text": "' on "
+                    },
+                    {
+                      "kind": "track",
+                      "text": "Rhodes"
+                    }
+                  ],
+                  "track": "Rhodes",
+                  "lane": 0,
+                  "place": {
+                    "kind": "bars",
+                    "start": 5.0,
+                    "end": 8.0,
+                    "approximate": false,
+                    "section": "Chorus"
+                  },
+                  "place_label": "bars 5–8 · Chorus",
+                  "confidence": "exact",
+                  "tier": "semantic"
+                }
+              ],
+              "summary": null,
+              "note": null,
+              "track_heat": [
+                {
+                  "track": 0,
+                  "level": 1
+                }
+              ],
+              "listen": [],
+              "actions": {
+                "listen": false,
+                "open_as_copy": false,
+                "send": false
+              }
             }
           ]
         }
       ],
       "overview": {
         "from": "ableton:17a8b3f3ee05ceb6@1767521700",
-        "to": "ableton:17a8b3f3ee05ceb6@1767645857",
+        "to": "ableton:17a8b3f3ee05ceb6@1767646157",
         "heading": "Since 4 Jan",
         "subheading": "from the oldest moment Wit has to the newest",
         "verdict": "changed",
@@ -1744,7 +1808,7 @@
           },
           {
             "icon": "plugin",
-            "text": "Added AutoFilter on Rhodes",
+            "text": "Added Auto Filter (Legacy) on Rhodes",
             "spans": [
               {
                 "kind": "plain",
@@ -1752,7 +1816,7 @@
               },
               {
                 "kind": "plugin",
-                "text": "AutoFilter"
+                "text": "Auto Filter (Legacy)"
               },
               {
                 "kind": "plain",
@@ -1767,6 +1831,40 @@
             "lane": 0,
             "place": null,
             "place_label": null,
+            "confidence": "exact",
+            "tier": "semantic"
+          },
+          {
+            "icon": "move",
+            "text": "Moved clip 'verse rhodes' on Rhodes",
+            "spans": [
+              {
+                "kind": "plain",
+                "text": "Moved clip '"
+              },
+              {
+                "kind": "region",
+                "text": "verse rhodes"
+              },
+              {
+                "kind": "plain",
+                "text": "' on "
+              },
+              {
+                "kind": "track",
+                "text": "Rhodes"
+              }
+            ],
+            "track": "Rhodes",
+            "lane": 0,
+            "place": {
+              "kind": "bars",
+              "start": 5.0,
+              "end": 8.0,
+              "approximate": false,
+              "section": "Chorus"
+            },
+            "place_label": "bars 5–8 · Chorus",
             "confidence": "exact",
             "tier": "semantic"
           },
@@ -1799,7 +1897,7 @@
             "tier": "semantic"
           }
         ],
-        "summary": "5 changes Wit can see: 1 song setting, 1 rename, 2 mix changes, 1 plugin change",
+        "summary": "6 changes Wit can see: 1 song setting, 1 rename, 2 mix changes, 1 plugin change, 1 move",
         "note": null,
         "track_heat": [
           {

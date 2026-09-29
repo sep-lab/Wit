@@ -205,6 +205,38 @@ fn place_label(place: &Place) -> String {
     }
 }
 
+/// Live's device class tags (`FxAdded`/`FxRemoved`'s own list, a golden-
+/// pinned field that must stay raw for `render_text`) translated to what
+/// Live's UI shows, joined the same way the golden CLI text already does.
+fn display_names(tags: &[String]) -> String {
+    tags.iter()
+        .map(|t| wit_als::device_display_name(t))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Point a sentence's [`Place::Bars`] at the arrangement section (Ableton
+/// locator, Logic marker) its start bar falls in, and re-render
+/// `place_label` to match. `sections` must be sorted by `start` ascending —
+/// this picks the *last* one at or before the sentence's own start, i.e.
+/// the section that was current when the change happened. A sentence with
+/// no `Place`, or a [`Place::WholeSong`], is left untouched.
+pub fn attach_section(sentence: &mut Sentence, sections: &[(f64, String)]) {
+    let Some(Place::Bars { start, .. }) = &sentence.place else {
+        return;
+    };
+    let start = *start;
+    let found = sections
+        .iter()
+        .rev()
+        .find(|(s, _)| *s <= start)
+        .map(|(_, name)| name.clone());
+    if let Some(Place::Bars { section, .. }) = &mut sentence.place {
+        *section = found;
+    }
+    sentence.place_label = sentence.place.as_ref().map(place_label);
+}
+
 fn bars_from_pos(pos: &BarPos) -> Option<Place> {
     Some(Place::Bars {
         start: finite(pos.bar)?,
@@ -342,14 +374,14 @@ pub fn sentence(record: &ChangeRecord, ctx: &SentenceContext) -> Sentence {
         } => mix_sentence(track, *field, from, to, tier),
         ChangeRecord::FxAdded { track, devices } => Builder::new()
             .plain("Added ")
-            .name(SpanKind::Plugin, &devices.join(", "))
+            .name(SpanKind::Plugin, &display_names(devices))
             .plain(" on ")
             .name(SpanKind::Track, track)
             .finish(Icon::Plugin, tier)
             .on(track),
         ChangeRecord::FxRemoved { track, devices } => Builder::new()
             .plain("Removed ")
-            .name(SpanKind::Plugin, &devices.join(", "))
+            .name(SpanKind::Plugin, &display_names(devices))
             .plain(" from ")
             .name(SpanKind::Track, track)
             .finish(Icon::Plugin, tier)
@@ -361,7 +393,7 @@ pub fn sentence(record: &ChangeRecord, ctx: &SentenceContext) -> Sentence {
             .on(track),
         ChangeRecord::FxSettingsChanged { track, device } => Builder::new()
             .plain("Changed ")
-            .name(SpanKind::Plugin, device)
+            .name(SpanKind::Plugin, wit_als::device_display_name(device))
             .plain(" settings on ")
             .name(SpanKind::Track, track)
             .finish(Icon::Plugin, tier)
@@ -894,5 +926,99 @@ mod tests {
             .iter()
             .filter(|x| x.kind == SpanKind::Plain)
             .all(|x| !x.text.contains('<')));
+    }
+
+    // ---- PLAN-V2: Ableton device display names and sections --------------
+
+    #[test]
+    fn fx_sentences_use_lives_own_device_display_names() {
+        let s = sentence(
+            &ChangeRecord::FxAdded {
+                track: "Drums".into(),
+                devices: vec!["Eq8".into(), "Compressor2".into()],
+            },
+            &LIVE,
+        );
+        assert_eq!(s.text, "Added EQ Eight, Compressor on Drums");
+
+        let s = sentence(
+            &ChangeRecord::FxSettingsChanged {
+                track: "Drums".into(),
+                device: "AutoFilter2".into(),
+            },
+            &LIVE,
+        );
+        assert_eq!(s.text, "Changed Auto Filter settings on Drums");
+    }
+
+    #[test]
+    fn an_unmapped_device_tag_falls_back_to_itself_in_a_sentence() {
+        let s = sentence(
+            &ChangeRecord::FxAdded {
+                track: "Drums".into(),
+                devices: vec!["SomeFuturePlugin".into()],
+            },
+            &LIVE,
+        );
+        assert_eq!(s.text, "Added SomeFuturePlugin on Drums");
+    }
+
+    #[test]
+    fn attach_section_names_the_locator_a_position_falls_in() {
+        let mut s = sentence(
+            &ChangeRecord::ClipAdded {
+                track: "Rhodes".into(),
+                label: "verse".into(),
+                start_bar: 16.0, // beats, bar 5 at 4/4
+            },
+            &LIVE,
+        );
+        let sections = vec![(1.0, "Intro".to_string()), (5.0, "Verse".to_string())];
+        attach_section(&mut s, &sections);
+        assert_eq!(s.place_label.as_deref(), Some("bar 5 · Verse"));
+    }
+
+    #[test]
+    fn attach_section_picks_the_last_section_at_or_before_the_position() {
+        let mut s = sentence(
+            &ChangeRecord::ClipAdded {
+                track: "Rhodes".into(),
+                label: "verse".into(),
+                start_bar: 40.0, // bar 11 at 4/4
+            },
+            &LIVE,
+        );
+        let sections = vec![(1.0, "Intro".to_string()), (5.0, "Verse".to_string())];
+        attach_section(&mut s, &sections);
+        assert_eq!(s.place_label.as_deref(), Some("bar 11 · Verse"));
+    }
+
+    #[test]
+    fn a_position_before_any_section_gets_no_section_label() {
+        let mut s = sentence(
+            &ChangeRecord::ClipAdded {
+                track: "Rhodes".into(),
+                label: "verse".into(),
+                start_bar: 0.0,
+            },
+            &LIVE,
+        );
+        let sections = vec![(5.0, "Verse".to_string())];
+        attach_section(&mut s, &sections);
+        assert_eq!(s.place_label.as_deref(), Some("bar 1"));
+    }
+
+    #[test]
+    fn attach_section_does_nothing_to_a_sentence_with_no_place() {
+        let mut s = sentence(
+            &ChangeRecord::TempoChanged {
+                from_bpm: 120.0,
+                to_bpm: 124.0,
+            },
+            &LIVE,
+        );
+        let before = s.clone();
+        attach_section(&mut s, &[(0.0, "Intro".to_string())]);
+        assert_eq!(s, before);
     }
 }

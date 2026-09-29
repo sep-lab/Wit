@@ -19,6 +19,54 @@ pub struct Model {
     pub tempo_bpm: Option<f64>,
     /// Track id -> track. Keyed and iterated in [`TrackId`] order.
     pub tracks: BTreeMap<TrackId, Track>,
+    /// The project's time signature, when a parser could read one. Ableton
+    /// does not store a single plain numerator/denominator for the song
+    /// itself — the main track's own `TimeSignature` element is an internal
+    /// enum with no published decode table (`wit-als/src/extract.rs`'s
+    /// module doc explains what was tried). `wit-als` instead reads the
+    /// explicit `Numerator`/`Denominator` Ableton attaches to a clip's own
+    /// warp/time-signature record, which several saves agree on in every
+    /// real file checked. `None` means "not read", never "assume 4/4".
+    pub time_signature: Option<crate::TimeSignature>,
+    /// The project's key, already rendered as "C minor" (root note + scale
+    /// name), when the parser both found `ScaleInformation` and confirmed
+    /// the project actually uses it (Ableton's `InKey` flag). `None` means
+    /// either "the project has no key set" or "not read" — both are the
+    /// same absence to a musician, and Ableton does not distinguish them
+    /// itself once the scale feature is off.
+    pub key: Option<String>,
+    /// Arrangement locators (song sections: "Verse", "Chorus"), in document
+    /// order. Ableton stores no other ordering for them.
+    pub locators: Vec<Locator>,
+    /// "Main" (Live 12.3+) or "Master" (older) — whichever host element the
+    /// parser actually found, so a Story can name the bus the way the
+    /// musician's own copy of Live shows it.
+    pub master_track_label: Option<String>,
+    /// The master bus's own device chain, in the same shape as a track's
+    /// [`Track::devices`] — Ableton nests it exactly like a track's, but
+    /// `als_semantic_diff.py` and the first Rust port never walked it, so a
+    /// save that only touched a mastering plugin reported nothing (a real,
+    /// reviewed save toggled one off; Wit said nothing — the bug this field
+    /// fixes).
+    pub master_devices: Vec<Device>,
+}
+
+/// One arrangement locator: a named position, in Live's own beats (quarter
+/// notes) — the same unit as [`Clip::start`]/[`Clip::end`]. Live's XML calls
+/// this a `Locator`; Wit's musician-facing vocabulary calls it a marker
+/// (`ChangeRecord::MarkerAdded` and friends).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Locator {
+    pub name: String,
+    pub time_beats: f64,
+}
+
+/// Quarter-note beats per bar for a time signature — Live's beats are
+/// always quarter notes regardless of the denominator, so a bar holds
+/// `numerator * (4 / denominator)` of them. Shared by `wit-diff` (bars for a
+/// marker) and `wit-story` (bars for a clip) so the formula is written once.
+pub fn beats_per_bar(sig: crate::TimeSignature) -> f64 {
+    f64::from(sig.numerator) * 4.0 / f64::from(sig.denominator)
 }
 
 impl Model {
@@ -180,6 +228,12 @@ impl TrackKind {
 pub struct Device {
     pub tag: String,
     pub fingerprint: Fingerprint,
+    /// The third-party plugin's own display name (`PluginDesc`'s
+    /// `Vst`/`Vst3`/`AuPluginInfo`), when this device wraps one — measured
+    /// on real files as `AuPluginInfo/Name`; `Vst`/`Vst3PluginInfo` are read
+    /// the same way but unverified against a real VST project (see
+    /// `wit-als/src/extract.rs`). `None` for a native Ableton device.
+    pub plugin_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

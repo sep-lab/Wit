@@ -24,11 +24,26 @@ fn valid_als() -> Vec<u8> {
             <AudioClip Id="9"><CurrentStart Value="0.0"/><CurrentEnd Value="4.0"/>
                 <Name Value="clip"/><Disabled Value="false"/>
                 <SampleRef><FileRef><RelativePath Value="Samples/kick.wav"/></FileRef></SampleRef>
+                <TimeSignature><TimeSignatures>
+                    <RemoteableTimeSignature Id="0"><Numerator Value="4"/><Denominator Value="4"/><Time Value="0"/></RemoteableTimeSignature>
+                </TimeSignatures></TimeSignature>
             </AudioClip>
         </Events></ArrangerAutomation></Sample></MainSequencer>
         </DeviceChain></AudioTrack>
     </Tracks>
-    <MasterTrack><DeviceChain><Mixer><Tempo><Manual Value="120.0"/></Tempo></Mixer></DeviceChain></MasterTrack>
+    <Locators><Locators>
+        <Locator Id="0"><Time Value="0"/><Name Value="Intro"/><IsSongStart Value="true"/></Locator>
+    </Locators></Locators>
+    <ScaleInformation><Root Value="0"/><Name Value="1"/></ScaleInformation>
+    <InKey Value="true"/>
+    <MasterTrack><DeviceChain>
+        <Mixer><Tempo><Manual Value="120.0"/></Tempo></Mixer>
+        <DeviceChain><Devices>
+            <AuPluginDevice Id="0"><On><Manual Value="true"/></On>
+                <PluginDesc><AuPluginInfo Id="0"><Name Value="Example"/></AuPluginInfo></PluginDesc>
+            </AuPluginDevice>
+        </Devices></DeviceChain>
+    </DeviceChain></MasterTrack>
     </LiveSet></Ableton>"#;
 
     use flate2::write::GzEncoder;

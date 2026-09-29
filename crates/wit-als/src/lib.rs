@@ -17,13 +17,21 @@
 //! (The other two M1 named bug fixes — deterministic sample-rename ordering
 //! and the rename-bijection guard — are `wit-diff`'s, not this crate's;
 //! they are about comparing two models, not extracting one.)
+//!
+//! PLAN-V2 (2026-09-29, "Phase C → Ableton") extended the whitelist beyond
+//! M1's tempo/tracks/clips/devices: locators, the project's time signature
+//! and key/scale, third-party plugin names, device display names, and the
+//! master bus's own device chain (`extract.rs`'s module doc has the details
+//! and citations, `tables.rs` the lookup tables).
 
 mod dom;
 mod extract;
 mod reader;
+mod tables;
 
 pub use extract::build_model;
 pub use reader::{AlsError, MAX_DECOMPRESSED_BYTES, MAX_DEPTH};
+pub use tables::device_display_name;
 
 /// Parse a `.als` file's raw bytes (still gzip-compressed, as read off
 /// disk) into a [`wit_model::Model`].

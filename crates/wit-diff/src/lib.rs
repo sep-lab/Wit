@@ -64,6 +64,56 @@ pub fn diff(old: &Model, new: &Model) -> Vec<ChangeRecord> {
         diff_track(&mut records, ta, tb, &renames.replaced_clips, id);
     }
 
+    // ---- PLAN-V2 Story contract (2026-09-29): DAW-neutral records, always
+    // appended after the block above so the M1 golden output — which never
+    // exercises any of these — stays byte-identical.
+
+    if let (Some(from), Some(to)) = (old.time_signature, new.time_signature) {
+        if from != to {
+            records.push(ChangeRecord::TimeSignatureChanged { from, to });
+        }
+    }
+
+    if old.key != new.key {
+        records.push(ChangeRecord::KeyChanged {
+            from: old.key.clone(),
+            to: new.key.clone(),
+        });
+    }
+
+    records.extend(diff_markers(old, new));
+
+    for id in ka.intersection(&kb) {
+        let tb = &new.tracks[*id];
+        records.extend(diff_plugin_names(
+            Some(tb.name.as_str()),
+            &old.tracks[*id].devices,
+            &tb.devices,
+        ));
+    }
+
+    // The master bus: named "Main" (Live 12.3+) or "Master" (older),
+    // whichever side actually found the host element — a save can't change
+    // which tag Live wrote without also changing the Live version, and
+    // either side is the honest label for that state.
+    if let Some(label) = new
+        .master_track_label
+        .as_deref()
+        .or(old.master_track_label.as_deref())
+    {
+        diff_devices(
+            &mut records,
+            label,
+            &old.master_devices,
+            &new.master_devices,
+        );
+        records.extend(diff_plugin_names(
+            Some(label),
+            &old.master_devices,
+            &new.master_devices,
+        ));
+    }
+
     records
 }
 
@@ -100,7 +150,7 @@ fn diff_track(
         tb.color.as_deref(),
     );
 
-    diff_devices(records, &label, ta, tb);
+    diff_devices(records, &label, &ta.devices, &tb.devices);
 
     if ta.automation_lanes != tb.automation_lanes {
         records.push(ChangeRecord::AutomationLanesChanged {
@@ -158,9 +208,18 @@ fn mix_text(
     }
 }
 
-fn diff_devices(records: &mut Vec<ChangeRecord>, label: &str, ta: &Track, tb: &Track) {
-    let ta_tags = ta.device_tags();
-    let tb_tags = tb.device_tags();
+/// Device-chain add/remove/reorder/settings-changed, by tag and fingerprint
+/// — the M1 Ableton device diff. Takes plain slices, not a [`Track`], so
+/// the same logic serves a regular track's chain and the master bus's own
+/// chain ([`Model::master_devices`]), which is not itself a `Track`.
+fn diff_devices(
+    records: &mut Vec<ChangeRecord>,
+    label: &str,
+    ta: &[wit_model::Device],
+    tb: &[wit_model::Device],
+) {
+    let ta_tags: Vec<&str> = ta.iter().map(|d| d.tag.as_str()).collect();
+    let tb_tags: Vec<&str> = tb.iter().map(|d| d.tag.as_str()).collect();
     if ta_tags != tb_tags {
         let added: Vec<String> = tb_tags
             .iter()
@@ -195,7 +254,7 @@ fn diff_devices(records: &mut Vec<ChangeRecord>, label: &str, ta: &Track, tb: &T
         // way the two chains can still differ is a parameter fingerprint.
         // New in the Rust port (M1 named bug fix 3): what would otherwise
         // be a silent "no musical change" for a same-shape knob turn.
-        for (da, db) in ta.devices.iter().zip(tb.devices.iter()) {
+        for (da, db) in ta.iter().zip(tb.iter()) {
             if da.fingerprint != db.fingerprint {
                 records.push(ChangeRecord::FxSettingsChanged {
                     track: label.to_string(),
@@ -204,6 +263,137 @@ fn diff_devices(records: &mut Vec<ChangeRecord>, label: &str, ta: &Track, tb: &T
             }
         }
     }
+}
+
+/// Third-party plugin names added or removed on one track (or the master
+/// bus), by set difference over [`wit_model::Device::plugin_name`] — a new
+/// record ([`ChangeRecord::PluginAdded`]/[`PluginRemoved`]) alongside the
+/// existing tag-based [`ChangeRecord::FxAdded`]/[`FxRemoved`] line
+/// `diff_devices` already emits for the same change, since a raw device tag
+/// (`"AuPluginDevice"`) names nothing a musician recognises.
+fn diff_plugin_names(
+    track: Option<&str>,
+    ta: &[wit_model::Device],
+    tb: &[wit_model::Device],
+) -> Vec<ChangeRecord> {
+    let mut records = Vec::new();
+    let a: BTreeSet<&str> = ta.iter().filter_map(|d| d.plugin_name.as_deref()).collect();
+    let b: BTreeSet<&str> = tb.iter().filter_map(|d| d.plugin_name.as_deref()).collect();
+    for name in b.difference(&a) {
+        records.push(ChangeRecord::PluginAdded {
+            track: track.map(str::to_string),
+            plugin: name.to_string(),
+        });
+    }
+    for name in a.difference(&b) {
+        records.push(ChangeRecord::PluginRemoved {
+            track: track.map(str::to_string),
+            plugin: name.to_string(),
+        });
+    }
+    records
+}
+
+/// Convert an Ableton beat position to a 1-based bar position, using
+/// whichever model actually carries a time signature — mirrors
+/// `wit_model::beats_per_bar`'s formula, but this crate cannot depend on
+/// `wit-story` for the shared `SentenceContext` version of the same
+/// conversion (dependency runs the other way), so it is repeated here at
+/// the single call site that needs it ([`diff_markers`]).
+fn beats_to_bar(beats: f64, sig: Option<wit_model::TimeSignature>) -> wit_model::BarPos {
+    match sig {
+        Some(sig) if sig.numerator > 0 && sig.denominator > 0 => {
+            let bpb = wit_model::beats_per_bar(sig);
+            wit_model::BarPos::exact((beats / bpb).floor() + 1.0)
+        }
+        _ => wit_model::BarPos::about((beats / 4.0).floor() + 1.0),
+    }
+}
+
+/// Locators added, removed or renamed between two models — Ableton's
+/// section markers ("Verse", "Chorus"). Matched by beat time (rounded to 3
+/// places, [`wit_model::round3`]'s noise gate), not by Ableton's `Locator
+/// Id`: locator-id stability across saves has not been measured the way
+/// track-id stability was (`wit-als/src/extract.rs`'s module doc), so
+/// matching on the value a musician actually experiences — where the
+/// marker sits — is the claim this crate can stand behind.
+///
+/// A rename is only reported when **exactly one** unchanged-time pair
+/// changed name; multiple simultaneous name changes are ambiguous about
+/// which old name became which new one, so each is reported independently
+/// as a plain add/remove instead of a guessed pairing (the same discipline
+/// [`analyze_sample_renames`] applies to sample renames).
+fn diff_markers(old: &Model, new: &Model) -> Vec<ChangeRecord> {
+    let mut records = Vec::new();
+    let sig = new.time_signature.or(old.time_signature);
+
+    // Keyed by a rounded, `Ord`/`Eq`-safe bucket (floats cannot be map keys
+    // directly, and Ableton's own float serialisation can differ in its
+    // last decimal between two saves of a value nobody touched); the value
+    // keeps the original beat time for rendering, so converting to a bar
+    // position never round-trips through the bucket.
+    let old_by_time = locators_by_time(&old.locators);
+    let new_by_time = locators_by_time(&new.locators);
+
+    let old_keys: BTreeSet<i64> = old_by_time.keys().copied().collect();
+    let new_keys: BTreeSet<i64> = new_by_time.keys().copied().collect();
+
+    let renamed: Vec<i64> = old_keys
+        .intersection(&new_keys)
+        .copied()
+        .filter(|k| old_by_time[k].1 != new_by_time[k].1)
+        .collect();
+
+    if renamed.len() == 1 {
+        let k = renamed[0];
+        records.push(ChangeRecord::MarkerRenamed {
+            old: old_by_time[&k].1.to_string(),
+            new: new_by_time[&k].1.to_string(),
+        });
+    } else {
+        for k in &renamed {
+            records.push(ChangeRecord::MarkerRemoved {
+                name: old_by_time[k].1.to_string(),
+            });
+        }
+        for k in &renamed {
+            let (beats, name) = new_by_time[k];
+            records.push(ChangeRecord::MarkerAdded {
+                name: name.to_string(),
+                at: Some(beats_to_bar(beats, sig)),
+            });
+        }
+    }
+
+    for k in new_keys.difference(&old_keys) {
+        let (beats, name) = new_by_time[k];
+        records.push(ChangeRecord::MarkerAdded {
+            name: name.to_string(),
+            at: Some(beats_to_bar(beats, sig)),
+        });
+    }
+    for k in old_keys.difference(&new_keys) {
+        records.push(ChangeRecord::MarkerRemoved {
+            name: old_by_time[k].1.to_string(),
+        });
+    }
+
+    records
+}
+
+/// Group locators into a rounded-time -> (original beats, name) map — see
+/// [`diff_markers`] for why the key is rounded and the value isn't.
+fn locators_by_time(locators: &[wit_model::Locator]) -> BTreeMap<i64, (f64, &str)> {
+    locators
+        .iter()
+        .map(|l| (round3_key(l.time_beats), (l.time_beats, l.name.as_str())))
+        .collect()
+}
+
+/// A stable, ordered map key for a beat time, rounded to the same 3 places
+/// every other mixer value is (`wit_model::round3`).
+fn round3_key(beats: f64) -> i64 {
+    (wit_model::round3(beats) * 1000.0).round() as i64
 }
 
 fn clip_label(clip: &wit_model::Clip) -> String {
@@ -576,6 +766,7 @@ mod tests {
         Device {
             tag: tag.to_string(),
             fingerprint: Fingerprint([fp_seed; 32]),
+            plugin_name: None,
         }
     }
 
@@ -612,6 +803,279 @@ mod tests {
         t_new.devices = vec![device("Eq8", 1)];
         with_track(&mut new, t_new);
 
+        assert!(diff(&old, &new).is_empty());
+    }
+
+    // ---- PLAN-V2 Story contract: time signature, key, markers, plugins,
+    // master bus ------------------------------------------------------------
+
+    fn sig(numerator: u16, denominator: u16) -> wit_model::TimeSignature {
+        wit_model::TimeSignature {
+            numerator,
+            denominator,
+        }
+    }
+
+    #[test]
+    fn time_signature_change_is_reported_when_both_sides_are_known() {
+        let old = Model {
+            time_signature: Some(sig(4, 4)),
+            ..Model::default()
+        };
+        let new = Model {
+            time_signature: Some(sig(3, 4)),
+            ..Model::default()
+        };
+        assert_eq!(
+            diff(&old, &new),
+            vec![ChangeRecord::TimeSignatureChanged {
+                from: sig(4, 4),
+                to: sig(3, 4),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_time_signature_unknown_on_either_side_never_reports_a_change() {
+        let old = Model::default();
+        let new = Model {
+            time_signature: Some(sig(3, 4)),
+            ..Model::default()
+        };
+        assert!(diff(&old, &new).is_empty());
+    }
+
+    #[test]
+    fn key_change_is_reported_even_from_none() {
+        let old = Model::default();
+        let new = Model {
+            key: Some("C minor".to_string()),
+            ..Model::default()
+        };
+        assert_eq!(
+            diff(&old, &new),
+            vec![ChangeRecord::KeyChanged {
+                from: None,
+                to: Some("C minor".to_string()),
+            }]
+        );
+    }
+
+    #[test]
+    fn no_key_change_is_reported_when_the_key_is_unchanged() {
+        let old = Model {
+            key: Some("C minor".to_string()),
+            ..Model::default()
+        };
+        let new = old.clone();
+        assert!(diff(&old, &new).is_empty());
+    }
+
+    fn locator(name: &str, time_beats: f64) -> wit_model::Locator {
+        wit_model::Locator {
+            name: name.to_string(),
+            time_beats,
+        }
+    }
+
+    #[test]
+    fn a_new_locator_is_a_marker_added_at_an_exact_bar() {
+        let old = Model::default();
+        let new = Model {
+            time_signature: Some(sig(4, 4)),
+            locators: vec![locator("Chorus", 16.0)],
+            ..Model::default()
+        };
+        assert_eq!(
+            diff(&old, &new),
+            vec![ChangeRecord::MarkerAdded {
+                name: "Chorus".to_string(),
+                at: Some(wit_model::BarPos::exact(5.0)),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_marker_position_is_about_when_the_meter_is_unknown() {
+        let old = Model::default();
+        let new = Model {
+            locators: vec![locator("Chorus", 16.0)],
+            ..Model::default()
+        };
+        assert_eq!(
+            diff(&old, &new),
+            vec![ChangeRecord::MarkerAdded {
+                name: "Chorus".to_string(),
+                at: Some(wit_model::BarPos::about(5.0)),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_removed_locator_is_a_marker_removed() {
+        let old = Model {
+            locators: vec![locator("Bridge", 8.0)],
+            ..Model::default()
+        };
+        let new = Model::default();
+        assert_eq!(
+            diff(&old, &new),
+            vec![ChangeRecord::MarkerRemoved {
+                name: "Bridge".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_single_name_change_at_an_unchanged_time_is_a_marker_renamed() {
+        let old = Model {
+            locators: vec![locator("Verse", 8.0)],
+            ..Model::default()
+        };
+        let new = Model {
+            locators: vec![locator("Verse 2", 8.0)],
+            ..Model::default()
+        };
+        assert_eq!(
+            diff(&old, &new),
+            vec![ChangeRecord::MarkerRenamed {
+                old: "Verse".to_string(),
+                new: "Verse 2".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn two_simultaneous_name_changes_are_not_guessed_as_renames() {
+        // Brief's own rule: a rename is only reported when exactly one
+        // unchanged-time pair changed name.
+        let old = Model {
+            locators: vec![locator("A", 0.0), locator("B", 8.0)],
+            ..Model::default()
+        };
+        let new = Model {
+            locators: vec![locator("A2", 0.0), locator("B2", 8.0)],
+            ..Model::default()
+        };
+        let records = diff(&old, &new);
+        assert!(records
+            .iter()
+            .all(|r| !matches!(r, ChangeRecord::MarkerRenamed { .. })));
+        assert_eq!(
+            records
+                .iter()
+                .filter(|r| matches!(r, ChangeRecord::MarkerAdded { .. }))
+                .count(),
+            2
+        );
+        assert_eq!(
+            records
+                .iter()
+                .filter(|r| matches!(r, ChangeRecord::MarkerRemoved { .. }))
+                .count(),
+            2
+        );
+    }
+
+    fn device_with_plugin(tag: &str, plugin: Option<&str>) -> Device {
+        Device {
+            tag: tag.to_string(),
+            fingerprint: Fingerprint([0; 32]),
+            plugin_name: plugin.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn a_third_party_plugin_added_to_a_track_is_reported_by_name() {
+        let mut old = Model::default();
+        with_track(&mut old, track("1", "Vox", TrackKind::Audio));
+        let mut new = Model::default();
+        let mut t = track("1", "Vox", TrackKind::Audio);
+        t.devices = vec![device_with_plugin("AuPluginDevice", Some("Pro-Q 3"))];
+        with_track(&mut new, t);
+
+        let records = diff(&old, &new);
+        assert!(records.contains(&ChangeRecord::PluginAdded {
+            track: Some("Vox".to_string()),
+            plugin: "Pro-Q 3".to_string(),
+        }));
+        // The existing tag-based FX+ line still fires alongside it.
+        assert!(records.contains(&ChangeRecord::FxAdded {
+            track: "Vox".to_string(),
+            devices: vec!["AuPluginDevice".to_string()],
+        }));
+    }
+
+    #[test]
+    fn a_third_party_plugin_removed_from_a_track_is_reported_by_name() {
+        let mut old = Model::default();
+        let mut t = track("1", "Vox", TrackKind::Audio);
+        t.devices = vec![device_with_plugin("AuPluginDevice", Some("Pro-Q 3"))];
+        with_track(&mut old, t);
+        let mut new = Model::default();
+        with_track(&mut new, track("1", "Vox", TrackKind::Audio));
+
+        let records = diff(&old, &new);
+        assert!(records.contains(&ChangeRecord::PluginRemoved {
+            track: Some("Vox".to_string()),
+            plugin: "Pro-Q 3".to_string(),
+        }));
+    }
+
+    // ---- PLAN-V2: master bus devices — the real, reviewed bug this fixes:
+    // a save that toggled a mastering plugin off on the master bus and Wit
+    // said nothing.
+
+    #[test]
+    fn a_master_bus_plugin_toggled_off_is_a_settings_change_named_for_the_bus() {
+        let old = Model {
+            master_track_label: Some("Main".to_string()),
+            master_devices: vec![device("AuPluginDevice", 1)],
+            ..Model::default()
+        };
+        // On/Manual flipped.
+        let new = Model {
+            master_track_label: Some("Main".to_string()),
+            master_devices: vec![device("AuPluginDevice", 2)],
+            ..Model::default()
+        };
+
+        assert_eq!(
+            diff(&old, &new),
+            vec![ChangeRecord::FxSettingsChanged {
+                track: "Main".to_string(),
+                device: "AuPluginDevice".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_plugin_added_to_the_master_bus_is_reported_by_name() {
+        let old = Model {
+            master_track_label: Some("Master".to_string()),
+            ..Model::default()
+        };
+        let new = Model {
+            master_track_label: Some("Master".to_string()),
+            master_devices: vec![device_with_plugin("AuPluginDevice", Some("Ozone"))],
+            ..Model::default()
+        };
+
+        let records = diff(&old, &new);
+        assert!(records.contains(&ChangeRecord::PluginAdded {
+            track: Some("Master".to_string()),
+            plugin: "Ozone".to_string(),
+        }));
+        assert!(records.contains(&ChangeRecord::FxAdded {
+            track: "Master".to_string(),
+            devices: vec!["AuPluginDevice".to_string()],
+        }));
+    }
+
+    #[test]
+    fn no_master_track_found_on_either_side_reports_nothing_for_the_bus() {
+        let old = Model::default();
+        let new = Model::default();
         assert!(diff(&old, &new).is_empty());
     }
 }

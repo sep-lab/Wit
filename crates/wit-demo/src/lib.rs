@@ -205,6 +205,11 @@ fn coastline_als_chain() -> Vec<SetSpec> {
     let base = SetSpec {
         creator: "Ableton Live 12.4.2".into(),
         tempo_bpm: 120.0,
+        // 4/4 throughout, and two sections — so the Story shows exact bars
+        // and "· Verse"/"· Chorus" once the meter is read
+        // (`wit-story::sentence::attach_section`), not "about bar N".
+        time_signature: Some((4, 4)),
+        locators: vec![("Verse".into(), 0.0), ("Chorus".into(), 16.0)],
         tracks: vec![
             TrackSpec {
                 id: 8,
@@ -252,18 +257,26 @@ fn coastline_als_chain() -> Vec<SetSpec> {
     renamed.tracks[0].clips[0].sample = "rhodes FINAL.wav".into();
     renamed.tempo_bpm = 124.0;
 
-    vec![base, bookkeeping, quieter, filtered, renamed]
+    // 5 — moved the verse clip into the chorus section. This is the save
+    // that shows exact (not "about") bars and a locator-derived section
+    // once the meter is read (`wit-story::sentence::attach_section`).
+    let mut moved = renamed.clone();
+    moved.tracks[0].clips[0].start = 16.0;
+    moved.tracks[0].clips[0].end = 32.0;
+
+    vec![base, bookkeeping, quieter, filtered, renamed, moved]
 }
 
 /// Live's autosave filenames, which `wit-index::discover` parses to group a
 /// lineage: `<name> [YYYY-MM-DD HHMMSS].als`. Fixed timestamps, never
 /// `now()` — the generated tree has to be byte-identical run to run.
-const ALS_TIMESTAMPS: [&str; 5] = [
+const ALS_TIMESTAMPS: [&str; 6] = [
     "2026-01-04 101500",
     "2026-01-04 103012",
     "2026-01-04 111845",
     "2026-01-05 200133",
     "2026-01-05 204417",
+    "2026-01-05 204917",
 ];
 
 /// Save times, Unix seconds UTC. Fixed, never `now()`, so the tree is
@@ -287,12 +300,13 @@ const NIGHT_BUS_TIMES: [i64; 3] = [1_790_187_000, 1_790_189_520, 1_790_191_800];
 const NIGHT_BUS_ALT_TIMES: [i64; 2] = [1_790_193_900, 1_790_196_000];
 const KITCHEN_JAM_TIMES: [i64; 1] = [1_790_421_600];
 /// The same instants as [`ALS_TIMESTAMPS`], read as UTC.
-const ALS_TIMES: [i64; 5] = [
+const ALS_TIMES: [i64; 6] = [
     1_767_521_700,
     1_767_522_612,
     1_767_525_525,
     1_767_643_293,
     1_767_645_857,
+    1_767_646_157,
 ];
 
 /// Set a file's modification time — the only clock the app reads for when a
@@ -362,7 +376,7 @@ pub fn build_demo_library(dest: &Path) -> Result<DemoLibrary, DemoError> {
         &KITCHEN_JAM_TIMES,
     )?;
 
-    // Ableton — one lineage of 5 autosaves, in Live's own Backup/ layout.
+    // Ableton — one lineage of 6 autosaves, in Live's own Backup/ layout.
     let backup_dir = dest.join("Ableton/Coastline Project/Backup");
     for ((spec, name_stamp), when) in coastline_als_chain()
         .iter()
@@ -402,8 +416,8 @@ mod tests {
         assert_eq!(lib.garageband_projects, 1);
         assert_eq!(lib.ableton_lineages, 1);
         // 10 (Coastline) + 3 + 2 (Night Bus, two alternatives) + 1
-        // (GarageBand) + 5 (.als) = 21.
-        assert_eq!(lib.total_versions, 21);
+        // (GarageBand) + 6 (.als) = 22.
+        assert_eq!(lib.total_versions, 22);
     }
 
     #[test]
@@ -435,7 +449,7 @@ mod tests {
         let lineages = wit_index::discover_ableton_lineages(&lib.root);
         assert_eq!(lineages.len(), 1);
         assert_eq!(lineages[0].name, "Coastline");
-        assert_eq!(lineages[0].saves.len(), 5);
+        assert_eq!(lineages[0].saves.len(), 6);
     }
 
     #[test]

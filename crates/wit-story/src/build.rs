@@ -127,6 +127,24 @@ impl Reading {
         };
         t.filter(|x| x.is_finite())
     }
+
+    /// The project's key, already rendered ("C minor") — Ableton only;
+    /// `wit_logic::Extracted` has no key field yet.
+    fn key(&self) -> Option<String> {
+        match self {
+            Reading::Ableton { model, .. } => model.key.clone(),
+            Reading::Logic { .. } | Reading::Unreadable => None,
+        }
+    }
+
+    /// The project's time signature — Ableton only, for the same reason as
+    /// [`Reading::key`].
+    fn time_signature(&self) -> Option<wit_model::TimeSignature> {
+        match self {
+            Reading::Ableton { model, .. } => model.time_signature,
+            Reading::Logic { .. } | Reading::Unreadable => None,
+        }
+    }
 }
 
 fn read_logic(path: &Path) -> Reading {
@@ -504,6 +522,27 @@ impl NameRoots {
     }
 }
 
+/// Ableton locators as `(bar, name)`, sorted ascending — the shape
+/// [`crate::sentence::attach_section`] needs to find which section a
+/// sentence's position falls in. Uses the same beats -> bar formula as
+/// [`crate::sentence::sentence`]'s own clip-position conversion (assume 4
+/// beats per bar and say "about" when the meter wasn't read), so a
+/// locator's bar and a clip's bar always agree.
+fn ableton_sections(model: &Model, ctx: &SentenceContext) -> Vec<(f64, String)> {
+    let bpb = ctx
+        .beats_per_bar
+        .filter(|b| b.is_finite() && *b > 0.0)
+        .unwrap_or(4.0);
+    let mut sections: Vec<(f64, String)> = model
+        .locators
+        .iter()
+        .filter(|l| l.time_beats.is_finite())
+        .map(|l| ((l.time_beats / bpb).floor() + 1.0, l.name.clone()))
+        .collect();
+    sections.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    sections
+}
+
 fn compare(
     a: &Reading,
     b: &Reading,
@@ -528,15 +567,25 @@ fn compare(
             for (id, t) in &mb.tracks {
                 lanes.ensure(&id.0, &t.name);
             }
+            // Prefer the newer save's time signature; fall back to the
+            // older one so a save that only touches something else doesn't
+            // lose exact bars just because that save's own clip happened
+            // not to carry a time-signature record (wit-als/extract.rs).
+            let time_signature = mb.time_signature.or(ma.time_signature);
             let ctx = SentenceContext {
                 tier: facts.tier,
-                beats_per_bar: None,
+                beats_per_bar: time_signature.map(wit_model::beats_per_bar),
             };
-            wit_diff::diff(ma, mb)
+            let sections = ableton_sections(mb, &ctx);
+            let mut sentences: Vec<Sentence> = wit_diff::diff(ma, mb)
                 .iter()
                 .filter(|r| record_is_finite(r))
                 .map(|r| sentence(r, &ctx))
-                .collect()
+                .collect();
+            for s in &mut sentences {
+                crate::sentence::attach_section(s, &sections);
+            }
+            sentences
         }
         _ => vec![],
     };
@@ -719,6 +768,8 @@ fn assemble(meta: StoryMeta, saves: Vec<Save>, read: fn(&Path) -> Reading, clock
     let mut prev: Option<(Reading, usize)> = None;
     let mut first: Option<(Reading, usize)> = None;
     let mut last_tempo = None;
+    let mut last_key: Option<String> = None;
+    let mut last_time_signature: Option<wit_model::TimeSignature> = None;
 
     for (i, save) in saves.iter().enumerate() {
         let reading = read(&save.path);
@@ -730,6 +781,8 @@ fn assemble(meta: StoryMeta, saves: Vec<Save>, read: fn(&Path) -> Reading, clock
             }
         }
         last_tempo = reading.tempo().or(last_tempo);
+        last_key = reading.key().or(last_key);
+        last_time_signature = reading.time_signature().or(last_time_signature);
         let label = clock.moment_label(save.at);
 
         let (verdict, sentences, compared_with) = match (&prev, &reading) {
@@ -867,6 +920,9 @@ fn assemble(meta: StoryMeta, saves: Vec<Save>, read: fn(&Path) -> Reading, clock
     if let Some(bpm) = last_tempo {
         subtitle.push(format!("{} BPM", crate::sentence::friendly_num(bpm)));
     }
+    if let Some(key) = &last_key {
+        subtitle.push(key.clone());
+    }
     if let Some(t) = last_worked {
         subtitle.push(format!("last worked {}", clock.moment_label(t)));
     }
@@ -909,8 +965,8 @@ fn assemble(meta: StoryMeta, saves: Vec<Save>, read: fn(&Path) -> Reading, clock
             daw: facts.daw,
             daw_label: facts.label.to_string(),
             tempo_bpm: last_tempo,
-            key: None,
-            time_signature: None,
+            key: last_key,
+            time_signature: last_time_signature.map(|s| s.to_string()),
             last_worked,
             subtitle: subtitle.join(" · "),
             kept: KeptSummary {
