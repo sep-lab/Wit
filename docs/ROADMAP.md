@@ -122,10 +122,12 @@ crate is read-only groundwork for this phase, not a substitute for it.
 - [ ] `ProjectData` chunk-payload schemas beyond the container. The region object
       (`AuRg`) and the audio placement events in `EvSq` are mapped and measured
       ([FORMATS.md](FORMATS.md), issue [#3](https://github.com/sep-lab/Wit/issues/3)),
-      but only in `experiments/` — `wit-logic` does not read them yet. Before the port
-      (`wit-logic/src/regions.rs`): re-run `logic_region_map.py --scan` on the library
-      with the corrected counters (decode rate, reject split, unit types), and keep the
-      "which copy" gap visible — it covers most placements on the measured save. `Trak`,
+      but only in `experiments/` — `wit-logic` does not read them yet. The library
+      rescan with the corrected counters ran 2026-09-29 (99.43% of region records
+      decode). Before the port (`wit-logic/src/regions.rs`): explain or bound the open
+      counts it left (102 undecoded region records, 66 unresolved placements, 20
+      unterminated event payloads), and keep the "which copy" gap visible — it covers
+      75% of the library's placements. `Trak`,
       `AuCU`, MIDI placements and the remaining `EvSq` units are still unmapped.
 - [ ] Handle non-deterministic save churn — the regenerated plugin UUID and the drifting
       float32 block

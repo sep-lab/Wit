@@ -18,24 +18,36 @@ WHAT THIS MEASURES
       and an audio placement is a 48-byte group headed by `24 00 00 00` carrying
       position, track number, and a link back to a region family.
 
-    Library-wide -- `--scan` over one person's 32-project Logic library, 132
-    saves, 2026-08-16:
+    Library-wide -- `--scan ~/Music/Logic` over one person's 42-bundle Logic
+    library, 206 saves, 2026-09-29:
 
-      132/132      saves walked to clean EOF
-      13606/13606  qSvE payloads an exact multiple of 16 (0 misaligned)
-      10020        gRuA records decoded (name, length, UUID). This is a COUNT,
-                   not a rate: that scan counted only the records that decoded,
-                   so a record that failed was invisible to it. The library-wide
-                   decoded/seen rate is unmeasured until the re-run below.
-      5282/5282    placements resolved to a region family
-      4995/5282    placements on the 960-tick (quarter-note) grid; the rest are
-                   INFERRED, not checked, to be regions placed with snap off
-      132/132      saves where every decoded track number is within that save's
-                   MetaData.plist NumberOfTracks
-      265          marker hits rejected (see parse_event_stream)
+      206/206        saves walked to clean EOF (0 unreadable)
+      22500/22500    qSvE payloads an exact multiple of 16 (0 misaligned)
+      22480/22500    of them hold exactly one terminator unit, as their last;
+                     20 do not -- unexplained, see docs/FORMATS.md
+      17913/18015    gRuA records seen were decoded (99.43%); 102 failed --
+                     unexplained. The first version of this script reported
+                     "10020/10020" on the 2026-08-16 snapshot because it counted
+                     only records that decoded; that 100% was never measured and
+                     does not hold.
+      9076/9142      placements resolved to a region family; 66 did not --
+                     unexplained. (2026-08-16 reported 5282/5282.)
+      6848/9142      placements in a family of 2+ region objects: which copy
+                     each is cannot be decoded (see WHAT THIS DOES NOT HANDLE)
+      9142/9142      placement groups whose three units carry byte +7 = 00/89/bc
+      7808/9142      placements on the 960-tick (quarter-note) grid; the rest are
+                     INFERRED, not checked, to be regions placed with snap off
+      205/206        saves where every decoded track number is within that
+                     save's MetaData.plist NumberOfTracks; 1 is not --
+                     unexplained. (2026-08-16 reported 132/132.)
+      346 of 9488    marker hits rejected: 334 track 0, 12 beyond bar 10,000,
+                     0 before the origin, 0 truncated (see parse_event_stream)
+      0 of 3121      region UUIDs present in 2+ saves of a bundle whose family
+                     index changes between saves
+      691            highest placement bar
 
-    One project re-measured 2026-09-29 with the corrected counters -- the 10-save
-    chain of the 31-track `You make my crazy!` fixture (docs/EXPERIMENTS.md §0):
+    One project, the same day -- the 10-save chain of the 31-track
+    `You make my crazy!` fixture (docs/EXPERIMENTS.md §0):
 
       903/903      gRuA records seen were decoded
       1550/1550    qSvE payloads 16-byte aligned, each holding exactly one
@@ -45,12 +57,8 @@ WHAT THIS MEASURES
       0/96         region UUIDs whose family index changes between saves
 
     Across that chain all 79 region UUIDs of the oldest save are still present in
-    the newest, which adds exactly 17 more, and none of the 96 changes family
-    index between saves -- that stability is what makes a cross-save diff
-    possible.
-
-    Library re-run, pending permission to read the library again:
-        python3 experiments/logic_region_map.py --scan ~/Music/Logic
+    the newest, which adds exactly 17 more -- that stability is what makes a
+    cross-save diff possible.
 
     Upstream: this corrects and extends §3, §8 and §8.1 of PROJECTDATA_FORMAT.md
     in jonkubis/LogicProFormatWriter (MIT), pinned at 1f77c5c3; docs/FORMATS.md
@@ -76,8 +84,9 @@ WHAT THIS DOES NOT HANDLE
       Vocal FX 03" and its .1/.2/.3 copies share one link value), not to an
       individual region record. On backup 00 of the measured chain, 20 of 35
       families hold a single region object (16 placed once, 4 not placed at all)
-      and 15 hold two or more -- and those 15 carry 40 of the 56 placements. For
-      those 40, which copy is on the timeline is not decodable: the map prints
+      and 15 hold two or more -- and those 15 carry 40 of the 56 placements.
+      Across the 42-bundle library it is 6848 of 9142 placements (75%). For
+      those, which copy is on the timeline is not decodable: the map prints
       "one of N copies", and the diff says "a '<stem>' region". Families holding
       more region objects than placements are reported as a per-family surplus
       COUNT; the copies are never named, because which ones are off the timeline
@@ -88,13 +97,14 @@ WHAT THIS DOES NOT HANDLE
     - MIDI regions. Only audio placements (`24 00 00 00`) are decoded; MIDI
       placement heads (`20 00 00 00`, upstream spec §8.5) are not. Every 16-byte
       unit's byte +7 is counted (the map and --scan print the histogram) but not
-      interpreted -- backup 00 of the measured chain carries 12 distinct values:
-      00 3f 88 89 8a a3 a4 a7 aa b2 bb bc. This is why GarageBand gets partial
-      results: the three .band projects in the 2026-08-16 scan hold no gRuA
-      records at all, so their placements report as `<unresolved family N>`.
+      interpreted -- backup 00 of the measured chain carries 12 distinct values
+      (00 3f 88 89 8a a3 a4 a7 aa b2 bb bc), the library 21. This is also
+      why GarageBand gets partial results: the three .band projects in the
+      2026-08-16 snapshot held no gRuA records at all, so their placements
+      report as `<unresolved family N>`.
     - Pre-roll. A placement before bar 1 (position < 34560, the region time
-      origin) is rejected and counted as `before_origin`, not decoded. None
-      exists on the measured chain; the library count is unmeasured.
+      origin) is rejected and counted as `before_origin`, not decoded. The
+      42-bundle library has none (0 of 9488 marker hits).
     - Tempo changes. Bar numbers assume 4/4 and a constant tempo, because the
       position field is in ticks (960 PPQ) and this script does not read the
       tempo or signature maps. A project with a meter change will show bar
@@ -103,9 +113,11 @@ WHAT THIS DOES NOT HANDLE
       necessarily the project rate (the measured project mixes 44100 Hz sources
       into a 48000 Hz project). This script reports frames, never seconds, so it
       cannot be wrong about which rate applies.
-    - Name encoding. Names are decoded as UTF-8. Every name observed is 7-bit
-      ASCII (903/903 on the measured chain), so ASCII and UTF-8 agree on all of
-      them; how Logic encodes a non-ASCII name is untested.
+    - Name encoding. Names are decoded as UTF-8. Every name on the measured
+      chain is 7-bit ASCII (903/903), so ASCII and UTF-8 agree on all of them;
+      how Logic encodes a non-ASCII name is untested, and whether any of the
+      library's 102 undecoded gRuA records is a name-encoding failure is not
+      known.
     - Fader moves, plugin parameters, automation. Those payloads are unmapped.
     - Writing. This script is read-only and never opens a DAW. Point it at a copy
       if you are at all unsure -- Logic migrates project files when it saves them.
@@ -182,8 +194,8 @@ EVENT_LEN = 16
 # interpreted. On a placement head it is also the HIGH BYTE of the u32 position
 # at +0x04 -- 0x00 on every placement head measured.
 EVENT_TYPE_BYTE = 7
-# The last unit of every qSvE payload on the measured chain (1550/1550), and the
-# only unit whose byte +7 is 0x3f there. Counted by --scan, not required.
+# The last unit of 22,480 of 22,500 qSvE payloads in the 42-bundle library
+# (1550/1550 on the measured chain). Counted by --scan, not required.
 TERMINATOR_EVENT = b"\xf1\x00\x00\x00\xff\xff\xff\x3f" + b"\x00" * 8
 
 PLACEMENT_MARKER = b"\x24\x00\x00\x00"
@@ -192,9 +204,9 @@ PLACEMENT_EVENT_ID_OFFSET = 0x10  # u32; NOT a per-placement key (see FORMATS.md
 PLACEMENT_TRACK_OFFSET = 0x14  # u8, 1-based track number
 PLACEMENT_LINK_OFFSET = 0x2C  # u32, link // 4 == familyIndex
 PLACEMENT_GROUP_LEN = 0x30  # bytes of a group this script reads: three units
-# Byte +7 of the group's three units on every placement of the measured chain
-# (592/592). Counted by --scan so the library re-run can test it; NOT used as a
-# filter, because it has not been measured library-wide.
+# Byte +7 of the group's three units on every accepted placement of the
+# 42-bundle library (9,142/9,142, 2026-09-29). Counted by --scan; not used as a
+# filter here -- see parse_event_stream.
 PLACEMENT_UNIT_TYPES = (0x00, 0x89, 0xBC)
 
 TICKS_PER_QUARTER = 960
@@ -202,12 +214,10 @@ TICKS_PER_BAR = TICKS_PER_QUARTER * 4  # 4/4 only -- see WHAT THIS DOES NOT HAND
 REGION_TIME_ORIGIN = 34560  # = 9 bars; regions use this origin, tempo/markers 38400
 
 # An upper bound on a believable position, used to reject marker collisions that
-# happen to carry a nonzero track byte. The 2026-08-16 library pass reported the
-# highest accepted placement at bar 689 and one rejected hit at bar 821,376 on a
-# 5-track project; that breakdown came from a one-off pass, not from this script,
-# which now prints `placement_highest_bar` and the reject counts under --scan so
-# the library re-run can confirm it (the measured chain's highest is bar 149).
-# At 4/4 and 40 BPM, 10,000 bars is over 16 hours of music.
+# happen to carry a nonzero track byte. On the 42-bundle library (2026-09-29,
+# --scan) the highest accepted placement is bar 691 and 12 marker hits fall
+# beyond this bound; the measured chain's highest is bar 149. At 4/4 and 40 BPM,
+# 10,000 bars is over 16 hours of music.
 MAX_PLACEMENT_BAR = 10_000
 
 REJECT_REASONS = ("truncated", "track_zero", "before_origin", "beyond_max_bar")
@@ -399,13 +409,13 @@ def parse_event_stream(data: bytes, record: Record) -> EventStream:
     (position < REGION_TIME_ORIGIN -- this also drops genuine pre-roll
     placements, see the module docstring) or `beyond_max_bar`.
 
-    Measured: the 2026-08-16 library pass saw 5,547 marker hits and rejected
-    265. The measured chain (2026-09-29, `--scan`) has 602 hits and 10 rejects,
-    all `track_zero`, and on every one of them the head unit's byte +7 is 0x88
-    (`rejected_marker_head_byte`), not the 0x00 all 592 accepted heads carry.
-    That byte is also the high byte of the position, so it is a structural
-    collision filter the Rust port can add once the library re-run confirms it.
-    This script counts it and does not yet filter on it.
+    Measured with `--scan`, 2026-09-29: the 42-bundle library has 9,488 marker
+    hits and rejects 346 (334 `track_zero`, 12 `beyond_max_bar`). The head
+    unit's byte +7 is 0x88, 0x89 or 0xbc on the rejects (180/143/23,
+    `rejected_marker_head_byte`) and never 0x00, while all 9,142 accepted heads
+    carry 0x00. That byte is also the high byte of the position, so it is a
+    structural collision filter the Rust port can use. This script counts it
+    and does not filter on it.
     """
     start = record.offset + RECORD_HEADER_LEN
     payload = data[start : start + record.payload_size]

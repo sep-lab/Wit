@@ -11,7 +11,7 @@ fixtures:
 | `Artefakt - Undertow` (Ableton) | A commercial-grade Live 12 set, 28 tracks, 688 audio clips, 5,112 warp markers. **30 sequential autosaves** of the same project spanning Feb–May 2026. |
 | `You make my crazy!` (Logic) | A real Logic 12 project, 459 MB, 33 audio files. **10 sequential saves** (`Project File Backups/00..08` + current). |
 | `Aston Martin Music Remake` (FL Studio) | A real FL 10-era `.flp`, 136 KB, 18 channels. |
-| A real Logic library | One person's working library, used for the duplication analysis (§9) and the M2.5 reality gate (§11). It grows: **30 projects / 26 GB** when §9 walked it, **32 projects / 28 GB** at §11's 2026-08-16 run. Each section states the snapshot it measured. |
+| A real Logic library | One person's working library, used for the duplication analysis (§9) and the M2.5 reality gate (§11). It grows: **30 projects / 26 GB** when §9 walked it, **32 projects / 28 GB** at §11's 2026-08-16 run, **42 bundles / 206 saves** at §12's 2026-09-29 rescan. Each section states the snapshot it measured. |
 
 Labels used throughout: **measured** (we ran it), **cited** (someone else's result, with
 a source), **inferred** (reasoning, not measurement).
@@ -729,20 +729,27 @@ moved from bar 12 to bar 16. Two payloads close that gap — `AuRg`/`gRuA` (the 
 object) and the placement events inside `EvSq`/`qSvE`. Field offsets are in
 [FORMATS.md](FORMATS.md).
 
-**Correction, 2026-09-29.** The first version of this section (#45) overstated three
-things, and this one replaces it: its region decode rate could not fall below 100% (the
-counter saw only records that decoded), its "which copy" gap was understated (12 of 35
-families; it is 40 of 56 placements), and its diff paired placements by bar order, which
-reported false moves. Details are under each result below.
+**Correction, 2026-09-29.** The first version of this section (#45) overstated things,
+and this one replaces it:
 
-**Material.** Two runs, reported separately:
+- Its region decode rate could not fall below 100%, because the counter saw only records
+  that decoded. The library-wide rescan now measures **99.43%**.
+- Its "which copy" gap was understated at "12 of 35 families". It is 40 of 56 placements
+  on one save, and **6,848 of 9,142** across the library.
+- Its placement-resolution and track-count figures were 100% on a smaller snapshot, and
+  are not 100% on the current one.
+- Its diff paired placements by bar order, which reported false moves.
 
-- **Library, 2026-08-16:** 32 real Logic projects, 132 saves (each alternative's current
-  save plus its `Project File Backups` slots), 28 GB — the library §11 walked — plus three
-  real GarageBand `.band` projects.
-- **Chain, 2026-09-29:** the `You make my crazy!` fixture (§0), all 10 saves, read from a
-  read-only copy. "Backup 00" is its oldest save. Every chain figure below was re-measured
-  with the corrected counters; the library has not been re-read since.
+Details are under each result below.
+
+**Material.** Two runs, both 2026-09-29, both with the corrected counters:
+
+- **Library:** one person's Logic library, **42 bundles, 206 saves** (each alternative's
+  current save plus its `Project File Backups` slots), read in place, read-only. This is
+  the library §11 walked, grown since: it held 32 projects / 132 saves at the first
+  version of this section (2026-08-16).
+- **Chain:** the `You make my crazy!` fixture (§0), all 10 saves, read from a read-only
+  copy. "Backup 00" is its oldest save.
 
 **Method.** `experiments/logic_region_map.py --scan <root>` walks every `ProjectData`,
 decodes both payloads, and counts what decoded; nothing is sampled. Since 2026-09-29 it
@@ -753,35 +760,54 @@ against each save's `MetaData.plist` `NumberOfTracks`.
 
 **Result — measured:**
 
-| | Library, 2026-08-16 (132 saves) | Chain, 2026-09-29 (10 saves) |
+| | Library (42 bundles, 206 saves) | Chain (10 saves) |
 |---|---|---|
-| Saves walked to clean EOF | **132 / 132** | **10 / 10** |
-| `EvSq` payloads an exact multiple of 16 bytes | **13,606 / 13,606** | **1,550 / 1,550** |
-| …holding exactly one terminator, as their last unit | not measured | **1,550 / 1,550** |
-| `gRuA` records decoded / seen | 10,020 decoded — **seen not counted, so no rate** | **903 / 903** |
-| Region UUIDs distinct within their save | 10,020 | 903 |
-| Placements resolving to a region family | **5,282 / 5,282** | **592 / 592** |
-| Placements whose copy cannot be attributed (family of 2+ region objects) | not measured | 426 / 592 |
-| Saves where every decoded track number ≤ `NumberOfTracks` | **132 / 132** | **10 / 10** |
-| Placements on the 960-tick grid | 4,995 / 5,282 (94.6%) | 592 / 592 |
-| Placement groups whose units carry byte `+7` = `00`/`89`/`bc` | not measured | **592 / 592** |
-| Marker hits rejected as collisions | 265 of 5,547 | 10 of 602 — all track 0 |
-| Highest accepted placement | bar 689 (one-off pass, see below) | bar 149 |
-| Region UUIDs changing family index between saves | not measured | 0 of 96 |
+| Saves walked to clean EOF | **206 / 206** | **10 / 10** |
+| `EvSq` payloads an exact multiple of 16 bytes | **22,500 / 22,500** | **1,550 / 1,550** |
+| …holding exactly one terminator, as their last unit | 22,480 / 22,500 | **1,550 / 1,550** |
+| `gRuA` records decoded / seen | **17,913 / 18,015 (99.43%)** | **903 / 903** |
+| Region UUIDs distinct within their save | 17,913 of 17,913 decoded | 903 of 903 |
+| Placements resolving to a region family | 9,076 / 9,142 | **592 / 592** |
+| Placements whose copy cannot be attributed (family of 2+ region objects) | **6,848 / 9,142 (75%)** | 426 / 592 |
+| Saves where every decoded track number ≤ `NumberOfTracks` | 205 / 206 | **10 / 10** |
+| Placements on the 960-tick grid | 7,808 / 9,142 (85.4%) | 592 / 592 |
+| Placement groups whose units carry byte `+7` = `00`/`89`/`bc` | **9,142 / 9,142** | **592 / 592** |
+| Marker hits rejected as collisions | 346 of 9,488 — 334 track 0, 12 beyond bar 10,000 | 10 of 602 — all track 0 |
+| Head byte `+7` of rejected hits | `88` 180, `89` 143, `bc` 23 — never `00` | `88` 10 |
+| Highest accepted placement | bar 691 | bar 149 |
+| Region UUIDs changing family index between saves | 0 of 3,121 seen in 2+ saves | 0 of 96 |
+| Distinct byte `+7` values | 21 | 12 |
 
-**The library decode figure is re-scoped, not re-measured.** #45 published "10,020 / 10,020
-regions decoding a name and a distinct UUID". The scan behind it counted regions only after
-they decoded, so the denominator was the numerator and the rate was 100% by construction.
-10,020 decoded records is real; the library-wide decode *rate* is **unmeasured** until the
-scan is re-run with the corrected counter (pending permission to read the library again —
-command below). On the one project re-measured, 903 of 903 records seen decoded.
+**Contradicted, and corrected.** Three figures #45 published from the 2026-08-16 snapshot
+(32 projects / 132 saves) do not hold on the 2026-09-29 one:
 
-**Figures from a one-off pass.** The 2026-08-16 reject split (264 carrying track 0, one at
-bar 821,376 on a five-track project) and the library's highest genuine placement (bar 689)
-did not come from a script mode. `--scan` now prints both (`placement_markers_rejected_*`,
-`placement_highest_bar`) so the re-run can confirm or correct them.
+- **"10,020 / 10,020" regions decoded.** That scan counted regions only after they
+  decoded, so the rate was 100% by construction. The corrected counter finds **102 of
+  18,015 records that fail**.
+- **"5,282 / 5,282" placements resolved.** 66 of 9,142 now do not.
+- **"132 / 132" saves within `NumberOfTracks`.** One save of 206 now is not.
 
-**Inferred, not measured:** the 5.4% of library placements off the 960-tick grid are
+The library grew between the two snapshots, so the old figures were not necessarily wrong
+about the old material. What was wrong was publishing 100% from a counter that could not
+see a failure.
+
+Two smaller #45 figures move too:
+
+- The highest placement is bar 691, not 689.
+- The 2026-08-16 reject split (264 track 0, one beyond the bar bound) came from a one-off
+  pass. The same-day scan now reports 334 and 12.
+
+**Open — counted, not explained.** None of these is guessed at here:
+
+- the 102 undecoded `gRuA` records;
+- the 66 unresolved placements;
+- the 20 payloads without a clean terminator;
+- the one save whose track number exceeds its `NumberOfTracks`.
+
+FORMATS.md lists what the scan does and does not say about each. The aggregate does not
+record which saves these fall in, so it cannot say whether they overlap.
+
+**Inferred, not measured:** the 14.6% of library placements off the 960-tick grid are
 *presumably* regions placed with snap off. None was checked against Logic's display, and
 the chain has no off-grid placement to check.
 
@@ -806,39 +832,44 @@ placements added and removed. Each of those cases is a test in
 
 **Limits.**
 
-- **Which copy is unresolved for 40 of 56 placements.** A placement links to a region
-  family, not to a region record. On backup 00, 20 of 35 families hold one region object
-  (16 placed, 4 not) and 15 hold two or more — those 15 carry 40 of the 56 placements, and
-  for them the tool says "one of N copies" / "a '*stem*' region" rather than guessing. The
+- **Which copy is unresolved for 75% of placements.** A placement links to a region
+  family, not to a region record. Across the library, 6,848 of 9,142 placements sit in a
+  family of two or more region objects. On backup 00, 20 of 35 families hold one region
+  object (16 placed, 4 not) and 15 hold two or more — those 15 carry 40 of the 56
+  placements. For all of these the tool says "one of N copies" / "a '*stem*' region"
+  rather than guessing. The
   12 families with more objects than placements are reported as a surplus count; the
   copies off the timeline are never named. (#45 said "12 of 35 families"; that counted
   families whose record and placement counts match, including 7 multi-copy families.)
 - **Two copies of one family swapping bars are invisible** to the diff: at family
   granularity nothing changed.
-- **n = 1 library, one person's projects, all Logic 12**, and only one project re-measured
-  with the corrected counters. Nothing here says a Logic 10 or 11 file decodes the same
-  way. The version word is not gated on. A `gRuA` layout change would surface as a counted
+- **n = 1 library, one person's projects, all Logic 12.** Nothing here says a Logic 10 or
+  11 file decodes the same way. The version word is not gated on. A `gRuA` layout change would surface as a counted
   decode failure, because the size law (`payload_size == 209 + nlen + (nlen & 1)`) fails
   first. A *placement* layout change is **[inferred]** to be less visible: a group is
   accepted on its marker, a nonzero track byte and a position range, so shifted fields
-  could still pass — the `00`/`89`/`bc` unit-type count is the signal to watch.
+  could still pass. The `00`/`89`/`bc` unit-type count is the signal to watch, and it
+  held on 9,142 of 9,142 library placements.
 - **Pre-roll is not decoded.** A placement before bar 1 (position < 34560) is rejected as
-  `before_origin`; none exists on the chain, and the library count is unmeasured.
+  `before_origin`; the library has none (0 of 9,488 marker hits).
 - **No labelled edit chain was used.** Every save pair here is *found* material where
   nobody recorded what changed, so the numbers measure that fields decode, not that the
   reported change is the only change. The "one known edit produces exactly one reported
   change" test is still unrun — the honest gap in this experiment.
-- **GarageBand is only partly exercised.** All three `.band` projects walk and their
-  event grids are 16-byte aligned, but they hold **zero** `AuRg` records — they are
-  software-instrument only, so the region object was never tested there.
+- **GarageBand is only partly exercised.** At the 2026-08-16 snapshot all three `.band`
+  projects walked and their event grids were 16-byte aligned, but they held **zero**
+  `AuRg` records — they are software-instrument only, so the region object was never
+  tested there. The 2026-09-29 scan does not break its totals down by bundle type.
 - Bar numbers assume 4/4 and constant tempo; the tempo and signature maps are not read.
 - These payloads are mapped in `experiments/` only. `wit-logic`, the shipping crate, does
   not read them, so no Wit verdict changes as a result of this experiment.
 
-**Reproduce (read-only; point it at a copy if unsure).** Library, the pending re-run:
+**Reproduce (read-only; point it at a copy if unsure).** Library, the 2026-09-29 run (the
+JSON form is what the library column was read from; it holds counts only, no paths or
+names):
 
 ```bash
-python3 experiments/logic_region_map.py --scan ~/Music/Logic
+python3 experiments/logic_region_map.py --scan ~/Music/Logic --json
 ```
 
 Chain — `P` is the fixture bundle, `B` its backups folder:

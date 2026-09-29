@@ -48,11 +48,19 @@ Building the 0.0 pilot — no released artifact yet.
   Logic equivalent of Ableton's track `Id`) and the audio placement groups inside
   `EvSq`/`qSvE` (position, 1-based track number, region link). Also corrects the upstream
   spec: `qSvE` payloads are a grid of **16-byte units**, and placement heads sit at
-  variable spacing, not at the fixed 80-byte stride upstream §8.1 documents. Library-wide
-  (32 projects / 132 saves, 2026-08-16): 132/132 saves walked clean, 13,606/13,606 event
-  payloads 16-byte aligned, 5,282/5,282 placements resolved, 10,020 region records decoded
-  (a count — that scan could not see decode failures, so the library-wide decode *rate* is
-  unmeasured until a re-run). See [docs/FORMATS.md](docs/FORMATS.md) for the offset tables
+  variable spacing, not at the fixed 80-byte stride upstream §8.1 documents.
+
+  Library-wide, measured 2026-09-29 with `logic_region_map.py --scan` over a 42-bundle
+  Logic library (206 saves):
+
+  - 206/206 saves walked clean;
+  - 22,500/22,500 event payloads 16-byte aligned;
+  - **17,913 of 18,015 region records decoded (99.43%)**;
+  - 9,076 of 9,142 placements resolved;
+  - 9,142/9,142 placement groups with the `00`/`89`/`bc` unit signature;
+  - 6,848 of 9,142 placements whose copy cannot be attributed.
+
+  See [docs/FORMATS.md](docs/FORMATS.md) for the offset tables
   and [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) §12 for the measurement and its limits —
   [#3](https://github.com/sep-lab/Wit/issues/3), [PR #45](https://github.com/sep-lab/Wit/pull/45)
 - Research findings across Ableton `.als`, Logic `ProjectData`, GarageBand `.band` and
@@ -81,11 +89,22 @@ Building the 0.0 pilot — no released artifact yet.
   bytes, and 29 of 29 constant mutations fail the suite); its diff paired placements by
   bar order and reported false moves (now: (track, position, family) comparison, a move
   only for an unambiguous same-family pair); its decode rate could not fall below 100%
-  (now: every `gRuA` record is counted as seen — 903/903 decoded on the one project
-  re-measured); its map named specific copies as off the timeline by alphabetical guess
-  (now: a per-family count); and its docs understated the "which copy" gap as 12 of 35
-  families when it is 40 of 56 placements. Docs re-scoped in FORMATS.md and
-  EXPERIMENTS.md §12
+  (now: every `gRuA` record is counted as seen); its map named specific copies as off
+  the timeline by alphabetical guess (now: a per-family count); and its docs understated
+  the "which copy" gap as 12 of 35 families when it is 40 of 56 placements on one save.
+  Docs re-scoped in FORMATS.md and EXPERIMENTS.md §12
+- The library figures #45 published from a 2026-08-16 scan (32 projects / 132 saves). A
+  2026-09-29 rescan with the corrected script, over the grown 42-bundle library (206
+  saves), contradicts three of its 100% claims:
+  - "10,020/10,020" regions decoded is 17,913 of 18,015. The old counter could not see a
+    failure.
+  - "5,282/5,282" placements resolved is 9,076 of 9,142.
+  - "132/132" saves within `NumberOfTracks` is 205 of 206.
+
+  "Which copy" is unresolvable for 6,848 of 9,142 placements (75%). The highest
+  placement is bar 691, not 689. The 102 undecoded records, 66 unresolved placements, 20
+  unterminated event payloads and one out-of-range track number are listed as open
+  questions, not explained — FORMATS.md, EXPERIMENTS.md §12
 
 ### Findings that shaped the design
 - **M2.5 reality gate — the Logic empty-verdict rate, measured at scale and passed.**
