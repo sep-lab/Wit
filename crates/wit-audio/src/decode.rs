@@ -20,13 +20,12 @@ use std::fmt;
 use std::io::Cursor;
 use std::path::Path;
 
-use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::errors::Error as SymphoniaError;
-use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
 
 /// The exact hint issue #17 requires on every unsupported/unrecognized
 /// format error.
@@ -84,8 +83,8 @@ pub struct Decoded {
     /// Interleaved samples: `[L0, R0, L1, R1, ...]` for stereo, `[S0, S1,
     /// ...]` for mono. Interleaved, not `Vec<Vec<f32>>` per channel,
     /// because that is symphonia's own native decode layout
-    /// (`SampleBuffer::copy_interleaved_ref`) — decoding does no extra
-    /// shuffling. Callers that want mono for [`crate::align`] or
+    /// (`GenericAudioBufferRef::copy_to_slice_interleaved`) — decoding does
+    /// no extra shuffling. Callers that want mono for [`crate::align`] or
     /// [`crate::nulldiff`] call [`Decoded::to_mono`].
     pub samples: Vec<f32>,
 }
@@ -129,26 +128,40 @@ pub fn decode_bytes(bytes: Vec<u8>, ext_hint: Option<&str>) -> Result<Decoded, D
         hint.with_extension(ext);
     }
 
-    let probed = symphonia::default::get_probe()
-        .format(
+    let mut format = symphonia::default::get_probe()
+        .probe(
             &hint,
             mss,
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
+            FormatOptions::default(),
+            MetadataOptions::default(),
         )
         .map_err(probe_error)?;
 
-    let mut format = probed.format;
+    // `first_track_known_codec` is symphonia 0.6's replacement for manually
+    // filtering `tracks()` for a non-null codec (0.5's
+    // `t.codec_params.codec != CODEC_TYPE_NULL`) -- same "first track with an
+    // actual decodable codec" semantics, restricted to audio tracks.
     let track = format
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .first_track_known_codec(TrackType::Audio)
         .cloned()
         .ok_or(DecodeError::NoAudioTrack)?;
     let track_id = track.id;
+    let audio_params = track
+        .codec_params
+        .as_ref()
+        .and_then(|p| p.audio())
+        .ok_or(DecodeError::NoAudioTrack)?;
+
+    // Symphonia 0.5's `FormatOptions::enable_gapless` (removed in 0.6)
+    // defaulted to `false` -- no encoder delay/padding trimming. 0.6 moves
+    // this to `AudioDecoderOptions::gapless`, which now defaults to `true`.
+    // Explicitly disabling it here keeps this bump behaviour-preserving:
+    // decoded sample counts for delay/padding-bearing codecs (AAC, MP3)
+    // must not silently change just from this dependency bump.
+    let dec_opts = AudioDecoderOptions::default().gapless(false);
 
     let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &DecoderOptions::default())
+        .make_audio_decoder(audio_params, &dec_opts)
         .map_err(probe_error)?;
 
     let mut samples = Vec::new();
@@ -157,10 +170,11 @@ pub fn decode_bytes(bytes: Vec<u8>, ext_hint: Option<&str>) -> Result<Decoded, D
 
     loop {
         let packet = match format.next_packet() {
-            Ok(p) => p,
-            Err(SymphoniaError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                break
-            }
+            Ok(Some(p)) => p,
+            // 0.6: a clean end of stream is `Ok(None)`, not an
+            // `IoError(UnexpectedEof)` -- see the migration guide's
+            // "FormatReader::next_packet()" note.
+            Ok(None) => break,
             // The demuxer is telling us it needs to be reset to continue
             // (e.g. a mid-stream format change); we decode whole files up
             // front with no notion of "continuing", so this is end of
@@ -168,17 +182,21 @@ pub fn decode_bytes(bytes: Vec<u8>, ext_hint: Option<&str>) -> Result<Decoded, D
             Err(SymphoniaError::ResetRequired) => break,
             Err(e) => return Err(DecodeError::Malformed(e.to_string())),
         };
-        if packet.track_id() != track_id {
+        if packet.track_id != track_id {
             continue;
         }
         match decoder.decode(&packet) {
             Ok(audio_buf) => {
-                let spec = *audio_buf.spec();
-                sample_rate = spec.rate;
-                channels = spec.channels.count() as u16;
-                let mut sample_buf = SampleBuffer::<f32>::new(audio_buf.capacity() as u64, spec);
-                sample_buf.copy_interleaved_ref(audio_buf);
-                samples.extend_from_slice(sample_buf.samples());
+                let spec = audio_buf.spec();
+                sample_rate = spec.rate();
+                channels = spec.channels().count() as u16;
+                // `SampleBuffer` was removed in 0.6; `copy_to_slice_interleaved`
+                // on the generic buffer is its replacement, converting to the
+                // target sample format (`f32`, inferred from the `Vec` type)
+                // the same way `SampleBuffer::<f32>` used to.
+                let mut interleaved = vec![0.0f32; audio_buf.samples_interleaved()];
+                audio_buf.copy_to_slice_interleaved(&mut interleaved);
+                samples.extend_from_slice(&interleaved);
             }
             // A single corrupt packet does not have to end the whole
             // decode -- skip it and keep going. This mirrors symphonia's
