@@ -441,7 +441,10 @@ mod tests {
     fn touch_at(path: &Path, epoch_secs: u64) {
         touch(path);
         let mtime = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(epoch_secs);
-        std::fs::File::open(path)
+        // Windows refuses to set times through a read-only handle.
+        std::fs::File::options()
+            .write(true)
+            .open(path)
             .unwrap()
             .set_modified(mtime)
             .unwrap();
