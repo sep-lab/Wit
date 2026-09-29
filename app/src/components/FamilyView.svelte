@@ -25,7 +25,7 @@
   <h1>{SECTION_TITLES.family}</h1>
   {#if family && family.members.length > 0}
     <ul class="family-list">
-      {#each family.members as member (member.story_id ?? member.song_id)}
+      {#each family.members as member, i (member.story_id ?? `${member.song_id}-${i}`)}
         <li class="card family-member">
           <div class="row-wrap" style="justify-content: space-between;">
             <div class="name-span" dir="auto">{member.title}</div>
