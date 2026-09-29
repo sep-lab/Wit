@@ -2,79 +2,83 @@
   "schema_version": 1,
   "shelf": [
     {
-      "song_id": "garageband:d0a4d491d8137d0d",
+      "song_id": "garageband:9c85fad4f0c61298",
       "title": "Kitchen Jam",
       "daw": "garage_band",
       "last_worked": 1790421600,
       "last_worked_label": "Today 11:20",
       "moments_kept": 1,
       "copies": 0,
+      "copies_label": null,
       "artwork": {
         "kind": "generated",
-        "seed": 3257129171
+        "seed": 624676580
       },
       "digest": "1 moment so far",
       "story_ids": [
-        "garageband:d0a4d491d8137d0d#000"
+        "garageband:9c85fad4f0c61298#000"
       ]
     },
     {
-      "song_id": "logic:2c11169f4ce16736",
+      "song_id": "logic:c48616f99467b3e1",
       "title": "Coastline",
       "daw": "logic",
       "last_worked": 1790291100,
       "last_worked_label": "Thu 23:05",
       "moments_kept": 10,
       "copies": 0,
+      "copies_label": null,
       "artwork": {
         "kind": "generated",
-        "seed": 3977148397
+        "seed": 1861125265
       },
       "digest": "2 changes Wit can see in your last session",
       "story_ids": [
-        "logic:2c11169f4ce16736#000"
+        "logic:c48616f99467b3e1#000"
       ]
     },
     {
-      "song_id": "logic:8c005a6f56311456",
+      "song_id": "logic:430ff0f8288ff36d",
       "title": "Night Bus",
       "daw": "logic",
       "last_worked": 1790196000,
       "last_worked_label": "Wed 20:40",
       "moments_kept": 5,
       "copies": 1,
+      "copies_label": "+1 alternative",
       "artwork": {
         "kind": "generated",
-        "seed": 680535311
+        "seed": 1448095123
       },
       "digest": "1 change Wit can see in your last session",
       "story_ids": [
-        "logic:8c005a6f56311456#001",
-        "logic:8c005a6f56311456#000"
+        "logic:430ff0f8288ff36d#001",
+        "logic:430ff0f8288ff36d#000"
       ]
     },
     {
-      "song_id": "ableton:9f6f7bd24d192524",
+      "song_id": "ableton:17a8b3f3ee05ceb6",
       "title": "Coastline",
       "daw": "ableton",
       "last_worked": 1767645857,
       "last_worked_label": "5 Jan 20:44",
       "moments_kept": 5,
       "copies": 0,
+      "copies_label": null,
       "artwork": {
         "kind": "generated",
-        "seed": 4283841061
+        "seed": 3286561944
       },
       "digest": "4 changes Wit can see in your last session",
       "story_ids": [
-        "ableton:9f6f7bd24d192524"
+        "ableton:17a8b3f3ee05ceb6"
       ]
     }
   ],
   "stories": [
     {
-      "id": "garageband:d0a4d491d8137d0d#000",
-      "song_id": "garageband:d0a4d491d8137d0d",
+      "id": "garageband:9c85fad4f0c61298#000",
+      "song_id": "garageband:9c85fad4f0c61298",
       "header": {
         "title": "Kitchen Jam",
         "lineage": null,
@@ -103,7 +107,7 @@
           "label": "Today · morning",
           "moments": [
             {
-              "id": "garageband:d0a4d491d8137d0d#000@1790421600",
+              "id": "garageband:9c85fad4f0c61298#000@1790421600",
               "at": 1790421600,
               "label": "Today 11:20",
               "heading": "The oldest moment",
@@ -137,6 +141,10 @@
           "text": "Wit can't see knob and fader moves in GarageBand yet."
         },
         {
+          "tier": "structure",
+          "text": "Wit can't tell GarageBand's tracks apart yet, so there's no track strip for this song."
+        },
+        {
           "tier": null,
           "text": "Your project is never changed."
         }
@@ -145,8 +153,8 @@
       "send_ready": null
     },
     {
-      "id": "logic:2c11169f4ce16736#000",
-      "song_id": "logic:2c11169f4ce16736",
+      "id": "logic:c48616f99467b3e1#000",
+      "song_id": "logic:c48616f99467b3e1",
       "header": {
         "title": "Coastline",
         "lineage": null,
@@ -178,7 +186,7 @@
           "label": "Mon · evening · about 1h 20m",
           "moments": [
             {
-              "id": "logic:2c11169f4ce16736#000@1790021520",
+              "id": "logic:c48616f99467b3e1#000@1790021520",
               "at": 1790021520,
               "label": "Mon 20:12",
               "heading": "The oldest moment",
@@ -204,12 +212,12 @@
               }
             },
             {
-              "id": "logic:2c11169f4ce16736#000@1790023620",
+              "id": "logic:c48616f99467b3e1#000@1790023620",
               "at": 1790023620,
               "label": "Mon 20:47",
               "heading": "Routine save",
               "subheading": "Mon 20:47 · compared with the save at Mon 20:12",
-              "compared_with": "logic:2c11169f4ce16736#000@1790021520",
+              "compared_with": "logic:c48616f99467b3e1#000@1790021520",
               "source": {
                 "kind": "logic_backup",
                 "alternative": "000",
@@ -230,12 +238,12 @@
               }
             },
             {
-              "id": "logic:2c11169f4ce16736#000@1790026200",
+              "id": "logic:c48616f99467b3e1#000@1790026200",
               "at": 1790026200,
               "label": "Mon 21:30",
               "heading": "What changed at Mon 21:30",
               "subheading": "compared with the save at Mon 20:47",
-              "compared_with": "logic:2c11169f4ce16736#000@1790023620",
+              "compared_with": "logic:c48616f99467b3e1#000@1790023620",
               "source": {
                 "kind": "logic_backup",
                 "alternative": "000",
@@ -293,12 +301,12 @@
           "label": "Tue · evening · about 1h 55m",
           "moments": [
             {
-              "id": "logic:2c11169f4ce16736#000@1790103900",
+              "id": "logic:c48616f99467b3e1#000@1790103900",
               "at": 1790103900,
               "label": "Tue 19:05",
               "heading": "What changed at Tue 19:05",
               "subheading": "compared with the save at Mon 21:30",
-              "compared_with": "logic:2c11169f4ce16736#000@1790026200",
+              "compared_with": "logic:c48616f99467b3e1#000@1790026200",
               "source": {
                 "kind": "logic_backup",
                 "alternative": "000",
@@ -352,12 +360,12 @@
               }
             },
             {
-              "id": "logic:2c11169f4ce16736#000@1790106060",
+              "id": "logic:c48616f99467b3e1#000@1790106060",
               "at": 1790106060,
               "label": "Tue 19:41",
               "heading": "Routine save",
               "subheading": "Tue 19:41 · compared with the save at Tue 19:05",
-              "compared_with": "logic:2c11169f4ce16736#000@1790103900",
+              "compared_with": "logic:c48616f99467b3e1#000@1790103900",
               "source": {
                 "kind": "logic_backup",
                 "alternative": "000",
@@ -378,12 +386,12 @@
               }
             },
             {
-              "id": "logic:2c11169f4ce16736#000@1790108280",
+              "id": "logic:c48616f99467b3e1#000@1790108280",
               "at": 1790108280,
               "label": "Tue 20:18",
               "heading": "What changed at Tue 20:18",
               "subheading": "compared with the save at Tue 19:41",
-              "compared_with": "logic:2c11169f4ce16736#000@1790106060",
+              "compared_with": "logic:c48616f99467b3e1#000@1790106060",
               "source": {
                 "kind": "logic_backup",
                 "alternative": "000",
@@ -425,12 +433,12 @@
               }
             },
             {
-              "id": "logic:2c11169f4ce16736#000@1790110920",
+              "id": "logic:c48616f99467b3e1#000@1790110920",
               "at": 1790110920,
               "label": "Tue 21:02",
               "heading": "What changed at Tue 21:02",
               "subheading": "compared with the save at Tue 20:18",
-              "compared_with": "logic:2c11169f4ce16736#000@1790108280",
+              "compared_with": "logic:c48616f99467b3e1#000@1790108280",
               "source": {
                 "kind": "logic_backup",
                 "alternative": "000",
@@ -512,12 +520,12 @@
           "label": "Thu · night · about 50m",
           "moments": [
             {
-              "id": "logic:2c11169f4ce16736#000@1790288040",
+              "id": "logic:c48616f99467b3e1#000@1790288040",
               "at": 1790288040,
               "label": "Thu 22:14",
               "heading": "Routine save",
               "subheading": "Thu 22:14 · compared with the save at Tue 21:02",
-              "compared_with": "logic:2c11169f4ce16736#000@1790110920",
+              "compared_with": "logic:c48616f99467b3e1#000@1790110920",
               "source": {
                 "kind": "logic_backup",
                 "alternative": "000",
@@ -538,12 +546,12 @@
               }
             },
             {
-              "id": "logic:2c11169f4ce16736#000@1790289660",
+              "id": "logic:c48616f99467b3e1#000@1790289660",
               "at": 1790289660,
               "label": "Thu 22:41",
               "heading": "What changed at Thu 22:41",
               "subheading": "compared with the save at Thu 22:14",
-              "compared_with": "logic:2c11169f4ce16736#000@1790288040",
+              "compared_with": "logic:c48616f99467b3e1#000@1790288040",
               "source": {
                 "kind": "logic_backup",
                 "alternative": "000",
@@ -589,12 +597,12 @@
               }
             },
             {
-              "id": "logic:2c11169f4ce16736#000@1790291100",
+              "id": "logic:c48616f99467b3e1#000@1790291100",
               "at": 1790291100,
               "label": "Thu 23:05",
               "heading": "What changed at Thu 23:05",
               "subheading": "compared with the save at Thu 22:41",
-              "compared_with": "logic:2c11169f4ce16736#000@1790289660",
+              "compared_with": "logic:c48616f99467b3e1#000@1790289660",
               "source": {
                 "kind": "logic_current",
                 "alternative": "000"
@@ -642,8 +650,8 @@
         }
       ],
       "overview": {
-        "from": "logic:2c11169f4ce16736#000@1790021520",
-        "to": "logic:2c11169f4ce16736#000@1790291100",
+        "from": "logic:c48616f99467b3e1#000@1790021520",
+        "to": "logic:c48616f99467b3e1#000@1790291100",
         "heading": "Since Mon",
         "subheading": "from the oldest moment Wit has to the newest",
         "verdict": "changed",
@@ -821,7 +829,7 @@
             "tier": "structure"
           }
         ],
-        "summary": "7 changes Wit can see: 1 song setting, 1 renamed, 4 added, 1 audio file change",
+        "summary": "7 changes Wit can see: 1 song setting, 1 probable rename, 1 new track or MIDI region, 3 regions added, 1 new audio file",
         "note": null,
         "track_heat": [],
         "listen": []
@@ -832,6 +840,10 @@
           "text": "Wit can't see knob and fader moves in Logic yet."
         },
         {
+          "tier": "structure",
+          "text": "Wit can't tell Logic's tracks apart yet, so there's no track strip for this song."
+        },
+        {
           "tier": null,
           "text": "Your project is never changed."
         }
@@ -840,8 +852,8 @@
       "send_ready": null
     },
     {
-      "id": "logic:8c005a6f56311456#001",
-      "song_id": "logic:8c005a6f56311456",
+      "id": "logic:430ff0f8288ff36d#001",
+      "song_id": "logic:430ff0f8288ff36d",
       "header": {
         "title": "Night Bus",
         "lineage": "Alternative 2",
@@ -873,7 +885,7 @@
           "label": "Wed · evening · about 35m",
           "moments": [
             {
-              "id": "logic:8c005a6f56311456#001@1790193900",
+              "id": "logic:430ff0f8288ff36d#001@1790193900",
               "at": 1790193900,
               "label": "Wed 20:05",
               "heading": "The oldest moment",
@@ -899,12 +911,12 @@
               }
             },
             {
-              "id": "logic:8c005a6f56311456#001@1790196000",
+              "id": "logic:430ff0f8288ff36d#001@1790196000",
               "at": 1790196000,
               "label": "Wed 20:40",
               "heading": "What changed at Wed 20:40",
               "subheading": "compared with the save at Wed 20:05",
-              "compared_with": "logic:8c005a6f56311456#001@1790193900",
+              "compared_with": "logic:430ff0f8288ff36d#001@1790193900",
               "source": {
                 "kind": "logic_current",
                 "alternative": "001"
@@ -952,8 +964,8 @@
         }
       ],
       "overview": {
-        "from": "logic:8c005a6f56311456#001@1790193900",
-        "to": "logic:8c005a6f56311456#001@1790196000",
+        "from": "logic:430ff0f8288ff36d#001@1790193900",
+        "to": "logic:430ff0f8288ff36d#001@1790196000",
         "heading": "Since Wed",
         "subheading": "from the oldest moment Wit has to the newest",
         "verdict": "changed",
@@ -994,6 +1006,10 @@
           "text": "Wit can't see knob and fader moves in Logic yet."
         },
         {
+          "tier": "structure",
+          "text": "Wit can't tell Logic's tracks apart yet, so there's no track strip for this song."
+        },
+        {
           "tier": null,
           "text": "Your project is never changed."
         }
@@ -1001,8 +1017,8 @@
       "family": {
         "members": [
           {
-            "song_id": "logic:8c005a6f56311456",
-            "story_id": "logic:8c005a6f56311456#000",
+            "song_id": "logic:430ff0f8288ff36d",
+            "story_id": "logic:430ff0f8288ff36d#000",
             "title": "Night Bus · Alternative 1",
             "relation": {
               "kind": "alternative"
@@ -1012,8 +1028,8 @@
             "is_current": false
           },
           {
-            "song_id": "logic:8c005a6f56311456",
-            "story_id": "logic:8c005a6f56311456#001",
+            "song_id": "logic:430ff0f8288ff36d",
+            "story_id": "logic:430ff0f8288ff36d#001",
             "title": "Night Bus · Alternative 2",
             "relation": {
               "kind": "alternative"
@@ -1032,8 +1048,8 @@
       "send_ready": null
     },
     {
-      "id": "logic:8c005a6f56311456#000",
-      "song_id": "logic:8c005a6f56311456",
+      "id": "logic:430ff0f8288ff36d#000",
+      "song_id": "logic:430ff0f8288ff36d",
       "header": {
         "title": "Night Bus",
         "lineage": "Alternative 1",
@@ -1065,7 +1081,7 @@
           "label": "Wed · evening · about 1h 20m",
           "moments": [
             {
-              "id": "logic:8c005a6f56311456#000@1790187000",
+              "id": "logic:430ff0f8288ff36d#000@1790187000",
               "at": 1790187000,
               "label": "Wed 18:10",
               "heading": "The oldest moment",
@@ -1091,12 +1107,12 @@
               }
             },
             {
-              "id": "logic:8c005a6f56311456#000@1790189520",
+              "id": "logic:430ff0f8288ff36d#000@1790189520",
               "at": 1790189520,
               "label": "Wed 18:52",
               "heading": "What changed at Wed 18:52",
               "subheading": "compared with the save at Wed 18:10",
-              "compared_with": "logic:8c005a6f56311456#000@1790187000",
+              "compared_with": "logic:430ff0f8288ff36d#000@1790187000",
               "source": {
                 "kind": "logic_backup",
                 "alternative": "000",
@@ -1142,12 +1158,12 @@
               }
             },
             {
-              "id": "logic:8c005a6f56311456#000@1790191800",
+              "id": "logic:430ff0f8288ff36d#000@1790191800",
               "at": 1790191800,
               "label": "Wed 19:30",
               "heading": "What changed at Wed 19:30",
               "subheading": "compared with the save at Wed 18:52",
-              "compared_with": "logic:8c005a6f56311456#000@1790189520",
+              "compared_with": "logic:430ff0f8288ff36d#000@1790189520",
               "source": {
                 "kind": "logic_current",
                 "alternative": "000"
@@ -1195,8 +1211,8 @@
         }
       ],
       "overview": {
-        "from": "logic:8c005a6f56311456#000@1790187000",
-        "to": "logic:8c005a6f56311456#000@1790191800",
+        "from": "logic:430ff0f8288ff36d#000@1790187000",
+        "to": "logic:430ff0f8288ff36d#000@1790191800",
         "heading": "Since Wed",
         "subheading": "from the oldest moment Wit has to the newest",
         "verdict": "changed",
@@ -1261,6 +1277,10 @@
           "text": "Wit can't see knob and fader moves in Logic yet."
         },
         {
+          "tier": "structure",
+          "text": "Wit can't tell Logic's tracks apart yet, so there's no track strip for this song."
+        },
+        {
           "tier": null,
           "text": "Your project is never changed."
         }
@@ -1268,8 +1288,8 @@
       "family": {
         "members": [
           {
-            "song_id": "logic:8c005a6f56311456",
-            "story_id": "logic:8c005a6f56311456#000",
+            "song_id": "logic:430ff0f8288ff36d",
+            "story_id": "logic:430ff0f8288ff36d#000",
             "title": "Night Bus · Alternative 1",
             "relation": {
               "kind": "alternative"
@@ -1279,8 +1299,8 @@
             "is_current": true
           },
           {
-            "song_id": "logic:8c005a6f56311456",
-            "story_id": "logic:8c005a6f56311456#001",
+            "song_id": "logic:430ff0f8288ff36d",
+            "story_id": "logic:430ff0f8288ff36d#001",
             "title": "Night Bus · Alternative 2",
             "relation": {
               "kind": "alternative"
@@ -1299,8 +1319,8 @@
       "send_ready": null
     },
     {
-      "id": "ableton:9f6f7bd24d192524",
-      "song_id": "ableton:9f6f7bd24d192524",
+      "id": "ableton:17a8b3f3ee05ceb6",
+      "song_id": "ableton:17a8b3f3ee05ceb6",
       "header": {
         "title": "Coastline",
         "lineage": null,
@@ -1343,7 +1363,7 @@
           "label": "4 Jan · morning · about 15m · from 10:15",
           "moments": [
             {
-              "id": "ableton:9f6f7bd24d192524@1767521700",
+              "id": "ableton:17a8b3f3ee05ceb6@1767521700",
               "at": 1767521700,
               "label": "4 Jan 10:15",
               "heading": "The oldest moment",
@@ -1367,12 +1387,12 @@
               }
             },
             {
-              "id": "ableton:9f6f7bd24d192524@1767522612",
+              "id": "ableton:17a8b3f3ee05ceb6@1767522612",
               "at": 1767522612,
               "label": "4 Jan 10:30",
               "heading": "Saved again, nothing changed",
               "subheading": "4 Jan 10:30 · compared with the save at 4 Jan 10:15",
-              "compared_with": "ableton:9f6f7bd24d192524@1767521700",
+              "compared_with": "ableton:17a8b3f3ee05ceb6@1767521700",
               "source": {
                 "kind": "ableton_autosave"
               },
@@ -1400,12 +1420,12 @@
           "label": "4 Jan · morning · from 11:18",
           "moments": [
             {
-              "id": "ableton:9f6f7bd24d192524@1767525525",
+              "id": "ableton:17a8b3f3ee05ceb6@1767525525",
               "at": 1767525525,
               "label": "4 Jan 11:18",
               "heading": "What changed at 4 Jan 11:18",
               "subheading": "compared with the save at 4 Jan 10:30",
-              "compared_with": "ableton:9f6f7bd24d192524@1767522612",
+              "compared_with": "ableton:17a8b3f3ee05ceb6@1767522612",
               "source": {
                 "kind": "ableton_autosave"
               },
@@ -1470,12 +1490,12 @@
           "label": "5 Jan · evening · about 45m",
           "moments": [
             {
-              "id": "ableton:9f6f7bd24d192524@1767643293",
+              "id": "ableton:17a8b3f3ee05ceb6@1767643293",
               "at": 1767643293,
               "label": "5 Jan 20:01",
               "heading": "What changed at 5 Jan 20:01",
               "subheading": "compared with the save at 4 Jan 11:18",
-              "compared_with": "ableton:9f6f7bd24d192524@1767525525",
+              "compared_with": "ableton:17a8b3f3ee05ceb6@1767525525",
               "source": {
                 "kind": "ableton_autosave"
               },
@@ -1556,12 +1576,12 @@
               }
             },
             {
-              "id": "ableton:9f6f7bd24d192524@1767645857",
+              "id": "ableton:17a8b3f3ee05ceb6@1767645857",
               "at": 1767645857,
               "label": "5 Jan 20:44",
               "heading": "What changed at 5 Jan 20:44",
               "subheading": "compared with the save at 5 Jan 20:01",
-              "compared_with": "ableton:9f6f7bd24d192524@1767643293",
+              "compared_with": "ableton:17a8b3f3ee05ceb6@1767643293",
               "source": {
                 "kind": "ableton_autosave"
               },
@@ -1636,8 +1656,8 @@
         }
       ],
       "overview": {
-        "from": "ableton:9f6f7bd24d192524@1767521700",
-        "to": "ableton:9f6f7bd24d192524@1767645857",
+        "from": "ableton:17a8b3f3ee05ceb6@1767521700",
+        "to": "ableton:17a8b3f3ee05ceb6@1767645857",
         "heading": "Since 4 Jan",
         "subheading": "from the oldest moment Wit has to the newest",
         "verdict": "changed",
@@ -1779,7 +1799,7 @@
             "tier": "semantic"
           }
         ],
-        "summary": "5 changes Wit can see: 1 song setting, 1 renamed, 2 mix changes, 1 plugin change",
+        "summary": "5 changes Wit can see: 1 song setting, 1 rename, 2 mix changes, 1 plugin change",
         "note": null,
         "track_heat": [
           {
