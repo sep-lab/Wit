@@ -18,20 +18,23 @@ WHAT THIS MEASURES
       and an audio placement is a 48-byte group headed by `24 00 00 00` carrying
       position, track number, and a link back to a region family.
 
-    Library-wide -- `--scan ~/Music/Logic` over one person's 42-bundle Logic
-    library, 206 saves, 2026-09-29:
+    Library-wide -- `--scan ~/Music/Logic` over one person's Logic library, 42
+    .logicx/.band bundles (not split by kind), 206 saves, 2026-09-29:
 
       206/206        saves walked to clean EOF (0 unreadable)
       22500/22500    qSvE payloads an exact multiple of 16 (0 misaligned)
-      22480/22500    of them hold exactly one terminator unit, as their last;
-                     20 do not -- unexplained, see docs/FORMATS.md
+      22480/22500    of them hold exactly one terminator unit, and (a separate
+                     counter) 22480/22500 end in it; the scan does not count
+                     payloads doing both. The 20 are unexplained, see
+                     docs/FORMATS.md
       17913/18015    gRuA records seen were decoded (99.43%); 102 failed --
                      unexplained. The first version of this script reported
                      "10020/10020" on the 2026-08-16 snapshot because it counted
-                     only records that decoded; that 100% was never measured and
-                     does not hold.
+                     only records that decoded: that 100% was wrong by
+                     construction.
       9076/9142      placements resolved to a region family; 66 did not --
-                     unexplained. (2026-08-16 reported 5282/5282.)
+                     unexplained. (2026-08-16 reported 5282/5282 on a smaller
+                     snapshot, with a counter that could see a failure.)
       6848/9142      placements in a family of 2+ region objects: which copy
                      each is cannot be decoded (see WHAT THIS DOES NOT HANDLE)
       9142/9142      placement groups whose three units carry byte +7 = 00/89/bc
@@ -39,7 +42,8 @@ WHAT THIS MEASURES
                      INFERRED, not checked, to be regions placed with snap off
       205/206        saves where every decoded track number is within that
                      save's MetaData.plist NumberOfTracks; 1 is not --
-                     unexplained. (2026-08-16 reported 132/132.)
+                     unexplained. (2026-08-16 reported 132/132 on a smaller
+                     snapshot.)
       346 of 9488    marker hits rejected: 334 track 0, 12 beyond bar 10,000,
                      0 before the origin, 0 truncated (see parse_event_stream)
       0 of 3121      region UUIDs present in 2+ saves of a bundle whose family
@@ -194,8 +198,9 @@ EVENT_LEN = 16
 # interpreted. On a placement head it is also the HIGH BYTE of the u32 position
 # at +0x04 -- 0x00 on every placement head measured.
 EVENT_TYPE_BYTE = 7
-# The last unit of 22,480 of 22,500 qSvE payloads in the 42-bundle library
-# (1550/1550 on the measured chain). Counted by --scan, not required.
+# 22,480 of 22,500 qSvE payloads in the library hold exactly one, and 22,480 end in
+# it (two separate counters); 1550/1550 do both on the measured chain. Counted by
+# --scan, not required.
 TERMINATOR_EVENT = b"\xf1\x00\x00\x00\xff\xff\xff\x3f" + b"\x00" * 8
 
 PLACEMENT_MARKER = b"\x24\x00\x00\x00"

@@ -125,9 +125,10 @@ crate is read-only groundwork for this phase, not a substitute for it.
       but only in `experiments/` — `wit-logic` does not read them yet. The library
       rescan with the corrected counters ran 2026-09-29 (99.43% of region records
       decode). Before the port (`wit-logic/src/regions.rs`): explain or bound the open
-      counts it left (102 undecoded region records, 66 unresolved placements, 20
-      unterminated event payloads), and keep the "which copy" gap visible — it covers
-      75% of the library's placements. `Trak`,
+      counts it left — 102 undecoded region records, 66 unresolved placements, 20 event
+      payloads that do not end in the terminator, and one save with a track number above
+      its `NumberOfTracks` — and keep the "which copy" gap visible; it covers 75% of the
+      library's placements. `Trak`,
       `AuCU`, MIDI placements and the remaining `EvSq` units are still unmapped.
 - [ ] Handle non-deterministic save churn — the regenerated plugin UUID and the drifting
       float32 block
