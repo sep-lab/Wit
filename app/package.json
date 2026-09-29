@@ -16,7 +16,6 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.0",
-    "@tauri-apps/plugin-positioner": "^2.4.0",
     "svelte": "^5.57.1"
   },
   "devDependencies": {
