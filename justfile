@@ -42,6 +42,18 @@ lint-rust:
 licenses:
     cargo deny check licenses advisories
 
+# The M2 gate: fetch the MIT-licensed jonkubis/LogicProFormatWriter corpus at the
+# pinned commit into a temp dir (never into the repo — CI refuses ProjectData
+# paths) and walk every real Logic save in it. Needs network.
+logic-fixtures-gate:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dir="$(mktemp -d)"
+    trap 'rm -rf "$dir"' EXIT
+    git clone --quiet https://github.com/jonkubis/LogicProFormatWriter "$dir/lpfw"
+    git -C "$dir/lpfw" checkout --quiet 1f77c5c37d49ccd9551cc8e9107750e8db2f1fed
+    WIT_JONKUBIS_DIR="$dir/lpfw" cargo test -p wit-logic --test jonkubis_fixtures -- --ignored --nocapture
+
 # --- What lands starting M5 (the Tauri app) — stubs until then ---
 
 # Build a synthetic ~/Music-shaped tree (two .logicx packages with backups, a .band, and

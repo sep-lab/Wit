@@ -8,10 +8,9 @@
 //! WIT_LOGIC_PROJECT="/path/to/Song.logicx" cargo test -p wit-logic --test real_fixtures -- --nocapture --ignored
 //! ```
 //!
-//! This is a **single real project's spot check**, not the 30-fixture
-//! `jonkubis/LogicProFormatWriter` corpus the M2 issue asks for as the
-//! mechanically-checkable gate — that corpus fetch is a separate follow-up
-//! (network-gated, opt-in, never committed; see the issue for the pinned SHA).
+//! This is a **single real project's spot check**. The mechanically
+//! checkable M2 gate over the upstream `jonkubis/LogicProFormatWriter`
+//! corpus is `tests/jonkubis_fixtures.rs` (`just logic-fixtures-gate`).
 
 use std::path::{Path, PathBuf};
 

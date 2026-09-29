@@ -7,6 +7,7 @@ Notable changes to this project. Format based on [Keep a Changelog](https://keep
 Building the 0.0 pilot — no released artifact yet.
 
 ### Added
+- **M2 gate run** — `just logic-fixtures-gate` fetches the MIT-licensed `jonkubis/LogicProFormatWriter` corpus at its pinned commit into a temp dir and walks every real Logic save in it (`crates/wit-logic/tests/jonkubis_fixtures.rs`, opt-in). Measured 2026-09-29: 113 of 113 `ProjectData` files walk clean, all version word `cf09`. The corpus has 113 saves, not the 30 the earlier notes assumed
 - **ADR-0006**: the first shipped product is a Logic/GarageBand-first, read-only
   comprehension app — no project-file write-path in this slice. See
   [docs/ROADMAP.md](docs/ROADMAP.md)'s "Now: the 0.0 pilot" section for the milestone plan.

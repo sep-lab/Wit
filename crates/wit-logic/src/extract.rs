@@ -6,10 +6,11 @@
 //! string-reading") and was independently re-verified this session against
 //! a real `.logicx`'s current `ProjectData` — see the per-function doc
 //! comments for the exact cross-check against that project's
-//! `MetaData.plist` ground truth. This is a **single real file**, not the
-//! 30-fixture corpus the M2 issue asks for; treat these as spot-checked,
-//! not corpus-verified, until the runtime-fetched fixture suite runs (see
-//! `tests/real_fixtures.rs`).
+//! `MetaData.plist` ground truth. This is a **single real file**. The
+//! runtime-fetched upstream corpus (`tests/jonkubis_fixtures.rs`, 113 saves
+//! at the pinned commit) proves the walk and that extraction never fails on
+//! them; it does not check the extracted names against ground truth, so the
+//! offsets stay spot-checked, not corpus-verified.
 //!
 //! **Extracted names are diagnostic-tier, not a musician-facing claim.**
 //! `possible_track_names` in particular is a best-effort filtered list, not
