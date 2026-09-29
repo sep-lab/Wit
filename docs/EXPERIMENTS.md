@@ -761,6 +761,7 @@ against each save's `MetaData.plist` `NumberOfTracks`.
 | `gRuA` records decoded / seen | 10,020 decoded — **seen not counted, so no rate** | **903 / 903** |
 | Region UUIDs distinct within their save | 10,020 | 903 |
 | Placements resolving to a region family | **5,282 / 5,282** | **592 / 592** |
+| Placements whose copy cannot be attributed (family of 2+ region objects) | not measured | 426 / 592 |
 | Saves where every decoded track number ≤ `NumberOfTracks` | **132 / 132** | **10 / 10** |
 | Placements on the 960-tick grid | 4,995 / 5,282 (94.6%) | 592 / 592 |
 | Placement groups whose units carry byte `+7` = `00`/`89`/`bc` | not measured | **592 / 592** |

@@ -828,6 +828,11 @@ SCAN_COUNTERS = (
     "placement_markers_seen",
     "placements",
     "placements_resolved_to_a_region",
+    "placements_in_a_one_object_family",
+    "placements_in_a_multi_object_family",
+    "families",
+    "families_with_multiple_objects",
+    "families_with_more_objects_than_placements",
     "placements_on_the_960_grid",
     "placements_with_unit_types_00_89_bc",
     "placement_highest_bar",
@@ -896,6 +901,16 @@ def scan_library(root: Path) -> dict:
             totals["placements_resolved_to_a_region"] += sum(
                 1 for p in song.placements if p.family in families
             )
+            multi = {f for f, regions in families.items() if len(regions) > 1}
+            totals["placements_in_a_one_object_family"] += sum(
+                1 for p in song.placements if p.family in families and p.family not in multi
+            )
+            totals["placements_in_a_multi_object_family"] += sum(
+                1 for p in song.placements if p.family in multi
+            )
+            totals["families"] += len(families)
+            totals["families_with_multiple_objects"] += len(multi)
+            totals["families_with_more_objects_than_placements"] += len(family_surplus(song))
             totals["placements_on_the_960_grid"] += sum(
                 1 for p in song.placements if p.tick % TICKS_PER_QUARTER == 0
             )

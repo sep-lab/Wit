@@ -960,6 +960,29 @@ def test_scan_counts_regions_placements_and_event_streams(tmp_path):
     ) == (1, 2, 2, 2, 2, 2, 2, 2, 2, 5, 2, 2, 2)
 
 
+def test_scan_counts_which_placements_cannot_be_attributed_to_a_copy(tmp_path):
+    data = build_container(
+        [
+            build_region("Loop", 1, uuid_bytes(1), family=1),
+            build_region("Pad", 1, uuid_bytes(2), family=2),
+            build_region("Pad.1", 1, uuid_bytes(3), family=2),
+            build_region("Pad.2", 1, uuid_bytes(4), family=2),
+            build_event_stream(
+                [build_placement(1, 1.0, 1), build_placement(2, 1.0, 2), build_placement(2, 5.0, 2)]
+            ),
+        ]
+    )
+    make_bundle(tmp_path, "P.logicx", {"current": data})
+    totals = lrm.scan_library(tmp_path)
+    assert (
+        totals["placements_in_a_one_object_family"],
+        totals["placements_in_a_multi_object_family"],
+        totals["families"],
+        totals["families_with_multiple_objects"],
+        totals["families_with_more_objects_than_placements"],
+    ) == (1, 2, 2, 1, 1)
+
+
 def test_scan_decode_rate_can_fall_below_one_hundred_percent(tmp_path):
     broken = bytearray(build_region("Kick", 100, uuid_bytes(2)))
     broken.append(0)  # breaks the size law
