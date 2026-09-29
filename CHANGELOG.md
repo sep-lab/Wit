@@ -42,6 +42,20 @@ Building the 0.0 pilot — no released artifact yet.
   than to look impressive. Refuses any destination that is not empty, so it cannot
   overwrite a real library. This also fixes `just demo-library`, which called a
   `demo-library` subcommand that had never existed — [#18](https://github.com/sep-lab/Wit/issues/18)
+- **Logic region payload map** — `experiments/logic_region_map.py`, which answers *which*
+  region moved and where, not just how many records changed. Maps `AuRg`/`gRuA` (name,
+  length in source frames, and a per-region UUID that is **stable across saves** — the
+  Logic equivalent of Ableton's track `Id`) and the audio placement events inside
+  `EvSq`/`qSvE` (position, 1-based track number, region link). Also corrects the upstream
+  spec: `qSvE` payloads are a stream of **16-byte typed events**, not the fixed-stride
+  32/48/80-byte records documented elsewhere — the fixed-stride reading produces garbage
+  for two of every three events on a real 31-track project. Measured over 32 real Logic
+  projects / 132 saves: 132/132 saves walked clean, 13,606/13,606 event payloads 16-byte
+  aligned, 10,020/10,020 regions decoding a name and a distinct UUID, 5,282/5,282
+  placements resolved. See [docs/FORMATS.md](docs/FORMATS.md) for the offset tables and
+  [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) §12 for the measurement and its limits —
+  including the one that is not closed: which *copy* of a multi-region family a placement
+  refers to — [#3](https://github.com/sep-lab/Wit/issues/3)
 - Research findings across Ableton `.als`, Logic `ProjectData`, GarageBand `.band` and
   FL Studio `.flp`, measured on real projects ([docs/EXPERIMENTS.md](docs/EXPERIMENTS.md))
 - Working prototypes: Ableton semantic differ, CDC dedup harness, FLP parser, storage bench

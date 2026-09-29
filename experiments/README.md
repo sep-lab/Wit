@@ -13,6 +13,7 @@ own sessions immediately. That constraint is deliberate; do not add dependencies
 | `cdc_dedup.py` | Content-defined chunking / dedup harness | — |
 | `null_diff.py` | Audible diff between two renders — **any DAW, no parser** | `ffmpeg` |
 | `flp_parse.py` | FL Studio `.flp` event-stream survey | — |
+| `logic_region_map.py` | Logic/GarageBand — which region is on which track, at which bar | — |
 | `storage_bench.sh` | naive vs git vs delta chain | `zstd`, `git` |
 | `reproduce_merge_daw_acceptance.py` | Reproduce the EXPERIMENTS.md §5 merge on your own project, for issue #1 (does Live open it?) | `git` |
 
@@ -26,6 +27,13 @@ python3 experiments/als_semantic_diff.py --chain '/path/to/YourProject/Backup/*.
 python3 experiments/track_locality.py --chain '/path/to/YourProject/Backup/*.als'
 ./experiments/storage_bench.sh '/path/to/YourProject/Backup'
 python3 experiments/flp_parse.py '/path/to/project.flp'
+```
+
+Logic keeps up to ten full copies of a project inside the package, so a `.logicx` **is**
+a version chain already:
+
+```bash
+python3 experiments/logic_region_map.py --scan ~/Music/Logic
 ```
 
 Reproducing the audio result needs two renders of the same stem, one with a global change

@@ -720,9 +720,91 @@ cargo run -p wit-cli -- logic-report "/path/to/YourLibrary"
 
 ---
 
+## 12. Logic region payloads — which region, and where it went
+
+**Tracking issue:** [#3](https://github.com/sep-lab/Wit/issues/3). §11 measures how often
+Logic saves look empty to Wit. This one is about what Wit can say when they *don't*: the
+container census can report "79 regions became 96", but not which region, and not that it
+moved from bar 12 to bar 16. Two payloads close that gap — `AuRg`/`gRuA` (the region
+object) and the placement events inside `EvSq`/`qSvE`. Field offsets are in
+[FORMATS.md](FORMATS.md).
+
+**Material.** 32 real Logic projects, 132 saves (each alternative's current save plus its
+`Project File Backups` slots), 28 GB. The same library §11 walked. Plus three real
+GarageBand `.band` projects.
+
+**Method.** `experiments/logic_region_map.py --scan <library-root>` walks every
+`ProjectData`, decodes both payloads, and counts what decoded. Nothing is sampled; every
+save in the library is read. Region length was independently cross-checked against
+`afinfo` durations on five audio files, and decoded track numbers against each save's
+`MetaData.plist` `NumberOfTracks`.
+
+**Result — measured, n = 132 saves / 32 projects:**
+
+| | |
+|---|---|
+| Saves walked to clean EOF | **132 / 132** |
+| `EvSq` payloads an exact multiple of 16 bytes | **13,606 / 13,606** |
+| Region records decoding a name **and** a distinct UUID | **10,020 / 10,020** |
+| Placements resolving to a region family | **5,282 / 5,282** |
+| Saves where every decoded track number ≤ `NumberOfTracks` | **132 / 132** |
+| Placements on the 960-tick grid | 4,995 / 5,282 (94.6%) |
+| Marker hits rejected as collisions | 265 |
+
+The 5.4% off-grid placements are legitimate — a region dragged with snap off sits at tick
+resolution; the sampled ones land on musical positions like bar 66⅚. The 265 rejects are
+false positives from the four-byte marker colliding with other event data: 264 carry
+track 0 (the byte is 1-based) and one sits at bar 821,376 on a five-track project. The
+largest genuine placement in the whole library is bar 689.
+
+**The result that matters most** is not in the table. On one project's 10-save chain, all
+**79** region UUIDs from the oldest save are still present in the newest, which adds
+exactly **17** more. Region identity is stable across saves, so a diff can name what
+changed instead of counting it:
+
+```
+region 'Untitled 3_2 #12.4' resized: 1321937 -> 1121286 frames
+track 3: a 'Untitled 3_2 #12' region moved from bar 55.5 to bar 55.75
+```
+
+**Limits.**
+
+- **n = 1 library, one person's projects, all Logic 12.** Nothing here says a Logic 10
+  or 11 file decodes the same way. The version word is not gated on, so a mismatch would
+  surface as a decode failure rather than as silent garbage — but it has not been tested.
+- **A placement links to a region family, not to an individual region record.** 23 of 35
+  families on the measured project pair 1:1 with their placements; 12 hold more region
+  records than placements. Which copy moved is unresolved, and the tool says "one of N
+  copies" rather than guessing.
+- **No labelled edit chain was used.** Every save pair here is *found* material where
+  nobody recorded what changed, so the numbers measure that fields decode, not that the
+  reported change is the only change. The "one known edit produces exactly one reported
+  change" test is still unrun — the honest gap in this experiment.
+- **GarageBand is only partly exercised.** All three `.band` projects walk and their
+  event grids are 16-byte aligned, but they hold **zero** `AuRg` records — they are
+  software-instrument only, so the region object was never tested there.
+- Bar numbers assume 4/4 and constant tempo; the tempo and signature maps are not read.
+- These payloads are mapped in `experiments/` only. `wit-logic`, the shipping crate, does
+  not read them, so no Wit verdict changes as a result of this experiment.
+
+**Reproduce (read-only; point it at a copy if unsure):**
+
+```bash
+python3 experiments/logic_region_map.py --scan ~/Music/Logic
+```
+
+```bash
+python3 experiments/logic_region_map.py --diff \
+  'Project.logicx/Alternatives/000/Project File Backups/07' \
+  'Project.logicx/Alternatives/000/Project File Backups/08'
+```
+
+---
+
 ## Reproducing these
 
 ```bash
+python3 experiments/logic_region_map.py --scan path/to/LogicLibrary
 python3 experiments/als_semantic_diff.py --chain 'path/to/Backup/*.als'
 python3 experiments/track_locality.py --chain 'path/to/Backup/*.als'
 python3 experiments/cdc_dedup.py --store 'path/to/Backup/*.als' --gunzip
@@ -750,3 +832,7 @@ bash    experiments/storage_bench.sh path/to/Backup
    two versions differing by one known change.
 5. **Sub-file chunk dedup on a whole library** — experiment 9 measured exact duplicates
    only.
+6. **Does one known Logic edit produce exactly one reported change?** §12 measures that
+   region and placement fields decode on found material; it does not measure false
+   positives, because no labelled edit chain exists yet. Requires launching Logic to make
+   a throwaway project with one deliberate edit per save.
