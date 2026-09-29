@@ -10,13 +10,21 @@
 #      ->  job: test (the 3.9 leg, and the --help smoke check)
 #   4. Ordinary correctness and hygiene  ->  jobs: lint, test, benchmark
 #   5. That the shipped `wit` binary (crates/, from ADR-0006) is real Rust —
-#      fmt/clippy-clean, tested, and free of copyleft dependencies
+#      fmt/clippy-clean, tested, and free of copyleft dependencies, on every
+#      OS the pilot ships for (ubuntu, macOS and Windows — PLAN-V2 Phase D)
 #      ->  jobs: rust, licenses
 #
 # Contributors here are producers and engineers of very mixed programming
 # experience. Every failure message in this pipeline should say what to do next,
 # not just what went wrong. If a check ever fails for a reason a contributor
 # cannot act on, that is a bug in the check.
+#
+# A second workflow, app-build.yml, packages the Tauri app (macOS/Windows/Linux
+# bundles) once `app/src-tauri` exists. It is deliberately not required here
+# yet — see the comment above the `ci-ok` job below — because gating every
+# crates/-only PR on a 3-OS app build, for an app that does not exist yet,
+# would be exactly the kind of failure nobody could act on that this header
+# says this pipeline avoids.
 
 name: CI
 
@@ -106,8 +114,18 @@ jobs:
           shellcheck --version
           shellcheck experiments/*.sh .github/workflows/scripts/*.sh
 
-      - name: experiments/ imports only the standard library
-        run: python3 .github/workflows/scripts/check_stdlib_only.py experiments
+      - name: experiments/ (and tools/, once it lands) import only the standard library
+        run: |
+          dirs="experiments"
+          # tools/lab/ (stdlib-only Python, PLAN-V2 Phase B) lands from a
+          # separate lane. Guarded so this step is a no-op until it exists.
+          # The `ruff check` step above already covers tools/ too, once it's
+          # there — it scans the whole repo root and ruff.toml excludes
+          # nothing under tools/.
+          if [ -d tools ]; then
+            dirs="$dirs tools"
+          fi
+          python3 .github/workflows/scripts/check_stdlib_only.py $dirs
 
   # ===========================================================================
   test:
@@ -185,8 +203,17 @@ jobs:
             extra="--cov-fail-under=${COVERAGE_FLOOR}"
             echo "This leg enforces the coverage floor of ${COVERAGE_FLOOR}%."
           fi
+          # tools/lab/ (PLAN-V2 Phase B) lands from a separate lane, tests and
+          # all, straight into tests/ — the "Is there a test suite yet?" step
+          # above already globs tests/test_*.py, so those tests just run. This
+          # only widens what coverage *measures*, guarded so it is a no-op
+          # until tools/ exists.
+          cov="--cov=experiments"
+          if [ -d tools ]; then
+            cov="$cov --cov=tools"
+          fi
           python -m pytest tests/ \
-            --cov=experiments \
+            $cov \
             --cov-report=term-missing \
             --cov-report=xml:coverage.xml \
             --cov-report=html:htmlcov \
@@ -367,11 +394,25 @@ jobs:
     # system deps on the ubuntu leg.
     name: Rust · ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    # 25 was enough for two OSes with a warm Swatinem/rust-cache; Windows'
+    # linker is slower and a new cache key means the first run on this leg is
+    # a cold build of the whole workspace (rusqlite's bundled sqlite3,
+    # zstd-sys and blake3 all compile C/asm via cc, on top of every crate).
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    # GitHub's windows-latest runner defaults `run:` steps to PowerShell, not
+    # bash. Every step below is a plain cargo invocation that works under
+    # either shell, except "Why this job exists", which builds
+    # $GITHUB_STEP_SUMMARY with bash-only `{ ... } >> "$FILE"` syntax. Forcing
+    # bash job-wide (Windows runners ship Git Bash) is simpler than annotating
+    # one step differently per OS, and changes nothing for the ubuntu/macOS
+    # legs, which already default to bash.
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
 
@@ -402,9 +443,11 @@ jobs:
             echo "### Rust — ${{ matrix.os }}"
             echo
             echo "Exercises the \`crates/\` workspace: fmt, clippy (deny warnings), and"
-            echo "\`cargo test --workspace\`. Real-material tests (gated on \`WIT_FIXTURES\`,"
-            echo "mirroring \`tests/conftest.py\`'s loud-skip doctrine) land starting M1 and"
-            echo "skip here by design — see wit-planning/PLAN.md's test pyramid."
+            echo "\`cargo test --workspace\`, on ubuntu, macOS **and Windows** — the pilot"
+            echo "ships on all three (PLAN-V2 Phase D). Real-material tests (gated on"
+            echo "\`WIT_FIXTURES\`, mirroring \`tests/conftest.py\`'s loud-skip doctrine) land"
+            echo "starting M1 and skip here by design — see wit-planning/PLAN.md's test"
+            echo "pyramid."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ===========================================================================
@@ -449,6 +492,12 @@ jobs:
   ci-ok:
     # One check to require in branch protection, so adding a matrix leg later does
     # not mean editing repository settings.
+    #
+    # app-build.yml (the Tauri app's macOS/Windows/Linux packaging) is
+    # deliberately NOT in `needs:` below. It no-ops until app/src-tauri
+    # exists, and even once it does, gating every crates/-only PR on a 3-OS
+    # app build is a heavier merge requirement than this repo's needed so
+    # far. Add it here once the app is real and the build is reliably green.
     name: CI
     if: always()
     needs: [lint, test, guardrails, claims, benchmark, rust, licenses]
