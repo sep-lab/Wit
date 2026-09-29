@@ -47,6 +47,8 @@ WHAT THIS DOES NOT HANDLE
     - Framing errors (bad magic, length mismatch, a record running past EOF) are
       reported per file and localisation is skipped for that file.
     - Large gunzipped .als files diff at pure-Python speed (seconds per pair).
+    - Pairs follow SCRIPT order (a re-captured early step sits where its step
+      belongs); a skipped step simply makes its neighbours a pair.
 """
 
 from __future__ import annotations
@@ -327,15 +329,34 @@ def check_run_dir(path) -> Path:
 
 
 def _read_capture(run_dir: Path, capture: Dict, path: str) -> bytes:
-    with labcore.open_nofollow(run_dir / capture["label"] / path) as fh:
+    """
+    Read one snapshotted file. The label and path come from manifest.json, which is
+    data, not code: a "../" (or an absolute path, or a symlink) that would leave the
+    run folder is refused instead of read.
+    """
+    rel = Path(capture["label"]) / path
+    if rel.is_absolute() or ".." in rel.parts:
+        raise labcore.SafetyError("manifest path %r leaves the run folder" % str(rel))
+    target = run_dir / rel
+    if not labcore.is_within(labcore.real(target), labcore.real(run_dir)):
+        raise labcore.SafetyError("manifest path %r resolves outside the run folder" % str(rel))
+    with labcore.open_nofollow(target) as fh:
         return fh.read()
+
+
+def live_captures_in_step_order(m: Dict) -> List[Dict]:
+    """Live captures sorted by their step's position in the script, not by append order
+    (a `watch --replace` of an early step is appended last)."""
+    order = {s["key"]: i for i, s in enumerate(m.get("steps", []))}
+    caps = [c for c in m["captures"] if not c.get("superseded")]
+    return sorted(caps, key=lambda c: (order.get(c["key"], len(order)), c["key"]))
 
 
 def analyze_run(run_dir: Path, max_ranges: int = 256):
     """Yield one dict per (consecutive step pair, file)."""
     with open(str(run_dir / "manifest.json"), encoding="utf-8") as fh:
         m = json.load(fh)
-    caps = [c for c in m["captures"] if not c.get("superseded")]
+    caps = live_captures_in_step_order(m)
     for before, after in zip(caps, caps[1:]):
         bfiles = {f["path"]: f for f in before["files"]}
         afiles = {f["path"]: f for f in after["files"]}

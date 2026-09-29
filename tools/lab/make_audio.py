@@ -9,9 +9,12 @@ WHAT THIS DOES
                                        snare on 2 and 4, closed hat on every 8th
       sine-bass.wav     mono,   8.0 s  one sine note per bar (A1, F1, C2, G1)
       noise-pad.wav     stereo, 8.0 s  low-passed noise, independent L/R, slow swell
-      آواز.wav          mono,   5.0 s  a 440 Hz tone with vibrato — the Persian
+      صدا.wav           mono,   5.0 s  a 440 Hz tone with vibrato — the Persian
                                        FILE name is the point (Logic stores audio
-                                       file names as UTF-16LE; this tests that)
+                                       file names as UTF-16LE; this tests that).
+                                       Deliberately NOT آواز: that is the track name
+                                       step 8a sets, and FL names a new channel after
+                                       the imported file (see steps.py)
 
     Everything is computed with math + random.Random(seed): the same seed gives
     the same bytes, every run, on the same machine. Also writes make_audio.json
@@ -66,7 +69,7 @@ SAMPLE_RATE = 44100
 SAMPLE_WIDTH = 2  # bytes: 16-bit PCM
 DEFAULT_SEED = 1
 
-PERSIAN_NAME = unicodedata.normalize("NFC", "آواز.wav")
+PERSIAN_NAME = unicodedata.normalize("NFC", "صدا.wav")  # must match steps.PERSIAN_FILE
 
 # name -> (channels, seconds, per-file salt so each file gets its own noise stream)
 FILES: Dict[str, Tuple[int, float, int]] = {
@@ -226,7 +229,9 @@ def generate(out_dir, seed: int = DEFAULT_SEED, force: bool = False, scale: floa
         target = out / name
         if target.is_symlink():
             raise labcore.SafetyError("refusing to write through a symlink: %s" % labcore.redact(target))
-        if target.exists() and not force and target.read_bytes() != data:
+        if target.exists() and not target.is_file():
+            raise labcore.SafetyError("refusing: %s exists and is not a regular file" % labcore.redact(target))
+        if target.exists() and not force and labcore.read_regular(target, follow_symlinks=False) != data:
             raise labcore.SafetyError(
                 "%s exists with different bytes (another seed?). Re-run with --force to replace it."
                 % labcore.redact(target)
@@ -238,7 +243,7 @@ def generate(out_dir, seed: int = DEFAULT_SEED, force: bool = False, scale: floa
     for name, data in rendered.items():
         target = out / name
         existed = target.exists()
-        same = existed and target.read_bytes() == data
+        same = existed and labcore.read_regular(target, follow_symlinks=False) == data
         if not same:
             labcore.atomic_write_bytes(target, data)
         nchannels, _seconds, _salt = FILES[name]

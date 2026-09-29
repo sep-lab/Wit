@@ -10,7 +10,10 @@ WHAT THIS DOES
     - The corpus is $WIT_CORPUS (default ~/Projects/DAW/wit-corpus). capture.py
       writes only there; make_audio.py writes only under the lab root.
     - A path is judged by its realpath (symlinks resolved), so a symlink planted
-      inside the lab root that points at a real project is refused.
+      inside the lab root that points at a real project is refused — AND by
+      filesystem identity (st_dev, st_ino) of every existing ancestor, because
+      realpath does not undo macOS firmlinks: /System/Volumes/Data/Users/<you>/Music
+      IS ~/Music (same inode), yet realpath leaves the long form alone (measured).
     - Nothing may resolve under a real library (DENYLIST_REL below, relative to
       the home directory), compared case-insensitively and Unicode-NFC-normalised
       because macOS volumes are case-insensitive by default.
@@ -20,6 +23,11 @@ WHAT THIS DOES
     - The corpus may not sit inside the lab root (capture never writes where a
       DAW is saving), inside a real library, or inside this git repository (CI
       guardrails forbid project files in the repo).
+    - Neither the lab root nor the corpus may sit anywhere below a folder holding
+      a `.git` entry: agent worktrees live inside the main clone, so "outside this
+      checkout" is not enough.
+    - Only regular files are ever opened (O_NONBLOCK + a regular-file check), so a
+      FIFO or device named like a project file cannot hang a capture.
 
     Also: atomic file writes (temp file + fsync + rename), sha256 of a file read
     without following symlinks, redaction of home paths in messages, and a
@@ -32,9 +40,12 @@ USAGE
     call time, so tests can point HOME / WIT_LAB_ROOT / WIT_CORPUS at a tmp dir.
 
 WHAT THIS DOES NOT HANDLE
-    - Hard links. A hard link inside the lab root to a file inside a real library
-      is indistinguishable from an ordinary file. The lab never creates them; a
-      DAW does not either.
+    - Hard links to FILES. A hard link inside the lab root to a file inside a real
+      library is indistinguishable from an ordinary file (identity checks cover
+      folders and firmlinks, not a file with two names). The lab never creates
+      them; a DAW does not either.
+    - A home directory that is itself a git checkout (a dotfiles repo) makes every
+      lab root and corpus under it refused; set WIT_LAB_ROOT / WIT_CORPUS elsewhere.
     - Check-then-use races. Paths are re-validated on every capture and files are
       opened with O_NOFOLLOW where the OS supports it, so a symlink swapped in at
       the last moment fails to open instead of being read — but a directory
@@ -52,10 +63,11 @@ import json
 import os
 import plistlib
 import re
+import stat
 import tempfile
 import unicodedata
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set, Tuple
 
 LAB_ROOT_ENV = "WIT_LAB_ROOT"
 CORPUS_ENV = "WIT_CORPUS"
@@ -159,13 +171,43 @@ def is_within(child: str, parent: str, casefold: bool = False) -> bool:
     return c == p or c.startswith(p + os.sep)
 
 
+def stat_id(path) -> Optional[Tuple[int, int]]:
+    """(st_dev, st_ino) of an existing path, following symlinks and firmlinks; else None."""
+    try:
+        st = os.stat(str(path))
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino)
+
+
+def ancestor_ids(path) -> Set[Tuple[int, int]]:
+    """Identity of `path`'s realpath and of every existing folder above it."""
+    ids = set()
+    p = real(path)
+    while True:
+        i = stat_id(p)
+        if i is not None:
+            ids.add(i)
+        parent = os.path.dirname(p)
+        if parent == p:
+            return ids
+        p = parent
+
+
+def same_or_inside(path, parent) -> bool:
+    """True if `path` is `parent` or below it by filesystem identity (catches firmlinks)."""
+    pid = stat_id(parent)
+    return pid is not None and pid in ancestor_ids(path)
+
+
 def denylisted(path) -> Optional[str]:
     """
     The real library `path` falls under, as a "~/..." label, or None.
 
     Both the literal absolute path and its realpath are checked against both
     forms of each denylist entry, so neither a symlink in the candidate nor a
-    symlinked library (e.g. ~/Music/Logic on an external disk) slips through.
+    symlinked library (e.g. ~/Music/Logic on an external disk) slips through;
+    then filesystem identity is checked, so a firmlink alias cannot either.
     """
     forms = {absolute(path), real(path)}
     for rel, entry in zip(DENYLIST_REL, denylist()):
@@ -174,26 +216,48 @@ def denylisted(path) -> Optional[str]:
             for e in entry_forms:
                 if is_within(f, e, casefold=True):
                     return "~/" + rel
+        if same_or_inside(path, entry):
+            return "~/" + rel
     return None
 
 
 def contains_denylisted(path) -> Optional[str]:
-    """The real library that lives somewhere below `path`, or None."""
+    """The real library that lives (or would live) somewhere below `path`, or None."""
     forms = {absolute(path), real(path)}
+    pid = stat_id(path)
     for rel, entry in zip(DENYLIST_REL, denylist()):
         for e in (absolute(entry), real(entry)):
             for f in forms:
                 if is_within(e, f, casefold=True):
                     return "~/" + rel
+        if pid is not None and pid in ancestor_ids(entry):
+            return "~/" + rel
     return None
 
 
+def git_checkout_above(path) -> Optional[str]:
+    """The nearest folder at or above `path`'s realpath that holds a `.git` entry."""
+    p = real(path)
+    while True:
+        if os.path.lexists(os.path.join(p, ".git")):
+            return p
+        parent = os.path.dirname(p)
+        if parent == p:
+            return None
+        p = parent
+
+
+# A home path counts only when it ends at a path boundary: a home of "/path/to/sam"
+# must not turn "/path/to/samantha/x" into "~antha/x".
+_BOUNDARY = r"(?=$|[/\s\"'<>|(),:;\[\]{}])"
+
+
 def redact(text) -> str:
-    """Home directory -> "~", any other /Users/<name> -> /Users/<redacted>."""
+    """Home directory -> "~", any other /Users/<name> or /home/<name> -> <redacted>."""
     s = str(text)
-    for h in {absolute(home()), real(home())}:
+    for h in sorted({absolute(home()), real(home())}, key=len, reverse=True):
         if h and h != os.sep:
-            s = s.replace(h, "~")
+            s = re.sub(re.escape(h) + _BOUNDARY, "~", s)
     return re.sub(r"(/Users/|/home/)[^/\s\"']+", r"\1<redacted>", s)
 
 
@@ -207,10 +271,16 @@ def check_lab_root() -> Path:
     root = lab_root()
     r = real(root)
     h = real(home())
-    if r == os.sep or is_within(h, r):
+    if r == os.sep or is_within(h, r) or same_or_inside(home(), root):
         raise SafetyError(
             "lab root %s is the home directory, the filesystem root or an ancestor of home — "
             "set %s to a dedicated folder such as ~/WitLab" % (redact(root), LAB_ROOT_ENV)
+        )
+    git = git_checkout_above(root)
+    if git:
+        raise SafetyError(
+            "lab root %s is inside a git checkout (%s). DAW projects must never sit in or under a "
+            "repository; set %s outside it." % (redact(root), redact(git), LAB_ROOT_ENV)
         )
     hit = denylisted(root)
     if hit:
@@ -301,7 +371,7 @@ def check_corpus_dir(path=None) -> Path:
     target = Path(path) if path is not None else corpus_root()
     c = real(target)
     h = real(home())
-    if c == os.sep or is_within(h, c):
+    if c == os.sep or is_within(h, c) or same_or_inside(home(), target):
         raise SafetyError(
             "corpus %s is the home directory, the filesystem root or an ancestor of home — "
             "set %s to a dedicated folder" % (redact(target), CORPUS_ENV)
@@ -310,16 +380,22 @@ def check_corpus_dir(path=None) -> Path:
     if hit:
         raise SafetyError("corpus %s is inside %s, a real library" % (redact(target), hit))
     lab = real(lab_root())
-    if is_within(c, lab, casefold=True):
+    if is_within(c, lab, casefold=True) or same_or_inside(target, lab_root()):
         raise SafetyError(
             "corpus %s is inside the lab root %s. Capture never writes where a DAW is saving; "
             "keep the corpus outside it." % (redact(target), redact(lab_root()))
         )
     repo = real(repo_root())
-    if is_within(c, repo, casefold=True):
+    if is_within(c, repo, casefold=True) or same_or_inside(target, repo_root()):
         raise SafetyError(
             "corpus %s is inside this git repository. DAW project files must never enter the "
             "repo (CI guardrails); keep the corpus outside it." % redact(target)
+        )
+    git = git_checkout_above(target)
+    if git:
+        raise SafetyError(
+            "corpus %s is inside a git checkout (%s). DAW project files must never enter a "
+            "repository; set %s outside it." % (redact(target), redact(git), CORPUS_ENV)
         )
     return Path(c)
 
@@ -342,11 +418,33 @@ def is_media(relpath: str) -> bool:
 # --------------------------------------------------------------------------- #
 
 
-def open_nofollow(path):
-    """Open for reading without following a final symlink (where the OS supports it)."""
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+def open_regular(path, follow_symlinks: bool = False):
+    """
+    Open a REGULAR file for reading. O_NONBLOCK makes opening a FIFO return at once
+    instead of hanging, and the fstat check then refuses anything that is not a
+    regular file. Without follow_symlinks, a final symlink is not followed either.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+    if not follow_symlinks:
+        flags |= getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(str(path), flags)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError("not a regular file: %s" % redact(path))
+    except BaseException:
+        os.close(fd)
+        raise
     return os.fdopen(fd, "rb")
+
+
+def open_nofollow(path):
+    """open_regular without following a final symlink — every lab-project read uses this."""
+    return open_regular(path, follow_symlinks=False)
+
+
+def read_regular(path, follow_symlinks: bool = True) -> bytes:
+    with open_regular(path, follow_symlinks) as fh:
+        return fh.read()
 
 
 def sha256_file(path) -> str:
@@ -390,10 +488,12 @@ def now_iso() -> str:
 # installed DAW apps (read-only: Info.plist only)
 # --------------------------------------------------------------------------- #
 
-# Looked up by glob, never by a hardcoded personal path. Logic's plan target is
-# "Logic Pro Creator Studio.app"; plain "Logic Pro.app" is the fallback.
+# Looked up by glob, never by a hardcoded personal path. The lab's Logic is
+# /Applications/Logic Pro.app (12.3.1, com.apple.logic10): confirmed 2026-09-29,
+# when "Logic Pro Creator Studio.app" was NOT installed. Other Logic bundles are
+# recorded as candidates; `capture.py init --app` pins one.
 APP_GLOBS = {
-    "logic": ["Logic Pro Creator Studio.app", "Logic Pro*.app"],
+    "logic": ["Logic Pro.app", "Logic Pro*.app"],
     "garageband": ["GarageBand*.app"],
     "ableton": ["Ableton Live 12*.app", "Ableton Live*.app"],
     "fl": ["FL Studio 20*.app", "FL Studio*.app"],
