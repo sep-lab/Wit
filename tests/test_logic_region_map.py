@@ -820,6 +820,8 @@ def test_the_map_says_how_many_placements_cannot_be_attributed_to_a_copy(tmp_pat
     assert "2 of 3 placements are in the 1 of 2 families holding 2+ region objects" in out
     assert "byte +7 values (4 distinct): 00:3 3f:1 89:3 bc:3" in out
     assert "carry byte +7 = 00/89/bc: 3 of 3" in out
+    assert "+0x10 values: 1 distinct over 3 placements on 2 tracks, 2 distinct" in out
+    assert "placement markers rejected: 0 (" in out
 
 
 def test_the_cli_reports_a_map(tmp_path, capsys):
@@ -991,7 +993,20 @@ def test_scan_breaks_rejects_down_by_reason_and_prints_histograms(tmp_path):
     assert totals["event_type_byte"] == {
         "0x00": 2, "0x3f": 1, "0x89": 3, "0xbb": 1, "0xbc": 3
     }
+    assert totals["rejected_marker_head_byte"] == {"0x00": 1, "0xbb": 1}
     assert totals["placement_head_gap_bytes"] == {}
+
+
+def test_scan_measures_whether_a_region_keeps_its_family_across_saves(tmp_path):
+    kept = build_container([build_region("Loop", 1, uuid_bytes(1), family=2)])
+    moved = build_container([build_region("Loop", 1, uuid_bytes(1), family=3)])
+    make_bundle(tmp_path, "A.logicx", {"00": kept, "01": kept})
+    make_bundle(tmp_path, "B.logicx", {"00": kept, "01": moved})
+    totals = lrm.scan_library(tmp_path)
+    assert (
+        totals["region_uuids_seen_in_2plus_saves_of_a_bundle"],
+        totals["region_uuids_changing_family_across_saves"],
+    ) == (2, 1)
 
 
 def test_scan_counts_an_unreadable_save_without_aborting_the_library(tmp_path):

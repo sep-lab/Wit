@@ -41,11 +41,12 @@ WHAT THIS MEASURES
                    terminator unit, always its last
       592/592      placements resolved; 602 marker hits, 10 rejected, all track 0
       592/592      placement groups whose three units carry byte +7 = 00/89/bc
+      0/96         region UUIDs whose family index changes between saves
 
     Across that chain all 79 region UUIDs of the oldest save are still present in
-    the newest, which adds exactly 17 more, and every one of the 96 keeps the same
-    family index in every save it appears in -- that stability is what makes a
-    cross-save diff possible.
+    the newest, which adds exactly 17 more, and none of the 96 changes family
+    index between saves -- that stability is what makes a cross-save diff
+    possible.
 
     Library re-run, pending permission to read the library again:
         python3 experiments/logic_region_map.py --scan ~/Music/Logic
@@ -200,8 +201,8 @@ REGION_TIME_ORIGIN = 34560  # = 9 bars; regions use this origin, tempo/markers 3
 # highest accepted placement at bar 689 and one rejected hit at bar 821,376 on a
 # 5-track project; that breakdown came from a one-off pass, not from this script,
 # which now prints `placement_highest_bar` and the reject counts under --scan so
-# the library re-run can confirm it. At 4/4 and 40 BPM, 10,000 bars is over 16
-# hours of music.
+# the library re-run can confirm it (the measured chain's highest is bar 149).
+# At 4/4 and 40 BPM, 10,000 bars is over 16 hours of music.
 MAX_PLACEMENT_BAR = 10_000
 
 REJECT_REASONS = ("truncated", "track_zero", "before_origin", "beyond_max_bar")
@@ -251,6 +252,7 @@ class EventStream:
     placements: list[Placement] = field(default_factory=list)
     type_counts: Counter = field(default_factory=Counter)
     rejects: Counter = field(default_factory=Counter)
+    rejected_head_types: Counter = field(default_factory=Counter)
     terminators: int = 0
     ends_in_terminator: bool = False
     placements_with_known_unit_types: int = 0
@@ -268,6 +270,7 @@ class Song:
     event_streams_with_one_terminator: int = 0
     event_streams_ending_in_terminator: int = 0
     placement_rejects: Counter = field(default_factory=Counter)
+    rejected_marker_head_types: Counter = field(default_factory=Counter)
     placements_with_known_unit_types: int = 0
     placement_head_gaps: Counter = field(default_factory=Counter)
 
@@ -393,9 +396,11 @@ def parse_event_stream(data: bytes, record: Record) -> EventStream:
 
     Measured: the 2026-08-16 library pass saw 5,547 marker hits and rejected
     265. The measured chain (2026-09-29, `--scan`) has 602 hits and 10 rejects,
-    all `track_zero`; on every one of them the head unit's byte +7 is 0x88, not
-    the 0x00 a placement head carries -- which is why that byte is a structural
+    all `track_zero`, and on every one of them the head unit's byte +7 is 0x88
+    (`rejected_marker_head_byte`), not the 0x00 all 592 accepted heads carry.
+    That byte is also the high byte of the position, so it is a structural
     collision filter the Rust port can add once the library re-run confirms it.
+    This script counts it and does not yet filter on it.
     """
     start = record.offset + RECORD_HEADER_LEN
     payload = data[start : start + record.payload_size]
@@ -417,18 +422,21 @@ def parse_event_stream(data: bytes, record: Record) -> EventStream:
         if i + PLACEMENT_GROUP_LEN > len(payload):
             # A group truncated by the end of the payload: count it, do not
             # invent fields for it.
-            stream.rejects["truncated"] += 1
-            continue
-        track = payload[i + PLACEMENT_TRACK_OFFSET]
-        position = _u32(payload, i + PLACEMENT_POSITION_OFFSET)
-        if track < 1:
-            stream.rejects["track_zero"] += 1
-            continue
-        if position < REGION_TIME_ORIGIN:
-            stream.rejects["before_origin"] += 1
-            continue
-        if position > max_position:
-            stream.rejects["beyond_max_bar"] += 1
+            reason = "truncated"
+        else:
+            track = payload[i + PLACEMENT_TRACK_OFFSET]
+            position = _u32(payload, i + PLACEMENT_POSITION_OFFSET)
+            if track < 1:
+                reason = "track_zero"
+            elif position < REGION_TIME_ORIGIN:
+                reason = "before_origin"
+            elif position > max_position:
+                reason = "beyond_max_bar"
+            else:
+                reason = None
+        if reason is not None:
+            stream.rejects[reason] += 1
+            stream.rejected_head_types[payload[i + EVENT_TYPE_BYTE]] += 1
             continue
         unit_types = tuple(
             payload[i + unit + EVENT_TYPE_BYTE]
@@ -482,6 +490,7 @@ def parse(data: bytes, strict: bool = True) -> Song:
             song.placements.extend(stream.placements)
             song.event_type_counts.update(stream.type_counts)
             song.placement_rejects.update(stream.rejects)
+            song.rejected_marker_head_types.update(stream.rejected_head_types)
             song.placements_with_known_unit_types += stream.placements_with_known_unit_types
             song.placement_head_gaps.update(stream.head_gaps)
             song.event_streams_with_one_terminator += stream.terminators == 1
@@ -672,10 +681,19 @@ def report_map(song: Song) -> list[str]:
             % (song.placements_with_known_unit_types, len(song.placements)),
             "  gaps between consecutive placement heads, bytes: %s"
             % (_histogram(song.placement_head_gaps, "%d") or "none"),
-            "  placement markers rejected: %d (%s)"
+            "  placement +0x10 values: %d distinct over %d placements on %d tracks,"
+            " %d distinct (value, track) pairs"
+            % (
+                len({p.event_id for p in song.placements}),
+                len(song.placements),
+                len({p.track for p in song.placements}),
+                len({(p.event_id, p.track) for p in song.placements}),
+            ),
+            "  placement markers rejected: %d (%s); their head byte +7: %s"
             % (
                 song.placement_markers_rejected,
                 ", ".join("%s %d" % (r, song.placement_rejects[r]) for r in REJECT_REASONS),
+                _histogram(song.rejected_marker_head_types, "%02x") or "none",
             ),
         ]
     )
@@ -812,18 +830,23 @@ SCAN_COUNTERS = (
     *("placement_markers_rejected_%s" % r for r in REJECT_REASONS),
     "saves_with_declared_track_count",
     "saves_track_count_within_declared",
+    "region_uuids_seen_in_2plus_saves_of_a_bundle",
+    "region_uuids_changing_family_across_saves",
 )
 
 
 def scan_library(root: Path) -> dict:
     """Aggregate decode rates over a library. Never records a path or a name.
 
-    Returns the SCAN_COUNTERS as ints, plus two histograms: `event_type_byte`
-    (byte +7 of every 16-byte unit, keyed `0x..`) and `placement_head_gap_bytes`
-    (distance between consecutive placement heads in one payload).
+    Returns the SCAN_COUNTERS as ints, plus three histograms: `event_type_byte`
+    (byte +7 of every 16-byte unit, keyed `0x..`), `rejected_marker_head_byte`
+    (byte +7 of the head unit of every rejected marker hit) and
+    `placement_head_gap_bytes` (distance between consecutive placement heads in
+    one payload).
     """
     totals: dict = dict.fromkeys(SCAN_COUNTERS, 0)
     type_bytes: Counter = Counter()
+    rejected_heads: Counter = Counter()
     head_gaps: Counter = Counter()
     bundles = sorted(
         p
@@ -833,6 +856,8 @@ def scan_library(root: Path) -> dict:
     )
     for bundle in bundles:
         totals["bundles"] += 1
+        family_of: dict[str, set[int]] = defaultdict(set)
+        saves_holding: Counter = Counter()
         for save in saves_in(bundle):
             totals["saves"] += 1
             try:
@@ -876,14 +901,27 @@ def scan_library(root: Path) -> dict:
                 + [p.tick // TICKS_PER_BAR + 1 for p in song.placements]
             )
             type_bytes.update(song.event_type_counts)
+            rejected_heads.update(song.rejected_marker_head_types)
             head_gaps.update(song.placement_head_gaps)
+            for region in song.regions:
+                family_of[region.uuid].add(region.family)
+            saves_holding.update({r.uuid for r in song.regions})
             declared = declared_track_count(save)
             if declared is not None:
                 totals["saves_with_declared_track_count"] += 1
                 highest = max((p.track for p in song.placements), default=0)
                 if highest <= declared:
                     totals["saves_track_count_within_declared"] += 1
+        totals["region_uuids_seen_in_2plus_saves_of_a_bundle"] += sum(
+            1 for n in saves_holding.values() if n > 1
+        )
+        totals["region_uuids_changing_family_across_saves"] += sum(
+            1 for families in family_of.values() if len(families) > 1
+        )
     totals["event_type_byte"] = {"0x%02x" % k: type_bytes[k] for k in sorted(type_bytes)}
+    totals["rejected_marker_head_byte"] = {
+        "0x%02x" % k: rejected_heads[k] for k in sorted(rejected_heads)
+    }
     totals["placement_head_gap_bytes"] = {str(k): head_gaps[k] for k in sorted(head_gaps)}
     return totals
 
@@ -892,6 +930,8 @@ def format_scan(totals: dict) -> list[str]:
     lines = ["%-44s %d" % (key, totals[key]) for key in SCAN_COUNTERS]
     lines.append("event_type_byte (%d distinct)" % len(totals["event_type_byte"]))
     lines.extend("  %-42s %d" % kv for kv in totals["event_type_byte"].items())
+    lines.append("rejected_marker_head_byte")
+    lines.extend("  %-42s %d" % kv for kv in totals["rejected_marker_head_byte"].items())
     lines.append("placement_head_gap_bytes")
     lines.extend("  %-42s %d" % kv for kv in totals["placement_head_gap_bytes"].items())
     return lines
