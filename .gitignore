@@ -88,6 +88,12 @@ venv/
 node_modules/
 npm-debug.log*
 
+# --- app/ (Tauri 2 + Svelte UI shell, Wave 1 "ui-shell" lane) ---
+app/dist/
+app/src-tauri/target/
+app/src-tauri/gen/
+app/.vite/
+
 # --- Build / scratch ---
 /dist/
 /build/

@@ -1,0 +1,36 @@
+[workspace]
+# Its OWN Cargo workspace (CONTRIBUTING.md: "the root workspace is crates/*
+# only, forever" — app/ gets its own so a root member that doesn't exist
+# yet never breaks `cargo` for anyone working on the crates, and Tauri
+# doesn't compile on the ubuntu CI leg without webkit2gtk system deps).
+members = ["."]
+
+[package]
+name = "wit-app"
+version = "0.0.0"
+description = "Wit desktop app: the Tauri 2 shell around the Story contract (crates/wit-story)."
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+rust-version = "1.97"
+
+[lib]
+name = "wit_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[lints.rust]
+unsafe_code = "deny"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-positioner = { version = "2", features = ["tray-icon"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Local offset only (Clock::fixed's utc_offset_minutes) — never anything
+# network-facing (ADR-0008: no network code in the app).
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+dirs = "7"
+wit-story = { path = "../../crates/wit-story" }

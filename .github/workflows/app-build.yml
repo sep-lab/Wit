@@ -1,26 +1,34 @@
 # Wit app build — cross-platform Tauri 2 packaging (PLAN-V2 Phase D / Phase F).
 #
-# This is a SKELETON until the Tauri app lands. Wave 1's UI-shell lane
-# scaffolds `app/` (Svelte 5 + Vite + TS) and `app/src-tauri` (its own Cargo
-# workspace, path-deps on crates/* — see CONTRIBUTING.md: "the root workspace
-# is crates/* only, forever"). Every leg's first step below checks for
-# `app/src-tauri/Cargo.toml`; if it is missing, the job emits a `::notice::`
-# and exits successfully. A green no-op, not a failure — so this workflow can
-# be reviewed, merged, and exercised by its own PR before the app it builds
-# exists at all.
+# The Wave 1 "ui-shell" lane scaffolds `app/` (Svelte 5 + Vite + TS) and
+# `app/src-tauri` (its own Cargo workspace, path-deps on crates/* — see
+# CONTRIBUTING.md: "the root workspace is crates/* only, forever"). Every
+# leg's first step still checks for `app/src-tauri/Cargo.toml` and, if it's
+# ever missing again (a revert, a rebase gone wrong), emits a `::notice::`
+# and exits successfully rather than failing — a green no-op, not a red
+# build, so this workflow staying in the tree never blocks unrelated work.
 #
-# Once the app exists, every OS produces an UNSIGNED bundle, by decision
-# (ADR-0008, coming — no Apple Developer ID and no code-signing certificate
-# yet; see `justfile`'s `release-unsigned`/`release-signed` and the pilot plan
-# in PLAN-V2 Phase F). macOS still gets an ad-hoc signature (`codesign -s -`),
+# With the app in place, every OS produces an UNSIGNED bundle, by decision
+# (ADR-0008 — no Apple Developer ID and no code-signing certificate; see
+# `justfile`'s `release-unsigned`/`release-signed` and the pilot plan in
+# PLAN-V2 Phase F). macOS still gets an ad-hoc signature (`codesign -s -`),
 # because Apple Silicon refuses to launch an unsigned .app at all — that is
 # not the same thing as a real signature, and PILOT.md's Gatekeeper /
 # SmartScreen walkthroughs are still required for pilot recipients on every
 # OS.
 #
+# Before any bundle is built, every leg runs the same checks: `npm run
+# check` (svelte-check + tsc), `npm test` (vitest), `npm run lint:vocab`
+# (the banned-vocabulary lint over app/src), and a type-staleness check
+# (`npm run gen:types` must not change `src/lib/story.ts` — that file is
+# generated from `crates/wit-story/schema/library.schema.json` and is
+# committed, so a schema change with a stale generated file fails the
+# build instead of silently drifting).
+#
 # NOT yet in ci.yml's `ci-ok` `needs:` — see the comment above that job. It
-# becomes required there once app/src-tauri exists and this build is
-# reliably green, not before.
+# becomes required there once this build is reliably green on all three
+# OSes across a few PRs, not before (see this PR's body for which OSes are
+# green today).
 
 name: App build
 
@@ -89,6 +97,16 @@ jobs:
           # not read rust-toolchain.toml, so the pin is repeated explicitly.
           toolchain: "1.97"
 
+      - name: cargo fmt --check (app/src-tauri)
+        if: steps.detect.outputs.exists == 'true'
+        working-directory: app/src-tauri
+        run: cargo fmt --check
+
+      - name: cargo clippy (app/src-tauri)
+        if: steps.detect.outputs.exists == 'true'
+        working-directory: app/src-tauri
+        run: cargo clippy --all-targets --locked -- -D warnings
+
       - name: Install Node 22
         if: steps.detect.outputs.exists == 'true'
         uses: actions/setup-node@v4
@@ -99,6 +117,31 @@ jobs:
         if: steps.detect.outputs.exists == 'true'
         working-directory: app
         run: npm ci
+
+      - name: svelte-check + tsc
+        if: steps.detect.outputs.exists == 'true'
+        working-directory: app
+        run: npm run check
+
+      - name: vitest
+        if: steps.detect.outputs.exists == 'true'
+        working-directory: app
+        run: npm test
+
+      - name: Banned-vocabulary lint
+        if: steps.detect.outputs.exists == 'true'
+        working-directory: app
+        run: npm run lint:vocab
+
+      - name: Generated types are not stale
+        if: steps.detect.outputs.exists == 'true'
+        working-directory: app
+        run: |
+          npm run gen:types
+          git diff --exit-code -- src/lib/story.ts || {
+            echo "::error::src/lib/story.ts is stale — run 'npm run gen:types' in app/ and commit the result."
+            exit 1
+          }
 
       - name: tauri build (macOS .app)
         if: steps.detect.outputs.exists == 'true' && runner.os == 'macOS'
