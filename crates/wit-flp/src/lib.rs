@@ -24,9 +24,9 @@
 //!
 //! **≤ v24 is fully supported, across two different real on-disk shapes.**
 //! FL Studio changed how a channel's own name is stored somewhere between
-//! FL 11.1.0 and FL 12.3.0 (measured on real files; see `extract.rs`'s
-//! `NEW_CHANNEL_SCHEME_MIN_MAJOR` doc for the exact evidence and the
-//! unmeasured 11.2–11.9 gap) — this crate reads whichever shape the file's
+//! FL 11.1.0 and FL 11.5.14 (measured on real files; see `extract.rs`'s
+//! `NEW_CHANNEL_SCHEME_MIN_VERSION` doc for the exact evidence and the
+//! unmeasured 11.2–11.4 gap) — this crate reads whichever shape the file's
 //! own declared version says it should have, rather than assuming one
 //! scheme for every version the way this crate's first pass did.
 //!
@@ -61,15 +61,17 @@
 //!    without a chicken-and-egg re-walk, and the measured evidence that
 //!    makes doing so low-priority anyway.
 //! 2. **`extract.rs`: which id holds a channel's name depends on the
-//!    file's FL major version** — a real-material check across FL
-//!    8.5–25.2 (see `NEW_CHANNEL_SCHEME_MIN_MAJOR`'s doc) found this
-//!    crate's first pass, which read id 192 (`ChanName`) on every
-//!    version, was wrong for FL >= 12: that id is either absent (FL
-//!    12–24) or holds the FL Studio build string, not a channel name
-//!    (v25). The real channel name on FL >= 12 is the first `PluginName`
-//!    (203) inside each channel's own `NewChan` (64) block — verified by
-//!    an exact match against the file's declared channel count on 42 real
-//!    FL 12–20 files plus all 5 real v25 fixtures checked.
+//!    file's FL version** — a real-material check across FL 8.5–25.2 (see
+//!    `NEW_CHANNEL_SCHEME_MIN_VERSION`'s doc) found this crate's first
+//!    pass, which read id 192 (`ChanName`) on every version, was wrong
+//!    from FL 11.5 onward: that id is either absent (FL 11.5–24) or holds
+//!    the FL Studio build string, not a channel name (v25). The real
+//!    channel name from FL 11.5 onward is the first `PluginName` (203)
+//!    inside each channel's own `NewChan` (64) block — verified by an
+//!    exact match against the file's declared channel count on 50 of 51
+//!    real FL 11.5–20/25 files checked (the one exception, a real FL
+//!    20.0.3 file, is short 2 of 74 channel names that appear to be
+//!    genuinely blank in that file — an absence, not a wrong name).
 //! 3. **`extract.rs`: tempo (id 156) and a best-effort arrangement name
 //!    (id 241) are new** — neither is decoded as a *semantic* field by
 //!    the prototype (which only ever prints one generic, unlabelled text
@@ -113,7 +115,7 @@ mod tests {
         // FL >= 12 shape, byte for byte as measured on real files this
         // session: NewChan (64, word), DefPluginName (201, empty --
         // a plain Sampler channel), PluginName (203, the channel's own
-        // display name) -- see extract.rs's NEW_CHANNEL_SCHEME_MIN_MAJOR.
+        // display name) -- see extract.rs's NEW_CHANNEL_SCHEME_MIN_VERSION.
         let mut events = Vec::new();
         events.push(199u8); // Version, latin-1
         let version = b"20.8.3.2304\0";

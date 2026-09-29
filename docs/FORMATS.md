@@ -491,20 +491,25 @@ material, per AGENTS.md), and a wider read-only spot-check against 61 files span
 projects, off-repository, never committed).
 
 - **Which event id holds a channel's own name changed somewhere between FL 11.1.0 and FL
-  12.3.0 — [verified], and the first pass of this work got it wrong for every version at
+  11.5.14 — [verified], and the first pass of this work got it wrong for every version at
   or after that change.** That first pass read every channel's name from event id 192
   (`ChanName`) on every version, matching both `flp_parse.py`'s `EVENT_NAMES` table and
-  the one FL 10.0.0 file then available. Checked against 42 real FL 12–20 files plus all
-  5 real v25 files, id 192 is either absent outright (FL 12–24: zero occurrences on every
-  file checked) or holds something that is not a channel name at all — the literal string
-  `"FL Studio 25.2.5.5055.5055"` (the app's own build string) on every one of the 5 v25
-  files. The real channel name on FL 12 and later is the **first `PluginName` (id 203)
-  inside each channel's own `NewChan` (id 64) block** — verified by an exact match against
-  the file's own declared channel count (`FLhd.channels`) on all 47 of those files. FL
-  11.2–11.9 was not available to check, so the exact version boundary is inferred from
-  that gap rather than pinned exactly.
+  the one FL 10.0.0 file then available. It was set at "FL 12+" in a first correction,
+  reasoning from a 42-file check that started at FL 12.3.0 and a real FL 11.1.0 file that
+  still had names on id 192; a wider 61-file check (spanning FL 8.5–20.8) found the
+  cutover is earlier still — two real FL 11.5.x files already use the newer scheme. Across
+  that wider check, id 192 is either absent outright (FL 11.5–24: zero occurrences on
+  every file checked) or holds something that is not a channel name at all — the literal
+  string `"FL Studio 25.2.5.5055.5055"` (the app's own build string) on every one of 5 real
+  v25 files. The real channel name from FL 11.5 onward is the **first `PluginName` (id
+  203) inside each channel's own `NewChan` (id 64) block** — verified by an exact match
+  against the file's own declared channel count (`FLhd.channels`) on 50 of 51 of those
+  files. The one exception (a real FL 20.0.3 file) is short 2 of 74 channel names that
+  appear to be genuinely blank in that file, not a wrong name. FL 11.2–11.4 was not
+  available to check, so the exact version boundary is inferred from that narrower gap
+  rather than pinned exactly.
 - **`DefPluginName` (id 201) and `PluginName` (id 203) do not both mean "a plugin name" —
-  [verified], correcting an earlier version of this note.** On FL 12+, `PluginName` is the
+  [verified], correcting an earlier version of this note.** From FL 11.5 onward, `PluginName` is the
   channel's own display name (see above), not a second plugin name; a first pass of
   `wit-flp` merged both ids into one "plugin names" list, which meant every channel added
   or renamed was reported as two spurious "plugin added"/"plugin removed" lines instead of

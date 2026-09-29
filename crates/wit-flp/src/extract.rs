@@ -18,7 +18,7 @@
 //! something that is not a channel name at all — the literal string
 //! `"FL Studio 25.2.5.5055.5055"` on every one of 5 real v25 files
 //! checked. [`extract`] therefore branches on the FL major version — see
-//! [`NEW_CHANNEL_SCHEME_MIN_MAJOR`] — and the two eras get two different,
+//! [`NEW_CHANNEL_SCHEME_MIN_VERSION`] — and the two eras get two different,
 //! independently verified extraction paths. See each constant's doc
 //! comment for the specific evidence.
 
@@ -28,13 +28,13 @@ use std::fmt;
 /// `NewChan` — marks the start of a new channel in the event stream.
 /// Present in every FL version checked; only meaningful (as a block
 /// boundary) under the new channel-name scheme — see
-/// [`NEW_CHANNEL_SCHEME_MIN_MAJOR`].
+/// [`NEW_CHANNEL_SCHEME_MIN_VERSION`].
 const NEW_CHAN: u8 = 64;
 /// `ChanName` — a channel's display name, but **only on FL < 12**.
 /// Verified on real files: decodes real names (`"Kick"`, `"Xtra Bass"`,
 /// `"Clap"`, ...) on every real fixture checked from FL 8.5.0 through FL
 /// 11.1.0. **Never read as a channel name on FL >= 12 or v25** — see
-/// [`NEW_CHANNEL_SCHEME_MIN_MAJOR`]'s doc for why: it is absent outright
+/// [`NEW_CHANNEL_SCHEME_MIN_VERSION`]'s doc for why: it is absent outright
 /// on FL 12–24, and something else entirely (the FL Studio build string)
 /// on v25.
 const CHAN_NAME: u8 = 192;
@@ -51,41 +51,49 @@ const VERSION: u8 = 199;
 /// (e.g. `"Fruity Wrapper"`, `"FPC"`, `"Harmor"`, `"Sytrus"`). Verified on
 /// real files across every FL era checked (8.5 through 25.2.5): this
 /// field's meaning did not change, only how it is scoped to a channel
-/// did (see [`NEW_CHANNEL_SCHEME_MIN_MAJOR`]). Empty for a plain Sampler
+/// did (see [`NEW_CHANNEL_SCHEME_MIN_VERSION`]). Empty for a plain Sampler
 /// channel with no separate plugin/generator — measured on real FL 20/25
 /// files: a channel using nothing but FL's built-in sampler carries a
 /// zero-length `DefPluginName`, so an empty payload here is a real "no
 /// plugin" fact, not a decode failure, and [`push_text`]'s blank-drop
 /// behaviour is exactly what is wanted for it.
 const DEF_PLUGIN_NAME: u8 = 201;
-/// `PluginName` — **on FL >= 12, this is the channel's own display name**
-/// (e.g. `"808 Kick"`, `"FLEX Bass"`, `"Drumpad"`, `"clapBuildup"`),
+/// `PluginName` — **on FL >= 11.5, this is the channel's own display
+/// name** (e.g. `"808 Kick"`, `"FLEX Bass"`, `"Drumpad"`, `"clapBuildup"`),
 /// appearing once per channel immediately after that channel's
 /// [`NEW_CHAN`]/[`DEF_PLUGIN_NAME`] pair — verified by cross-checking the
 /// count of "first `PluginName` after each `NewChan`" against the file's
-/// own declared channel count (`FLhd.channels`) on 42 real FL 12–20 files
-/// plus all 5 real v25 files in this crate's `WIT_FIXTURES` corpus: an
-/// exact match, every time, on every file. **On FL < 12 this id is never
-/// read at all** in the current extraction — real files from that era do
-/// not show it appearing tightly bound to `NewChan` the way FL >= 12
-/// does, so treating it as a channel name there is unverified; genuine
-/// pre-12 channel names come from [`CHAN_NAME`] instead.
+/// own declared channel count (`FLhd.channels`) on 46 real FL 11.5–20
+/// files plus all 5 real v25 files in this crate's `WIT_FIXTURES` corpus:
+/// an exact match on 50 of those 51 files. The one exception (a real FL
+/// 20.0.3 file) is short by 2 of 74 channels — both apparently have a
+/// genuinely empty `PluginName` in that file, which this crate's blank-
+/// text drop (see [`push_text`]) correctly omits rather than reports as
+/// an empty string; this is an absence, not a wrong attribution. **Below
+/// FL 11.5 this id is never read at all** in the current extraction —
+/// real files from that era do not show it appearing tightly bound to
+/// `NewChan` the way FL >= 11.5 does, so treating it as a channel name
+/// there is unverified; genuine pre-11.5 channel names come from
+/// [`CHAN_NAME`] instead.
 const PLUGIN_NAME: u8 = 203;
-/// The FL major version at and after which channel names are read from
-/// [`PLUGIN_NAME`] inside a [`NEW_CHAN`] block, and [`CHAN_NAME`] is never
-/// read as a channel name at all. **Measured boundary, not a documented
-/// one:** every real fixture checked at FL 11.1.0 and below has real
-/// channel names on id 192 and no `NewChan`-then-`PluginName` pattern;
-/// every real fixture checked at FL 12.3.0 and above (43 files) plus
-/// every FL 20/25 fixture in `WIT_FIXTURES` has the new pattern and zero
-/// occurrences of id 192 (v25 is the one exception that has a non-zero,
-/// non-channel-name occurrence of it — see [`CHAN_NAME`]). **FL
-/// 11.2–11.9 was never observed** (no fixture available in that exact
-/// range), so this constant is a boundary chosen to match that gap
-/// conservatively — a file that reports itself as FL 11.2–11.9 falls back
-/// to the pre-12 (`ChanName`) path here, which is untested for that
-/// specific range rather than wrong by measurement.
-const NEW_CHANNEL_SCHEME_MIN_MAJOR: u32 = 12;
+/// The FL (major, minor) version at and after which channel names are
+/// read from [`PLUGIN_NAME`] inside a [`NEW_CHAN`] block, and
+/// [`CHAN_NAME`] is never read as a channel name at all. **Measured
+/// boundary, not a documented one, and narrower than an earlier pass of
+/// this crate assumed.** A first check (against 42 real FL 12–20 files
+/// plus 5 v25 files) set this at major version 12, reasoning that
+/// FL 11.1.0 still had real channel names on id 192. A wider check (61
+/// real files spanning FL 8.5–20.8) found the actual cutover is earlier:
+/// FL 11.5.14 and 11.5.16 *already* use the `NewChan`-then-`PluginName`
+/// pattern, with an exact match against their own declared channel
+/// counts, and *zero* occurrences of id 192 — while FL 11.1.0 still has
+/// real names on id 192 and no such pattern. **FL 11.2–11.4 was never
+/// observed** (no fixture available in that exact range), so `(11, 5)` is
+/// a boundary chosen to match that narrower gap conservatively — a file
+/// reporting itself as FL 11.2–11.4 falls back to the pre-11.5
+/// (`ChanName`) path here, which is untested for that specific range
+/// rather than wrong by measurement.
+const NEW_CHANNEL_SCHEME_MIN_VERSION: (u32, u32) = (11, 5);
 /// `InsertName` — a mixer insert's display name (only present when a user
 /// renamed it from FL's default numbered name). Verified: decodes real
 /// insert names (`"Dream bell"`, `"REC"`) on two real pre-v25 fixtures
@@ -176,10 +184,23 @@ fn is_v25_or_later(version: &str) -> bool {
     major_version(version).is_some_and(|major| major >= 25)
 }
 
-/// Whether `version` uses the new (FL >= 12) channel-name scheme — see
-/// [`NEW_CHANNEL_SCHEME_MIN_MAJOR`].
+/// The leading `(major, minor)` version components of `version` (e.g.
+/// `"11.5.14"` -> `Some((11, 5))`), or `None` if the major component isn't
+/// a plain integer. A missing or unparseable minor component defaults to
+/// `0` rather than failing the whole parse — real FL version strings
+/// always have one, but a truncated or hand-written one shouldn't be
+/// treated worse than "assume the oldest sub-version of that major".
+fn major_minor_version(version: &str) -> Option<(u32, u32)> {
+    let mut parts = version.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next().and_then(|m| m.parse().ok()).unwrap_or(0);
+    Some((major, minor))
+}
+
+/// Whether `version` uses the new channel-name scheme — see
+/// [`NEW_CHANNEL_SCHEME_MIN_VERSION`].
 fn uses_new_channel_scheme(version: &str) -> bool {
-    major_version(version).is_some_and(|major| major >= NEW_CHANNEL_SCHEME_MIN_MAJOR)
+    major_minor_version(version).is_some_and(|v| v >= NEW_CHANNEL_SCHEME_MIN_VERSION)
 }
 
 /// A tempo reading, honest about the one case it cannot trust.
@@ -240,7 +261,7 @@ pub struct Extracted {
     /// One name per channel, in channel order. Sourced from [`CHAN_NAME`]
     /// on FL < 12, or from the first [`PLUGIN_NAME`] inside each
     /// [`NEW_CHAN`] block on FL >= 12 — see
-    /// [`NEW_CHANNEL_SCHEME_MIN_MAJOR`]. Not deduplicated — a project can
+    /// [`NEW_CHANNEL_SCHEME_MIN_VERSION`]. Not deduplicated — a project can
     /// genuinely have two channels with the same name, and that is a fact
     /// about the project, not noise to collapse.
     pub channel_names: Vec<String>,
@@ -526,6 +547,17 @@ mod tests {
     }
 
     #[test]
+    fn fl_11_5_also_uses_the_new_channel_scheme() {
+        // Regression: real FL 11.5.14/11.5.16 fixtures use the new
+        // scheme too, not just FL 12+ -- this must not regress to zero
+        // channel names for that version.
+        let mut events = vec![latin1_text(199, "11.5.14")];
+        events.push(new_scheme_channel("Ghost Kick"));
+        let e = extracted_of(events);
+        assert_eq!(e.channel_names, vec!["Ghost Kick".to_string()]);
+    }
+
+    #[test]
     fn fl12_plus_never_reads_192_as_a_channel_name() {
         // Measured this session: on v25, id 192 holds the FL Studio build
         // string, not a channel name; on FL 12-24 it does not appear at
@@ -647,10 +679,25 @@ mod tests {
     }
 
     #[test]
-    fn new_channel_scheme_boundary_is_major_12() {
-        assert!(!uses_new_channel_scheme("11.9.9.9999"));
+    fn new_channel_scheme_boundary_is_11_5() {
+        // Measured this session: real FL 11.1.0 fixtures use the old
+        // (ChanName) scheme; real FL 11.5.14/11.5.16 fixtures already
+        // use the new (NewChan/PluginName) one -- an earlier pass of this
+        // constant was set at major version 12, which silently produced
+        // zero channel names on those two real 11.5.x files.
+        assert!(!uses_new_channel_scheme("11.1.0"));
+        assert!(!uses_new_channel_scheme("11.4.9.9999"));
+        assert!(uses_new_channel_scheme("11.5.14"));
+        assert!(uses_new_channel_scheme("11.5.16"));
         assert!(uses_new_channel_scheme("12.0.0.0"));
         assert!(uses_new_channel_scheme("25.2.5.5055"));
+    }
+
+    #[test]
+    fn major_minor_version_defaults_a_missing_minor_to_zero() {
+        assert_eq!(major_minor_version("11"), Some((11, 0)));
+        assert_eq!(major_minor_version("11.5.14"), Some((11, 5)));
+        assert_eq!(major_minor_version("not-a-version"), None);
     }
 
     #[test]
