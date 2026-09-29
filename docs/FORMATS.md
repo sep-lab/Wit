@@ -178,8 +178,10 @@ boundaries, not 4 (the length at `+0x3A`, the name length at `+0x6E`).
 **Material and dates.** Unless a figure says otherwise it was measured with
 `experiments/logic_region_map.py` on the 10-save chain of the `You make my crazy!` fixture
 ([EXPERIMENTS.md §0](EXPERIMENTS.md)), re-measured **2026-09-29**; "backup 00" is that
-chain's oldest save. Library-wide figures come from the **2026-08-16** `--scan` of the
-32-project library and say so. Per-figure reproduction commands are in
+chain's oldest save. Library-wide figures come from `logic_region_map.py --scan` over one
+person's **Logic library — 42 `.logicx`/`.band` bundles, 206 saves (the scan does not split
+the two kinds) — run 2026-09-29** with the corrected script,
+and say so. Per-figure reproduction commands are in
 [EXPERIMENTS.md §12](EXPERIMENTS.md#12-logic-region-payloads--which-region-and-where-it-went).
 
 **Upstream.** This section corrects and extends §3, §8 and §8.1 of
@@ -191,7 +193,7 @@ Where they agree it says so below; where they differ, the difference is stated.
 
 | Offset | Type | Meaning |
 |---|---|---|
-| `+0x08` | u32 | `familyIndex << 18`. Low 18 bits are zero on 903/903 records of the chain; no region's family index changes between saves (0 of 96). Upstream §8.1 documents the same `index << 18` encoding. |
+| `+0x08` | u32 | `familyIndex << 18`. Low 18 bits are zero on 903/903 records of the chain. No region's family index changes between saves: 0 of 96 on the chain, 0 of the library's 3,121 UUIDs seen in 2+ saves. Upstream §8.1 documents the same `index << 18` encoding. |
 | `+0x3A` | u32 | Region length, in frames **of the source file's sample rate** (upstream §8: payload `+0x16`, the same field) |
 | `+0x6E` | u16 | Name length, in bytes (upstream §8: payload `+0x4a`, the same field) |
 | `+0x70` | UTF-8 | Name, padded to an even length — decode as UTF-8, see below |
@@ -232,15 +234,26 @@ by only four bytes outside name and UUID; that did not reproduce — a byte-comp
 same-size sibling records on backup 00, done by hand and not by a script mode, found 2
 to 25 differing bytes — and the claim is withdrawn.
 
-> Every `qSvE` payload is a grid of **16-byte units**: 13,606 of 13,606 payloads in the
-> 32-project library (2026-08-16) and 1,550 of 1,550 on the chain are an exact multiple
-> of 16. On the chain every payload holds exactly one terminator unit
-> (`f1 00 00 00 ff ff ff 3f` + 8 zero bytes, the tail upstream §3 documents), always its
-> last (1,550/1,550); library-wide that is unmeasured until the re-run.
+> Every `qSvE` payload is a grid of **16-byte units**: 22,500 of 22,500 payloads in the
+> library and 1,550 of 1,550 on the chain are an exact multiple of 16. The terminator unit
+> is `f1 00 00 00 ff ff ff 3f` + 8 zero bytes, the tail upstream §3 documents. `--scan`
+> counts two things about it separately:
+>
+> - payloads holding exactly one terminator unit;
+> - payloads whose last unit is the terminator.
+>
+> On the chain both are 1,550 of 1,550, so every chain payload does both. In the library
+> each is **22,480 of 22,500**. The scan does not count payloads that satisfy both, so
+> that the same 22,480 do is **[inferred]**. Why the other 20 differ is **open** (below).
 
 Byte `+7` of each unit behaves like a type code — **[inferred]**; nothing here interprets
-it. Backup 00 carries **12** distinct values: `00 3f 88 89 8a a3 a4 a7 aa b2 bb bc`. `3f`
-occurs only on the terminator (1,550 `3f` units and 1,550 terminators on the chain). Upstream §3 gives fixed event sizes
+it. Backup 00 carries **12** distinct values: `00 3f 88 89 8a a3 a4 a7 aa b2 bb bc`; the
+library carries **21**, adding `85 8d a0 af b1 b3 b4 b8 be`. On the chain `3f` occurs only
+on the terminator. Every one of the 1,550 payloads holds exactly one terminator unit, so
+there are 1,550 terminator units, and there are 1,550 `3f` units in all. The library has
+22,500 `3f` units, but the scan does not count terminator *units* (only the two payload
+counters above), so whether `3f` appears outside the terminator there is **unmeasured**.
+Upstream §3 gives fixed event sizes
 (tempo 32 B, signature and marker 48 B) and §8.1 80-byte placement events; all are
 multiples of 16, consistent with the grid, which is the one invariant that held on every
 payload measured.
@@ -250,52 +263,97 @@ Within the group:
 
 | Offset | Type | Meaning |
 |---|---|---|
-| `+0x04` | u32 | Position = `34560 + tick@960` (regions use origin 34560, tempo/markers 38400). Its **high byte `+0x07` is also the head unit's byte `+7`**: `0x00` on every placement head measured (592/592). |
+| `+0x04` | u32 | Position = `34560 + tick@960` (regions use origin 34560, tempo/markers 38400). Its **high byte `+0x07` is also the head unit's byte `+7`**: `0x00` on every accepted placement head (9,142/9,142 in the library). |
 | `+0x10` | u32 | Upstream §8.1 calls it a per-region id. **Not a per-placement key** — on backup 00 the 56 placements carry 30 distinct values, one per occupied track (30 tracks, 30 distinct value/track pairs). Do not key on it. |
 | `+0x14` | u8 | **Track number, 1-based** |
 | `+0x2c` | u32 | Region link; `link / 4` == `familyIndex` (upstream §8.1 agrees) |
 
-**The unit types are a structural collision filter.** The three units of every placement
-group carry byte `+7` = `00` / `89` / `bc` (56/56 on backup 00, 592/592 on the chain).
-Every rejected marker hit on the chain has a head byte `+7` of `0x88` (10/10), and any
-position at or past bar 4,362 (2²⁴ ticks) puts a nonzero value in that same byte. So checking head
-byte `+7 == 0x00` separates placements from collisions without a bar bound. The script
-**counts** this (`placements_with_unit_types_00_89_bc`, `rejected_marker_head_byte`) but
-does not yet filter on it: it is unmeasured library-wide, and a filter that drops a
-genuine placement is worse than a collision the track and range checks already reject.
+**The unit types are a structural collision filter.** The three units of every accepted
+placement group carry byte `+7` = `00` / `89` / `bc`: 56/56 on backup 00, 592/592 on the
+chain, **9,142/9,142 in the library**. No rejected marker hit has `00` there: the library's
+346 rejects carry `88` (180), `89` (143) or `bc` (23). On the chain all 10 rejects carry
+`88`, as the previous version of this section said, scoped to the chain. The library shows
+other values too, so the property to rely on is "never `00`", not "always `88`". Any
+position at or past bar 4,362
+(2²⁴ ticks) would put a nonzero value in that same byte. So checking head byte
+`+7 == 0x00` separated every accepted placement from every reject in the library, with no
+bar bound. The script **counts** this (`placements_with_unit_types_00_89_bc`,
+`rejected_marker_head_byte`) and does not filter on it; the Rust port can.
 
 **No fixed stride.** Upstream §8.1 models placement events as 80 bytes, `0x50` apart —
 true of its 3-region fixture. On backup 00 the 55 gaps between consecutive placement heads
-are 160, 240 (46 of them), 320, 480, 720 and 1,440 bytes. Every gap is a multiple of 80,
-but a placement is followed by one or more non-placement 80-byte blocks, so a reader that
-takes every 80-byte block for a placement event mis-reads two of every three blocks at the
-commonest, 240-byte, spacing. Find heads by the marker on the 16-byte grid; do not stride.
+are 160, 240 (46 of them), 320, 480, 720 and 1,440 bytes, all multiples of 80. Across the
+library the 8,873 gaps take 37 sizes from 80 to 11,120 bytes — 160 is the commonest
+(4,306), then 80 (2,052) and 240 (1,510) — and **15 gaps (1,776, 2,176 and 2,976 bytes) are
+not multiples of 80 at all**. So what held on backup 00's 55 gaps does not hold
+library-wide. Every gap is a multiple of 16. Find heads by the marker on the 16-byte grid;
+do not stride.
 
-**Decode rates.** Library-wide, 2026-08-16: 132/132 saves walked to clean EOF;
-5,282/5,282 placements resolved to a region family; 132/132 saves had every decoded track
-number within that save's `MetaData.plist` `NumberOfTracks`; 4,995 of 5,282 placements
-landed on the 960-tick grid. The rest are **[inferred]** to be regions placed with snap
-off — none was checked against Logic's display, and the chain has none to check (592/592
-on the grid). That pass also decoded **10,020** `gRuA` records, which is a count, **not a
-rate**: it counted only the records that decoded, so a failure could not show, and the
-"10,020/10,020" first published here was true by construction. The library-wide decode
-rate is **unmeasured** until the re-run. With the corrected counter, on the chain:
-**903 of 903 `gRuA` records seen were decoded.**
+**Decode rates — library, 2026-09-29:**
 
-The four-byte marker collides with data inside other units. The 2026-08-16 pass rejected
-265 of 5,547 hits; the split it was reported with — 264 carrying track 0, one at bar
-821,376 on a five-track project — and its highest accepted placement, bar 689, came from
-a one-off pass rather than a script mode. `--scan` now prints both
-(`placement_markers_rejected_*`, `placement_highest_bar`), so the re-run can confirm them.
-On the chain: 602 hits, 10 rejected, all track 0; highest placement bar 149. Rejections
-are counted, never silently dropped. A placement before bar 1 (position < 34560, i.e.
-pre-roll) is rejected as `before_origin`, not decoded; the chain has none.
+- 206/206 saves walked to clean EOF.
+- **17,913 of 18,015 `gRuA` records seen decoded (99.43%)**; every decoded UUID is distinct
+  within its save.
+- 9,076 of 9,142 placements resolved to a region family.
+- 205 of 206 saves had every decoded track number within that save's `MetaData.plist`
+  `NumberOfTracks`.
+- 7,808 of 9,142 placements (85.4%) landed on the 960-tick grid. The rest are
+  **[inferred]** to be regions placed with snap off: none was checked against Logic's
+  display, and the chain has none to check (592/592 on the grid).
+
+On the chain, 903 of 903 records decoded.
+
+**Three published 100% figures do not hold on the current library.** The first version
+of this section reported them from a 2026-08-16 scan of the library, when it held 32
+projects / 132 saves.
+
+- **"10,020/10,020" regions decoded was wrong by construction.** That scan counted only
+  the records that decoded, so it could not have shown a failure. The current library has
+  102 records that fail.
+- **"5,282/5,282" placements resolved** — 66 now do not.
+- **"132/132" saves within `NumberOfTracks`** — one now is not.
+
+The 2026-08-16 counters for these last two could register a failure, and they were
+measured on a different, smaller snapshot. They may well have held then. The aggregate
+cannot say whether the 66 placements or the one save sit in bundles added since.
+
+The four-byte marker collides with data inside other units. Of the library's 9,488 marker
+hits, 346 were rejected:
+
+- 334 carried track 0;
+- 12 fell beyond bar 10,000;
+- none fell before the origin, and none was truncated.
+
+The highest accepted placement is bar **691**; the 2026-08-16 snapshot reported 689. On
+the chain: 602 hits, 10 rejected, all track 0, and the highest bar is 149.
+
+Rejections are counted, never silently dropped. A placement before bar 1 (position
+< 34560, i.e. pre-roll) would be rejected as `before_origin`, not decoded; the library has
+none.
+
+**Open — counted, not explained, not guessed at.**
+
+- **102 `gRuA` records fail to decode** (0.57%). The scan does not say which check failed:
+  the size law, the name length, UTF-8, or a control character.
+- **66 placements are unresolved.** Their link names a family that no decoded region
+  carries. The aggregate does not record whether they sit in the same saves as the 102
+  failed records.
+- **20 payloads do not end in the terminator.** 22,480 of 22,500 hold exactly one
+  terminator unit, and 22,480 of 22,500 end in it; those are two separate counters. The
+  scan says nothing more about the 20 on either count.
+- **One save has a decoded track number above its `NumberOfTracks`.**
 
 **What is still open — which copy [measured].** A placement links to a region *family*
 (one source file), not to a region record: `Angelic Vocal FX 03` and its `.1`/`.2`/`.3`
 copies share one link value. On backup 00 there are 35 families: 20 hold one region object
 (16 placed once, 4 not placed) and **15 hold two or more — and those 15 carry 40 of the 56
-placements.** For those 40, which copy is on the timeline is not resolvable from any field
+placements.**
+
+Across the library it is **6,848 of 9,142 placements (75%)**. Another 2,228 sit in a
+one-object family and 66 are unresolved. Counted per save, 2,663 of 7,134 families hold
+two or more objects.
+
+For those placements, which copy is on the timeline is not resolvable from any field
 above; the map prints "one of N copies" and the diff "a '*stem*' region". 12 families hold
 more region objects than placements (79 objects for 56 placements); the map reports a
 per-family surplus count and never names which copies are off the timeline. An earlier
@@ -568,10 +626,14 @@ reassign element IDs rather than synthesising Live's schema from nothing.
 2. Full `ProjectData` payload schemas per remaining chunk tag. The container, the
    region object (`AuRg`) and the audio placement groups in `EvSq` are mapped; `Trak`,
    `AuCU`, MIDI placements, and every other `EvSq` unit are not — one save carries 12
-   distinct byte-`+7` values, of which a placement group uses three (`00`/`89`/`bc`).
+   distinct byte-`+7` values (21 across the library), of which a placement group uses
+   three (`00`/`89`/`bc`).
    Within the mapped set, which *copy* of a multi-region family a placement refers to is
-   still unresolved (40 of 56 placements on the measured save), and placement `+0x10` is
-   unexplained beyond "one value per track".
+   still unresolved (6,848 of 9,142 placements in the library, 2026-09-29), placement
+   `+0x10` is unexplained beyond "one value per track", and the library's 102 undecoded
+   `gRuA` records, 66 unresolved placements, 20 `qSvE` payloads that do not end in the
+   terminator, and one save with a track number above its `NumberOfTracks` are counted
+   but not explained.
 3. The FL Studio v25 scalar keystream.
 4. Does a Wit-written `.als` open cleanly in Live? **Untested — release gate.**
 5. Studio One and modern Cubase need first-hand verification; ours is second-hand.
