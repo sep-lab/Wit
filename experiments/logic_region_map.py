@@ -28,7 +28,8 @@ WHAT THIS MEASURES
                    so a record that failed was invisible to it. The library-wide
                    decoded/seen rate is unmeasured until the re-run below.
       5282/5282    placements resolved to a region family
-      4995/5282    placements on the 960-tick (quarter-note) grid
+      4995/5282    placements on the 960-tick (quarter-note) grid; the rest are
+                   INFERRED, not checked, to be regions placed with snap off
       132/132      saves where every decoded track number is within that save's
                    MetaData.plist NumberOfTracks
       265          marker hits rejected (see parse_event_stream)
@@ -51,6 +52,10 @@ WHAT THIS MEASURES
     Library re-run, pending permission to read the library again:
         python3 experiments/logic_region_map.py --scan ~/Music/Logic
 
+    Upstream: this corrects and extends §3, §8 and §8.1 of PROJECTDATA_FORMAT.md
+    in jonkubis/LogicProFormatWriter (MIT), pinned at 1f77c5c3; docs/FORMATS.md
+    says field by field where the two agree and where they differ.
+
 USAGE
     Show the map for one save:
         python3 experiments/logic_region_map.py '/path/to/Project.logicx'
@@ -60,7 +65,7 @@ USAGE
             '/path/to/Project.logicx/Alternatives/000/Project File Backups/00' \\
             '/path/to/Project.logicx/Alternatives/000/Project File Backups/01'
 
-    Hit rates across a whole library of .logicx/.band bundles:
+    Hit rates across a whole library of .logicx/.band bundles (or one bundle):
         python3 experiments/logic_region_map.py --scan ~/Music/Logic
 
     Any argument may be a `ProjectData` file, a `.logicx`/`.band` bundle, or a
@@ -848,11 +853,12 @@ def scan_library(root: Path) -> dict:
     type_bytes: Counter = Counter()
     rejected_heads: Counter = Counter()
     head_gaps: Counter = Counter()
-    bundles = sorted(
-        p
-        for ext in ("*.logicx", "*.band")
-        for p in root.rglob(ext)
-        if p.is_dir() and (p / "Alternatives").is_dir()
+    def is_bundle(p: Path) -> bool:
+        return p.suffix in (".logicx", ".band") and (p / "Alternatives").is_dir()
+
+    # A bundle given directly is scanned as a library of one.
+    bundles = [root] if is_bundle(root) else sorted(
+        p for ext in ("*.logicx", "*.band") for p in root.rglob(ext) if is_bundle(p)
     )
     for bundle in bundles:
         totals["bundles"] += 1

@@ -1037,6 +1037,12 @@ def test_scan_flags_a_save_whose_track_number_exceeds_its_declared_count(tmp_pat
     ) == (1, 0)
 
 
+def test_scan_accepts_a_single_bundle_as_its_root(tmp_path):
+    bundle = make_bundle(tmp_path, "P.logicx", {"current": build_container([]), "00": build_container([])})
+    totals = lrm.scan_library(bundle)
+    assert (totals["bundles"], totals["saves"]) == (1, 2)
+
+
 def test_scan_ignores_a_directory_that_is_not_a_bundle(tmp_path):
     (tmp_path / "notes.logicx").mkdir()
     assert lrm.scan_library(tmp_path)["bundles"] == 0
