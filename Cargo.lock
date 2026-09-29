@@ -1054,6 +1054,7 @@ dependencies = [
  "wit-als",
  "wit-demo",
  "wit-diff",
+ "wit-flp",
  "wit-index",
  "wit-logic",
  "wit-model",
@@ -1079,6 +1080,13 @@ dependencies = [
  "flate2",
  "wit-als",
  "wit-model",
+]
+
+[[package]]
+name = "wit-flp"
+version = "0.0.0"
+dependencies = [
+ "proptest",
 ]
 
 [[package]]

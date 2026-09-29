@@ -2,7 +2,8 @@
 //! the [`Store`], and record in the [`Registry`].
 //!
 //! Slot keys are derived from **stable identifiers** — a Logic backup's
-//! own slot directory name (`"00"`, `"01"`, ...) and an Ableton save's own
+//! own slot directory name (`"00"`, `"01"`, ...), an Ableton save's own
+//! filename, and (new in this change) an FL Studio backup's own autosave
 //! filename — never a positional index into the discovered list. A
 //! positional index shifts on rescan if a new save turns up earlier in
 //! the timeline than anything seen before, which would silently
@@ -10,7 +11,9 @@
 //! Stable identifiers make that impossible: the same physical save always
 //! maps to the same slot key, rescan after rescan.
 
-use crate::discover::{discover_ableton_lineages, discover_logic_projects, LogicKind};
+use crate::discover::{
+    discover_ableton_lineages, discover_flp_projects, discover_logic_projects, LogicKind,
+};
 use crate::registry::Registry;
 use crate::store::Store;
 use std::path::Path;
@@ -19,6 +22,7 @@ use std::path::Path;
 pub struct ScanResult {
     pub logic_projects_found: usize,
     pub ableton_lineages_found: usize,
+    pub flp_projects_found: usize,
     pub new_versions_ingested: usize,
     pub read_errors: usize,
 }
@@ -102,6 +106,60 @@ pub fn scan(root: &Path, store: &Store, registry: &Registry, now: i64) -> ScanRe
             ingest_one(
                 save_path,
                 &slot_key,
+                project_id,
+                store,
+                registry,
+                now,
+                &mut result,
+            );
+        }
+    }
+
+    let flp_projects = discover_flp_projects(root);
+    result.flp_projects_found = flp_projects.len();
+    for project in &flp_projects {
+        // A current file's own path is already a stable, unique key (the
+        // same reasoning Logic's bundle_path uses). A backup-only lineage
+        // (no current file — see FlpProject::current's doc) has no such
+        // path, so it falls back to the same synthesized-key trick the
+        // Ableton lineage loop above uses: the first backup's parent
+        // directory plus the lineage name.
+        let bundle_key = match &project.current {
+            Some(current) => current.to_string_lossy().into_owned(),
+            None => {
+                let parent = project
+                    .backups
+                    .first()
+                    .and_then(|p| p.parent())
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                format!("{parent}::{}", project.name)
+            }
+        };
+        let Ok(project_id) = registry.upsert_project(&project.name, &bundle_key, "flstudio") else {
+            result.read_errors += 1;
+            continue;
+        };
+        for backup_path in &project.backups {
+            let slot_name = backup_path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "unknown".to_string());
+            let slot_key = format!("backup/{slot_name}");
+            ingest_one(
+                backup_path,
+                &slot_key,
+                project_id,
+                store,
+                registry,
+                now,
+                &mut result,
+            );
+        }
+        if let Some(current) = &project.current {
+            ingest_one(
+                current,
+                "current",
                 project_id,
                 store,
                 registry,
@@ -259,6 +317,72 @@ mod tests {
 
         assert_eq!(result.ableton_lineages_found, 1);
         assert_eq!(result.new_versions_ingested, 2);
+    }
+
+    #[test]
+    fn scan_discovers_and_ingests_an_flp_project_with_backups() {
+        let (library, store_dir, db_dir) = setup();
+        touch(&library.path().join("Song.flp"), b"current save bytes");
+        touch(
+            &library.path().join("Backup/Song (autosaved at 1h00).flp"),
+            b"backup 1 bytes",
+        );
+        touch(
+            &library.path().join("Backup/Song (autosaved at 2h00).flp"),
+            b"backup 2 bytes",
+        );
+
+        let store = Store::open(store_dir.path()).unwrap();
+        let registry = Registry::open(db_dir.path().join("wit.db")).unwrap();
+        let result = scan(library.path(), &store, &registry, 1000);
+
+        assert_eq!(result.flp_projects_found, 1);
+        assert_eq!(result.new_versions_ingested, 3);
+        assert_eq!(result.read_errors, 0);
+
+        let projects = registry.list_projects().unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].kind, "flstudio");
+        assert_eq!(projects[0].version_count, 3);
+    }
+
+    #[test]
+    fn scan_ingests_a_backup_only_flp_lineage_with_no_current_file() {
+        // The project was renamed via Save As, so nothing at the project's
+        // new name matches these old autosaves by lineage name — still
+        // archived, not silently dropped.
+        let (library, store_dir, db_dir) = setup();
+        touch(
+            &library
+                .path()
+                .join("Backup/untitled (autosaved at 5h56).flp"),
+            b"orphaned backup bytes",
+        );
+
+        let store = Store::open(store_dir.path()).unwrap();
+        let registry = Registry::open(db_dir.path().join("wit.db")).unwrap();
+        let result = scan(library.path(), &store, &registry, 1000);
+
+        assert_eq!(result.flp_projects_found, 1);
+        assert_eq!(result.new_versions_ingested, 1);
+
+        let projects = registry.list_projects().unwrap();
+        assert_eq!(projects[0].version_count, 1);
+    }
+
+    #[test]
+    fn rescanning_an_flp_project_is_idempotent() {
+        let (library, store_dir, db_dir) = setup();
+        touch(&library.path().join("Song.flp"), b"v1");
+
+        let store = Store::open(store_dir.path()).unwrap();
+        let registry = Registry::open(db_dir.path().join("wit.db")).unwrap();
+        let first = scan(library.path(), &store, &registry, 1000);
+        assert_eq!(first.new_versions_ingested, 1);
+
+        let second = scan(library.path(), &store, &registry, 2000);
+        assert_eq!(second.new_versions_ingested, 0);
+        assert_eq!(registry.list_projects().unwrap()[0].version_count, 1);
     }
 
     #[test]
