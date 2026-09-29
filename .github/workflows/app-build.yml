@@ -1,0 +1,158 @@
+# Wit app build — cross-platform Tauri 2 packaging (PLAN-V2 Phase D / Phase F).
+#
+# This is a SKELETON until the Tauri app lands. Wave 1's UI-shell lane
+# scaffolds `app/` (Svelte 5 + Vite + TS) and `app/src-tauri` (its own Cargo
+# workspace, path-deps on crates/* — see CONTRIBUTING.md: "the root workspace
+# is crates/* only, forever"). Every leg's first step below checks for
+# `app/src-tauri/Cargo.toml`; if it is missing, the job emits a `::notice::`
+# and exits successfully. A green no-op, not a failure — so this workflow can
+# be reviewed, merged, and exercised by its own PR before the app it builds
+# exists at all.
+#
+# Once the app exists, every OS produces an UNSIGNED bundle, by decision
+# (ADR-0008, coming — no Apple Developer ID and no code-signing certificate
+# yet; see `justfile`'s `release-unsigned`/`release-signed` and the pilot plan
+# in PLAN-V2 Phase F). macOS still gets an ad-hoc signature (`codesign -s -`),
+# because Apple Silicon refuses to launch an unsigned .app at all — that is
+# not the same thing as a real signature, and PILOT.md's Gatekeeper /
+# SmartScreen walkthroughs are still required for pilot recipients on every
+# OS.
+#
+# NOT yet in ci.yml's `ci-ok` `needs:` — see the comment above that job. It
+# becomes required there once app/src-tauri exists and this build is
+# reliably green, not before.
+
+name: App build
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "app/**"
+      - "crates/**"
+      - ".github/workflows/app-build.yml"
+
+# Least privilege, matching ci.yml: this workflow only reads the checkout and
+# uploads its own build artifacts. No signing, no publishing, no release
+# upload — see AGENTS.md and this PR's brief.
+permissions:
+  contents: read
+
+concurrency:
+  group: app-build-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  build:
+    name: App · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-22.04]
+    # Windows' default `run:` shell is PowerShell; every step below is
+    # written as a portable shell script (bash on all three OSes, same as
+    # ci.yml's `rust` job does for the same reason — see its comment).
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Does the Tauri app exist yet?
+        id: detect
+        run: |
+          if [ -f app/src-tauri/Cargo.toml ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::the Tauri app lands in Wave 1's UI-shell lane; this workflow is a skeleton until then"
+          fi
+
+      - name: Linux system dependencies for Tauri
+        if: steps.detect.outputs.exists == 'true' && runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install Rust 1.97
+        if: steps.detect.outputs.exists == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # Same reasoning as ci.yml's `rust` job: dtolnay/rust-toolchain does
+          # not read rust-toolchain.toml, so the pin is repeated explicitly.
+          toolchain: "1.97"
+
+      - name: Install Node 22
+        if: steps.detect.outputs.exists == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: npm ci
+        if: steps.detect.outputs.exists == 'true'
+        working-directory: app
+        run: npm ci
+
+      - name: tauri build (macOS .app)
+        if: steps.detect.outputs.exists == 'true' && runner.os == 'macOS'
+        working-directory: app
+        run: npx tauri build --bundles app
+
+      - name: Ad-hoc sign the .app (unsigned pilot — ADR-0008)
+        if: steps.detect.outputs.exists == 'true' && runner.os == 'macOS'
+        run: |
+          app_bundle="app/src-tauri/target/release/bundle/macos/Wit.app"
+          codesign --force --deep -s - "$app_bundle"
+          codesign -dv "$app_bundle"
+
+      - name: Zip the .app for upload
+        if: steps.detect.outputs.exists == 'true' && runner.os == 'macOS'
+        run: |
+          app_bundle="app/src-tauri/target/release/bundle/macos/Wit.app"
+          ditto -c -k --sequesterRsrc --keepParent "$app_bundle" "Wit-macos-unsigned.zip"
+
+      - name: tauri build (Windows NSIS installer)
+        if: steps.detect.outputs.exists == 'true' && runner.os == 'Windows'
+        working-directory: app
+        run: npx tauri build --bundles nsis
+
+      - name: tauri build (Linux AppImage + deb)
+        if: steps.detect.outputs.exists == 'true' && runner.os == 'Linux'
+        working-directory: app
+        run: npx tauri build --bundles appimage,deb
+
+      - name: Upload macOS bundle
+        if: steps.detect.outputs.exists == 'true' && runner.os == 'macOS'
+        uses: actions/upload-artifact@v7
+        with:
+          name: wit-macos-unsigned
+          path: Wit-macos-unsigned.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Windows bundle
+        if: steps.detect.outputs.exists == 'true' && runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: wit-windows-nsis
+          path: app/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Linux bundles
+        if: steps.detect.outputs.exists == 'true' && runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: wit-linux-appimage-deb
+          path: |
+            app/src-tauri/target/release/bundle/appimage/*.AppImage
+            app/src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error
+          retention-days: 14
