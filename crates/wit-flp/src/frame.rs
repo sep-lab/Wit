@@ -13,52 +13,49 @@
 //!   id 192-255 : varint length, then that many bytes ("variable" events)
 //! ```
 //!
-//! **Divergence from `flp_parse.py` (measured this session, not in the
-//! prototype): event id 172 (`0xAC`) is always read as a 3-byte payload,
-//! not the general dword rule's 4.** This is exactly the framing quirk
+//! **Divergence from `flp_parse.py` (measured, not in the prototype): on
+//! FL Studio 25+, event id 172 (`0xAC`) is read as a 3-byte payload, not
+//! the general dword rule's 4.** This is exactly the framing quirk
 //! [issue #7](https://github.com/sep-lab/Wit/issues/7) names for FL Studio
 //! v25: *"v25 also breaks the event-width rule at a fixed spot: ID 172
 //! (0xAC) carries a 3-byte payload, so the stream must resync."* The
 //! Python prototype was never run against a v25 file and does not special-
 //! case it, so `flp_parse.py` desyncs on one and cannot be used as a golden
-//! reference here. This session verified the fix directly against 5 real
-//! FL 25.2.5 files (a current save, inferred from its name and folder to
-//! be the same project as the 4 autosaves below, and 4 of that project's
-//! own `Backup/` autosaves): under the naive 4-byte rule, 2 of the 5 fail
-//! outright — a varint prefix that runs longer than [`MAX_VARINT_BYTES`]
-//! bytes, around event 60 — and the other 3 reach a clean EOF only by
-//! coincidence, with mutually inconsistent event counts (1540–1652) for
-//! what should be near-identical consecutive saves of one project.
-//! Treating id 172 as 3 bytes gives a clean EOF on all 5, with
-//! self-consistent counts (1616–1710) and correctly decoded text after the
-//! resync point. Id 172 was not observed at all — count zero — across 61
-//! real pre-v25 files checked, spanning FL 8.5.0 through FL 20.8.1 (this
-//! crate's own `WIT_FIXTURES` corpus plus a wider read-only spot-check
-//! against FL Studio 20's bundled demo projects, off-repository), so this
-//! special case is empirically inert for every pre-v25 version actually
-//! measured.
+//! reference here. Verified against 5 real FL 25.2.5 saves (a current save
+//! and 4 `Backup/` autosaves, **inferred** from their names and folder to
+//! be one project): under the 4-byte rule, 2 of the 5 fail outright — a
+//! varint prefix longer than [`MAX_VARINT_BYTES`] bytes, around event 60 —
+//! and the other 3 reach EOF only by coincidence, with inconsistent event
+//! counts (1540–1652). Treating id 172 as 3 bytes gives a clean EOF on all
+//! 5, with self-consistent counts (1616–1710) and correctly decoded text
+//! after the resync point.
 //!
-//! **Not gated on the file's own declared version, deliberately.** The
-//! obvious safer design — apply the 3-byte rule only when the `Version`
-//! text event (id 199) says `>= 25` — runs into a chicken-and-egg problem:
-//! `Version` is itself one of the events this same walk discovers, so the
-//! walker cannot know the version until *after* it has already decided how
-//! wide every fixed-width event before that point is. A two-pass re-walk
-//! would resolve that, at real complexity cost, to defend against a risk
-//! that is unmeasured rather than observed: **FL 21–24 were not available
-//! to check**, so it remains possible one of those versions legitimately
-//! uses id 172 as an ordinary 4-byte dword field, which this reader would
-//! then misparse. Documented here rather than silently assumed away.
+//! **Gated on the file's own declared version.** The rule applies only
+//! when a `Version` event (id 199) walked *earlier in the same stream*
+//! declares major version 25 or later. That costs nothing: `Version` is a
+//! variable-length event, so reading it never depends on the id-172 rule,
+//! and it is event #0 in all 178 real files checked (FL 8.5.0 – 25.2.5),
+//! while 172 is event #4 on all 5 FL 25 saves. Id 172 occurs zero times
+//! in the 173 pre-v25 files, so the gate changes nothing measured; what it
+//! buys is that an FL 21–24 file (none available to check) that used 172
+//! as an ordinary dword would still walk correctly, matching issue #7's
+//! statement that "FL Studio projects from v10 through v24 parse cleanly".
+//! A 172 with no `Version` before it (never observed) takes the general
+//! 4-byte rule.
 
 use std::fmt;
 
 pub const HEADER_MAGIC: &[u8; 4] = b"FLhd";
 pub const DATA_MAGIC: &[u8; 4] = b"FLdt";
 
-/// FL Studio's own resync exception (see module doc): id 172 carries a
+/// FL Studio 25's resync exception (see module doc): id 172 carries a
 /// 3-byte payload, not the general dword rule's 4.
 const RESYNC_EVENT_ID: u8 = 172;
 const RESYNC_EVENT_PAYLOAD_LEN: usize = 3;
+/// The FL major version from which [`RESYNC_EVENT_ID`] is 3 bytes.
+const RESYNC_MIN_MAJOR_VERSION: u32 = 25;
+/// `Version` — the text event the resync gate reads (see module doc).
+const VERSION_EVENT_ID: u8 = 199;
 
 /// A u32 payload length never needs more than 5 continuation bytes (35
 /// usable bits) — matches `flp_parse.py`'s `MAX_VARINT_BYTES`. Anything
@@ -298,6 +295,9 @@ pub fn walk_events(data: &[u8], pos: usize) -> Result<Vec<RawEvent<'_>>, FlpErro
 
     let mut events = Vec::new();
     let mut cursor = 0usize;
+    // Set by the first Version event walked; gates the id-172 rule.
+    let mut resync_applies = false;
+    let mut version_seen = false;
     while cursor < region.len() {
         let event_offset = cursor;
         let id = need_byte(region, cursor).ok_or(FlpError::EventRunsPastEof {
@@ -305,7 +305,7 @@ pub fn walk_events(data: &[u8], pos: usize) -> Result<Vec<RawEvent<'_>>, FlpErro
         })?;
         cursor += 1;
 
-        let size = if id == RESYNC_EVENT_ID {
+        let size = if id == RESYNC_EVENT_ID && resync_applies {
             RESYNC_EVENT_PAYLOAD_LEN
         } else if let Some(fixed) = RawEvent::width_class(id) {
             fixed
@@ -323,6 +323,12 @@ pub fn walk_events(data: &[u8], pos: usize) -> Result<Vec<RawEvent<'_>>, FlpErro
             declared_len: size as u64,
         })?;
         cursor += size;
+
+        if id == VERSION_EVENT_ID && !version_seen {
+            version_seen = true;
+            resync_applies = crate::extract::major_version(&crate::extract::decode_text(payload))
+                .is_some_and(|major| major >= RESYNC_MIN_MAJOR_VERSION);
+        }
 
         if events.len() >= MAX_EVENTS {
             return Err(FlpError::TooManyEvents { limit: MAX_EVENTS });
@@ -502,18 +508,55 @@ mod tests {
         ));
     }
 
+    /// A latin-1 `Version` (199) event, as event #0 of a real file.
+    fn version_event(version: &str) -> Vec<u8> {
+        let mut out = vec![199u8, (version.len() + 1) as u8];
+        out.extend_from_slice(version.as_bytes());
+        out.push(0);
+        out
+    }
+
     #[test]
-    fn event_id_172_is_read_as_three_bytes_not_four() {
-        // The v25 resync exception (module doc): id 172 is 3 bytes, then a
-        // sentinel byte event proves the stream resynced correctly.
-        let events = [172u8, 0x01, 0x02, 0x03, 9, 0x55];
+    fn event_id_172_is_read_as_three_bytes_on_fl_25() {
+        // The v25 resync exception (module doc), in the measured position:
+        // Version first, then 172 as 3 bytes; a sentinel byte event proves
+        // the stream resynced correctly.
+        let mut events = version_event("25.2.5.5055");
+        events.extend_from_slice(&[172u8, 0x01, 0x02, 0x03, 9, 0x55]);
+        let data = container_with(&events);
+        let (_, walked) = parse_container(&data).unwrap();
+        assert_eq!(walked.len(), 3);
+        assert_eq!(walked[1].id, 172);
+        assert_eq!(walked[1].payload, &[0x01, 0x02, 0x03]);
+        assert_eq!(walked[2].id, 9);
+        assert_eq!(walked[2].payload, &[0x55]);
+    }
+
+    #[test]
+    fn event_id_172_is_an_ordinary_dword_before_fl_25() {
+        // Gated on the declared version: an FL 24 (or older) file that
+        // used 172 as a plain dword must still walk correctly.
+        for version in ["24.1.1.4234", "20.8.3.2304", "10.0.0"] {
+            let mut events = version_event(version);
+            events.extend_from_slice(&[172u8, 0x01, 0x02, 0x03, 0x04, 9, 0x55]);
+            let data = container_with(&events);
+            let (_, walked) = parse_container(&data).unwrap();
+            assert_eq!(walked.len(), 3, "{version}");
+            assert_eq!(walked[1].payload, &[0x01, 0x02, 0x03, 0x04], "{version}");
+            assert_eq!(walked[2].payload, &[0x55], "{version}");
+        }
+    }
+
+    #[test]
+    fn event_id_172_before_any_version_event_is_an_ordinary_dword() {
+        // Never observed (Version is event #0 in every real file checked);
+        // the general rule applies.
+        let mut events = vec![172u8, 0x01, 0x02, 0x03, 0x04];
+        events.extend(version_event("25.2.5.5055"));
         let data = container_with(&events);
         let (_, walked) = parse_container(&data).unwrap();
         assert_eq!(walked.len(), 2);
-        assert_eq!(walked[0].id, 172);
-        assert_eq!(walked[0].payload, &[0x01, 0x02, 0x03]);
-        assert_eq!(walked[1].id, 9);
-        assert_eq!(walked[1].payload, &[0x55]);
+        assert_eq!(walked[0].payload, &[0x01, 0x02, 0x03, 0x04]);
     }
 
     #[test]
