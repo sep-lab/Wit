@@ -7,6 +7,14 @@ Notable changes to this project. Format based on [Keep a Changelog](https://keep
 Building the 0.0 pilot — no released artifact yet.
 
 ### Added
+- **M2 gate run** — `just logic-fixtures-gate` fetches the MIT-licensed
+  `jonkubis/LogicProFormatWriter` corpus at its pinned commit into a temp dir and runs
+  `crates/wit-logic/tests/jonkubis_fixtures.rs` (opt-in). Measured 2026-09-29 on 87
+  `.logicx` bundles / 113 `ProjectData` files: all walk clean (version word `cf09`); the
+  extracted tempo equals `MetaData.plist` `BeatsPerMinute` on all 113 (111 at 120 BPM, 2 at
+  137.5), and the extracted audio-file names equal `AudioFiles` exactly on all 113 (23 list
+  any). At the pinned commit a check that can't run fails the gate. Earlier notes counted "30
+  fixtures".
 - **ADR-0006**: the first shipped product is a Logic/GarageBand-first, read-only
   comprehension app — no project-file write-path in this slice. See
   [docs/ROADMAP.md](docs/ROADMAP.md)'s "Now: the 0.0 pilot" section for the milestone plan.

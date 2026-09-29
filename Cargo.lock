@@ -1219,6 +1219,7 @@ name = "wit-logic"
 version = "0.0.0"
 dependencies = [
  "proptest",
+ "serde_json",
 ]
 
 [[package]]
