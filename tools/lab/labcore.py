@@ -248,8 +248,9 @@ def git_checkout_above(path) -> Optional[str]:
 
 
 # A home path counts only when it ends at a path boundary: a home of "/path/to/sam"
-# must not turn "/path/to/samantha/x" into "~antha/x".
-_BOUNDARY = r"(?=$|[/\s\"'<>|(),:;\[\]{}])"
+# must not turn "/path/to/samantha/x" into "~antha/x". Sentence punctuation right after
+# it ("... in /path/to/sam.") is a boundary; "/path/to/sam.old/x" is a different folder.
+_BOUNDARY = r"(?=$|[/\s\"'<>|(),:;\[\]{}]|[.!?](?:$|\s))"
 
 
 def redact(text) -> str:
@@ -488,10 +489,11 @@ def now_iso() -> str:
 # installed DAW apps (read-only: Info.plist only)
 # --------------------------------------------------------------------------- #
 
-# Looked up by glob, never by a hardcoded personal path. The lab's Logic is
-# /Applications/Logic Pro.app (12.3.1, com.apple.logic10): confirmed 2026-09-29,
-# when "Logic Pro Creator Studio.app" was NOT installed. Other Logic bundles are
-# recorded as candidates; `capture.py init --app` pins one.
+# Looked up by glob, never by a hardcoded personal path. Measured 2026-09-29: the
+# only Logic installed is /Applications/Logic Pro.app (12.3.1, com.apple.logic10);
+# "Logic Pro Creator Studio.app" is not installed. Which Logic the lab uses still
+# awaits Sepehr's confirmation (PLAN-V2); until then Logic Pro.app is recorded first,
+# other Logic bundles are recorded as candidates, and `capture.py init --app` pins one.
 APP_GLOBS = {
     "logic": ["Logic Pro.app", "Logic Pro*.app"],
     "garageband": ["GarageBand*.app"],
@@ -503,9 +505,10 @@ APP_GLOBS = {
 def app_info(bundle: Path) -> Optional[Dict]:
     plist = bundle / "Contents" / "Info.plist"
     try:
-        with open(str(plist), "rb") as fh:
-            info = plistlib.load(fh)
+        info = plistlib.loads(read_regular(plist))
     except (OSError, plistlib.InvalidFileException, ValueError):
+        return None
+    if not isinstance(info, dict):
         return None
     return {
         "bundle": bundle.name,
@@ -517,13 +520,29 @@ def app_info(bundle: Path) -> Optional[Dict]:
     }
 
 
+def check_app_override(override: str) -> Path:
+    """
+    `capture.py init --app PATH`. Reading an Info.plist is read-only and cannot migrate
+    a project, but --app is operator input, so it gets the same rule as every other
+    path: nothing under a real library is ever read (not even a plist), and only a
+    folder named *.app is accepted.
+    """
+    bundle = Path(override).expanduser()
+    hit = denylisted(bundle)
+    if hit:
+        raise SafetyError("refusing --app %s: it is under %s, a real library" % (redact(bundle), hit))
+    if bundle.suffix != ".app" or not bundle.is_dir():
+        raise ValueError("--app must be an .app bundle folder, got %s" % redact(bundle))
+    return bundle
+
+
 def find_app(daw: str, override: Optional[str] = None) -> Dict:
     candidates: List[Path] = []
     for pattern in APP_GLOBS[daw]:
         for p in sorted(apps_dir().glob(pattern)):
             if p not in candidates:
                 candidates.append(p)
-    chosen = Path(override).expanduser() if override else (candidates[0] if candidates else None)
+    chosen = check_app_override(override) if override else (candidates[0] if candidates else None)
     infos = [i for i in (app_info(c) for c in candidates) if i]
     result = {"chosen": app_info(chosen) if chosen else None, "candidates": infos}
     if chosen is None:

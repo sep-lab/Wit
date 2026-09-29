@@ -126,8 +126,9 @@ python3 tools/lab/capture.py init --daw logic --run r1 --project ~/WitLab/logic/
 ```
 
 `--project` is the `.logicx` / `.band` package, the `.als` (or its `Lab Project` folder)
-or the `.flp`. For Logic, `init` records `/Applications/Logic Pro.app` — the lab's Logic;
-pin another bundle only on Sepehr's say-so with `--app`.
+or the `.flp`. For Logic, `init` records `/Applications/Logic Pro.app`, the only Logic
+installed (measured 2026-09-29). Sepehr has not yet confirmed which Logic the lab uses;
+pin another bundle only on his say-so with `--app`.
 
 **6. The loop.** For every step:
 
@@ -176,10 +177,12 @@ python3 tools/lab/analyze.py --out ~/Projects/DAW/wit-corpus/logic/r1/analysis.j
 
 ## Per-DAW notes
 
-- **Logic.** The lab's Logic is **`/Applications/Logic Pro.app` 12.3.1** (bundle id
-  `com.apple.logic10`, build 6682). `Logic Pro Creator Studio.app` is **not installed**
-  (checked 2026-09-29); its old preferences domain `com.apple.mobilelogic` is still on
-  disk, and preflight shows it as information only. `init` records `Logic Pro.app`.
+- **Logic.** Measured 2026-09-29: the only Logic installed is **`/Applications/Logic
+  Pro.app` 12.3.1** (bundle id `com.apple.logic10`, build 6682); `Logic Pro Creator
+  Studio.app` is **not installed**, though its old preferences domain
+  `com.apple.mobilelogic` is still on disk (preflight shows it as information only).
+  `init` records `Logic Pro.app`. **Sepehr's confirmation that the lab should use it is
+  still pending** (PLAN-V2 asks for it) — get it before the first Logic run.
 - **GarageBand.** Sandboxed (its preferences and saved state live in
   `~/Library/Containers/com.apple.garageband10/`). Defaults to saving in
   `~/Music/GarageBand` — a real library. Save As into the lab. 12 steps (the plan's

@@ -11,10 +11,12 @@ WHAT THIS DOES
                         path as `defaults read`, but parseable), plus the plist files in
                         the app's SANDBOX CONTAINER (~/Library/Containers/<domain>/Data/
                         Library/Preferences — GarageBand is sandboxed) and in
-                        ~/Library/Preferences, for com.apple.logic10 (the lab's Logic:
-                        /Applications/Logic Pro.app 12.3.1), com.apple.garageband10 and
-                        com.apple.mobilelogic (Creator Studio; not installed on the lab
-                        Mac, so information only). Where sources disagree the worst wins:
+                        ~/Library/Preferences, for com.apple.logic10 (the only Logic
+                        installed on the lab Mac: /Applications/Logic Pro.app 12.3.1),
+                        com.apple.garageband10 and com.apple.mobilelogic (Creator Studio;
+                        not installed, so information only). Where sources disagree the
+                        worst wins, and a readable source WITHOUT the key counts as
+                        "unset":
                           startupAction         the Startup Action setting. Its values
                                                 are NOT documented; the meaning table
                                                 below is inferred (see STARTUP_ACTION)
@@ -386,10 +388,10 @@ def check_apple(daw: str, home: Path, lab_real: str, runner: Callable,
                 installed_ids: Optional[set] = None) -> List[Dict]:
     """
     `installed_ids` are the bundle ids of the installed apps for this DAW. The
-    verdict rests on the domains of installed apps only: the lab launches
+    verdict rests on the domains of installed apps only: on the lab Mac that is
     /Applications/Logic Pro.app (com.apple.logic10), and a stale domain left by an
-    app that is no longer installed (com.apple.mobilelogic on the lab Mac) is shown
-    as information. With no app found at all, every domain counts (conservative).
+    app that is no longer installed (com.apple.mobilelogic) is shown as information.
+    With no app found at all, every domain counts (conservative).
     """
     out = []
     global_keep = read_global("NSQuitAlwaysKeepsWindows", runner)
@@ -405,18 +407,20 @@ def check_apple(daw: str, home: Path, lab_real: str, runner: Callable,
                                  "absent or unreadable everywhere (never launched?) — factory defaults apply",
                                  "unknown", "measured"))
         else:
+            # Every READABLE source votes, and "unset" is a vote too: an authoritative
+            # `defaults export` without startupAction (factory default: unknown) must never
+            # be outvoted by a stale plist that says 3 into "safe".
             values = []
             for label, prefs in readable:
-                if "startupAction" in prefs and prefs["startupAction"] not in [v for v, _ in values]:
-                    values.append((prefs["startupAction"], label))
-            if not values:
-                found.append(startup_action_finding(domain, None))
-            else:
-                worst = max((startup_action_finding(domain, v) for v, _ in values),
-                            key=lambda f: SEVERITY[f["verdict"]])
-                if len(values) > 1:
-                    worst["detail"] += " (sources disagree: %s)" % ", ".join("%r in %s" % vl for vl in values)
-                found.append(worst)
+                value = prefs.get("startupAction")  # None = unset in this source
+                if value not in [v for v, _ in values]:
+                    values.append((value, label))
+            worst = max((startup_action_finding(domain, v) for v, _ in values),
+                        key=lambda f: SEVERITY[f["verdict"]])
+            if len(values) > 1:
+                worst["detail"] += " (sources disagree: %s)" % ", ".join(
+                    "%s in %s" % ("unset" if v is None else repr(v), label) for v, label in values)
+            found.append(worst)
             urls = []
             for _label, prefs in readable:
                 urls.extend(str(u) for u in (prefs.get("unsavedAutosavedURLs") or []))

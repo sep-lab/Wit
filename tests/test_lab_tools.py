@@ -287,6 +287,9 @@ def test_redact_only_replaces_the_home_directory_at_a_path_boundary(lab, env):
     assert lab.labcore.redact(h) == "~"
     assert lab.labcore.redact("see '%s'." % h) == "see '~'."
     assert lab.labcore.redact(h + "2/x") == h + "2/x"  # a sibling that merely starts with home's name
+    assert lab.labcore.redact("stored in %s." % h) == "stored in ~."  # sentence punctuation ends a path
+    assert lab.labcore.redact("is it %s? yes" % h) == "is it ~? yes"
+    assert lab.labcore.redact(h + ".old/x") == h + ".old/x"  # ...but "<home>.old" is another folder
 
 
 @pytest.mark.parametrize("where", ["lab", "repo", "home", "library"])
@@ -322,19 +325,28 @@ def test_a_fifo_named_like_a_project_file_never_hangs_a_capture(lab, env):
     result = {}
 
     def go():
-        result["entries"] = lab.capture.collect(run, "fl")
+        warned = []
+        result["entries"] = lab.capture.collect(run, "fl", warned.append)
+        result["warned"] = warned
         result["hashes"] = lab.capture.hash_entries(run, result["entries"])
         try:
             lab.labcore.open_nofollow(run / "Lab copy.flp")
         except OSError as exc:
             result["error"] = str(exc)
+        clock, log = FakeClock(), []
+        lab.capture.wait_for_save(run, "fl", None, False, stable_secs=1.0, poll=0.25, timeout=10,
+                                  clock=clock, sleep=clock.sleep, log=log.append)
+        result["log"] = log
 
     worker = threading.Thread(target=go, daemon=True)
     worker.start()
     worker.join(10)
     assert not worker.is_alive(), "blocked on a FIFO"
     assert [e["path"] for e in result["entries"]] == ["Lab.flp"]
+    assert result["warned"] == ["Lab copy.flp"]  # skipped, but never silently
     assert "not a regular file" in result["error"]
+    skips = [line for line in result["log"] if "skipping Lab copy.flp" in line]
+    assert len(skips) == 1, result["log"]  # told once, not once per poll
 
 
 # --------------------------------------------------------------------------- #
@@ -684,6 +696,53 @@ def test_replacing_an_early_step_keeps_script_order_for_previous_and_analyze(lab
     assert pairs == [("01", "02"), ("02", "03")]
 
 
+@pytest.mark.parametrize("command", [["next"], ["watch", *FAST], ["status"]])
+def test_a_hand_edited_current_step_gives_a_clear_error(lab, env, capsys, command):
+    pkg = make_logic_package(env.lab / "logic" / "r1")
+    assert run_cli(lab.capture, ["init", "--daw", "logic", "--run", "r1", "--project", str(pkg)], capsys)[0] == 0
+    mpath = env.corpus / "logic" / "r1" / "manifest.json"
+    m = json.loads(mpath.read_text(encoding="utf-8"))
+    m["current_step"] = "99"
+    mpath.write_text(json.dumps(m), encoding="utf-8")
+    rc, _out, err = run_cli(lab.capture, command, capsys)
+    assert rc == lab.capture.EXIT_ERROR
+    assert "'99' is not in this run's step list" in err and "by hand" in err
+
+
+def test_init_app_override_is_checked_like_every_other_path(lab, env, capsys):
+    pkg = make_logic_package(env.lab / "logic" / "r1")
+    args = ["init", "--daw", "logic", "--run", "r1", "--project", str(pkg)]
+    in_library = fake_app(env.home / "Music" / "Logic", "Planted.app", "x.y", "1", "1")
+    rc, _out, err = run_cli(lab.capture, [*args, "--app", str(in_library)], capsys)
+    assert rc == lab.capture.EXIT_REFUSED and "real library" in err
+    rc, _out, err = run_cli(lab.capture, [*args, "--app", str(pkg)], capsys)
+    assert rc == lab.capture.EXIT_ERROR and ".app bundle" in err
+    good = fake_app(env.apps, "Logic Pro.app", "com.apple.logic10", "12.3.1", "6682")
+    assert run_cli(lab.capture, [*args, "--app", str(good)], capsys)[0] == 0
+    m = json.loads((env.corpus / "logic" / "r1" / "manifest.json").read_text(encoding="utf-8"))
+    assert m["app"]["chosen"]["bundle"] == "Logic Pro.app" and m["script_version"] == 2
+
+
+def test_the_manifest_says_which_track_each_add_rename_and_delete_applies_to(lab, env, capsys):
+    pkg = make_logic_package(env.lab / "logic" / "r1")
+    assert run_cli(lab.capture, ["init", "--daw", "logic", "--run", "r1", "--project", str(pkg)], capsys)[0] == 0
+    m = json.loads((env.corpus / "logic" / "r1" / "manifest.json").read_text(encoding="utf-8"))
+    by_key = {s["key"]: s for s in m["steps"]}
+    assert by_key["06"]["adds_track"] == "click-drums.wav" and by_key["06"]["target"] == {"holds": "click-drums.wav"}
+    assert by_key["07"]["renames_track"] == {"holds": "click-drums.wav", "to": "Drums"}
+    assert by_key["08a"]["renames_track"] == {"holds": "click-drums.wav", "to": PERSIAN}
+    assert by_key["08b"]["adds_track"] == PERSIAN_FILE and by_key["08b"]["target"] == {"holds": PERSIAN_FILE}
+    assert by_key["13"]["target"] == {"holds": "the step-13 MIDI region"}
+    assert by_key["24"]["deletes_track"] == PERSIAN_FILE
+    assert run_cli(lab.capture, ["watch", *FAST], capsys)[0] == 0
+    write(pkg / "Alternatives" / "000" / "ProjectData", container([*BASE_RECORDS, (b"karT", b"audio 1")]))
+    assert run_cli(lab.capture, ["watch", "--step", "06", *FAST], capsys)[0] == 0
+    caps = json.loads((env.corpus / "logic" / "r1" / "manifest.json").read_text(encoding="utf-8"))["captures"]
+    assert caps[0]["track_effects"] == {}
+    assert caps[1]["track_effects"] == {"adds_track": "click-drums.wav"}
+    assert caps[1]["target"] == {"holds": "click-drums.wav"}
+
+
 def test_init_refuses_to_reuse_a_run_name(lab, env, capsys):
     pkg = make_logic_package(env.lab / "logic" / "r1")
     args = ["init", "--daw", "logic", "--run", "r1", "--project", str(pkg)]
@@ -815,6 +874,31 @@ def test_no_two_tracks_can_ever_share_a_name(lab):
     assert lab.steps.PERSIAN_FILE == lab.make_audio.PERSIAN_NAME
     added = {s["adds_track"] for s in lab.steps.STEPS if str(s.get("adds_track", "")).endswith(".wav")}
     assert added <= set(lab.make_audio.FILES)
+
+
+def test_every_do_line_that_changes_a_track_or_region_names_it(lab):
+    st = lab.steps
+    assert st.SCRIPT_VERSION == 2
+    for daw in ("logic", "ableton", "fl", "garageband"):
+        for s in st.for_daw(daw):
+            if not set(s["expected"]) & st.TRACK_EDIT_KEYS:
+                continue
+            assert s["target"], (daw, s["key"])
+            assert st.target_phrase(s["target"]) in s["instructions"], (daw, s["key"], s["instructions"])
+    # The cases the review named, spelled out:
+    for key in ("19", "23b"):  # Logic's channel strip acts on the SELECTED track
+        assert st.find("logic", key)["instructions"].startswith("Select the %s track;" % st.TRACK)
+    assert "not the empty Audio track GarageBand made" in st.find("garageband", "07")["instructions"]
+    assert "default Set" in st.find("ableton", "07")["instructions"]
+    for daw in ("logic", "ableton"):  # Live's default Set already has MIDI tracks
+        assert "track holding the step-13 MIDI region" in st.find(daw, "18b")["instructions"]
+    # ...and validate() fails on the old wording or a missing target.
+    broken = copy.deepcopy(st.STEPS)
+    next(s for s in broken if s["n"] == 19)["daws"]["logic"] = "Channel strip ▸ first Audio FX slot ▸ EQ ▸ Channel EQ."
+    assert any(p.startswith("19/logic: the Do line never names its target") for p in st.validate(broken))
+    broken = copy.deepcopy(st.STEPS)
+    del next(s for s in broken if s["n"] == 20)["target"]
+    assert any(p.startswith("20: changes a track or region but has no target") for p in st.validate(broken))
 
 
 def test_validate_catches_a_file_named_like_a_renamed_track(lab):
@@ -1110,6 +1194,26 @@ def test_an_unreadable_sandbox_container_is_unknown_never_safe(lab, env):
     finally:
         lib.chmod(0o755)
     assert report["exit"] == 2 and "privacy-protected" in json.dumps(report)
+
+
+@pytest.mark.parametrize("daw, bundle, domain, where", [
+    ("logic", "Logic Pro.app", "com.apple.logic10", "plain"),
+    ("garageband", "GarageBand.app", "com.apple.garageband10", "container"),
+])
+def test_a_stale_plist_cannot_outvote_an_unset_startup_action(lab, env, daw, bundle, domain, where):
+    # `defaults export` (authoritative) has NO startupAction: the factory default applies,
+    # which is unknown. A leftover plist saying 3 must not turn that into exit 0.
+    fake_app(env.apps, bundle, domain, "1", "1")
+    stale = (env.home / "Library" / "Preferences" if where == "plain"
+             else container_lib(env.home, domain) / "Preferences") / (domain + ".plist")
+    write(stale, plistlib.dumps(logic_prefs(startupAction=3), fmt=plistlib.FMT_BINARY))
+    run = lab.preflight.run_checks
+    report = run([daw], env.home, FakeDefaults({domain: logic_prefs()}), accept_inferred=True)
+    assert report["exit"] == 2
+    text = json.dumps(report)
+    assert "sources disagree" in text and "unset in defaults export" in text
+    # When every readable source agrees on 3, the confirmed inference still passes.
+    assert run([daw], env.home, FakeDefaults({domain: logic_prefs(startupAction=3)}), accept_inferred=True)["exit"] == 0
 
 
 def test_the_lab_uses_logic_pro_app_and_a_stale_domain_is_information_only(lab, env):
