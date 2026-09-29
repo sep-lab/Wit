@@ -43,12 +43,19 @@
 //! | other DAW formats (`.rpp`, `.bwproject`, `.ardour`, `.song`, `.cpr`, `.dawproject`, …) | the file (`x.rpp-bak` → `x.rpp`) | the file |
 //! | any other file, **in a user-added folder only** | the file (generic History tier) | the file |
 //!
-//! Never counted: hidden names (a leading `.` on any component), editor
+//! Never counted: a restore still being assembled (anything under a
+//! `.wit-staging-…` entry in the Restores folder — it becomes one project
+//! when it is renamed into place), hidden names (a leading `.` on any
+//! component), editor
 //! and download temp names (`~$x`, `x~`, `.tmp`, `.part`, …), `Media/`,
 //! `Undo Data.nosync/` and UI-state files inside packages, and anything
 //! under a `(A Document Being Saved By …)` folder (macOS safe-save
 //! scratch). A project whose root has vanished when it settles (a moved
 //! scratch copy, a deleted file) is dropped silently.
+//!
+//! Only events that can mean content changed are considered
+//! ([`is_content_event`]): opens, reads, read-only closes and access-time
+//! updates are dropped before classification.
 //!
 //! # Honest limits
 //!
@@ -59,11 +66,21 @@
 //!   rename-into-place, backup rotation) on the real OS watcher.
 //! - Two saves within one mtime tick that leave identical sizes (possible
 //!   on HFS+'s 1 s or FAT's 2 s mtime) are reported once.
+//! - A settled project counts as a save only if something was written (see
+//!   [`Debouncer::poll`]). A project *moved or copied in* with its old
+//!   modification times preserved is therefore not reported as a save (it
+//!   isn't one); discovery finds it. A file server whose clock runs more
+//!   than ~30 s behind could make a real save look old and be missed.
+//! - On Linux, reads are invisible only because opens/reads are filtered
+//!   ([`is_content_event`]); on macOS, `stat`/`read_dir`/`read` produce no
+//!   FSEvents at all, but an APFS clone of a watched file does (measured) —
+//!   the "something was written" rule is what keeps a restore from reporting
+//!   its source as saved.
 //! - If the OS drops events (inotify queue overflow, FSEvents "must
 //!   rescan"), a [`WatchEvent::NeedsRescan`] is sent for each root; the
 //!   caller should rescan with discovery.
 
-use crate::clone::{CloneError, RestoresDir};
+use crate::clone::{CloneError, RestoresDir, STAGING_PREFIX};
 use crate::paths::{self, CaseSensitivity};
 use crate::roots::{RootError, RootKind, WatchedRoot, WatchedRoots};
 use std::collections::{BTreeMap, BTreeSet};
@@ -240,10 +257,15 @@ pub fn classify(
         let Component::Normal(n) = c else { return None };
         names.push(n.to_str()?);
     }
-    if names
-        .iter()
-        .any(|n| n.starts_with('.') || n.starts_with("(A Document Being Saved By"))
-    {
+    // A restore being assembled (`.wit-staging-…` inside the Restores
+    // folder) is not a project until it is renamed into place — checked by
+    // name explicitly, not only via the hidden-name rule, so the guarantee
+    // survives a change to the staging prefix.
+    if names.iter().any(|n| {
+        n.starts_with(STAGING_PREFIX)
+            || n.starts_with('.')
+            || n.starts_with("(A Document Being Saved By")
+    }) {
         return None;
     }
     let mut base = root.path().to_path_buf();
@@ -291,6 +313,23 @@ pub fn classify(
         return Some(ProjectRoot { path, kind });
     }
     None
+}
+
+/// Whether a raw event can mean *content* changed. Opens, reads and
+/// read-only closes cannot, and must be dropped: Linux reports `IN_OPEN` and
+/// `IN_CLOSE_NOWRITE` for directories too, so without this filter the
+/// watcher's own `read_dir` of `Project File Backups` while fingerprinting
+/// would re-arm the debounce on every tick and a Logic save would never
+/// settle (caught by the ubuntu CI leg). A close after writing is kept;
+/// unknown kinds are kept (conservative).
+pub fn is_content_event(kind: &notify::EventKind) -> bool {
+    use notify::event::{AccessKind, AccessMode, EventKind, MetadataKind, ModifyKind};
+    match kind {
+        EventKind::Access(AccessKind::Close(AccessMode::Write)) => true,
+        EventKind::Access(_) => false,
+        EventKind::Modify(ModifyKind::Metadata(MetadataKind::AccessTime)) => false,
+        _ => true,
+    }
 }
 
 /// `(relative path, size, mtime)` of every relevant file of a project.
@@ -364,8 +403,24 @@ pub fn fingerprint(project: &ProjectRoot) -> Option<Fingerprint> {
 #[derive(Debug)]
 struct Pending {
     last_event: Instant,
+    /// Wall-clock time of the first raw event (for the mtime recency test).
+    first_event_wall: SystemTime,
+    /// The fingerprint at the first poll after the first event.
+    first_fp: Option<Option<Fingerprint>>,
     fp: Option<Option<Fingerprint>>,
     fp_since: Instant,
+}
+
+/// How far before the first raw event a relevant file's mtime may lie and
+/// still count as "written by this save". Covers event-delivery latency and
+/// coarse mtimes (FAT: 2 s); added to the settle window.
+pub const RECENT_WRITE_SLACK: Duration = Duration::from_secs(30);
+
+/// Did anything in `fp` get written at or after `threshold`? A missing mtime
+/// counts as yes (conservative: report rather than miss a save).
+fn written_since(fp: &Fingerprint, threshold: SystemTime) -> bool {
+    fp.iter()
+        .any(|(_, _, mtime)| mtime.is_none_or(|m| m >= threshold))
 }
 
 /// The write-stability state machine, separated from the OS watcher so it
@@ -386,13 +441,16 @@ impl Debouncer {
         }
     }
 
-    /// A relevant raw event for `project` arrived at `now`.
-    pub fn observe(&mut self, project: ProjectRoot, now: Instant) {
+    /// A relevant raw event for `project` arrived at `now` (`wall` is the
+    /// same moment on the wall clock, for comparing against file mtimes).
+    pub fn observe(&mut self, project: ProjectRoot, now: Instant, wall: SystemTime) {
         self.pending
             .entry(project)
             .and_modify(|p| p.last_event = now)
             .or_insert(Pending {
                 last_event: now,
+                first_event_wall: wall,
+                first_fp: None,
                 fp: None,
                 fp_since: now,
             });
@@ -400,9 +458,16 @@ impl Debouncer {
 
     /// Re-stat every pending project and return the ones that have settled:
     /// no raw event **and** an unchanged fingerprint for the whole settle
-    /// window. A project that vanished is dropped; one whose settled
-    /// fingerprint equals the last one emitted (a late duplicate event) is
-    /// dropped too.
+    /// window. A settled project is reported only if it was really
+    /// *written*: its fingerprint moved while pending, or one of its
+    /// relevant files has an mtime no older than the first event (minus the
+    /// settle window and [`RECENT_WRITE_SLACK`]) — the second clause catches
+    /// an atomic save that finished before the first poll. Events that
+    /// changed nothing are dropped: on APFS, cloning a watched file (which a
+    /// restore does) makes FSEvents report the *source* as created and
+    /// modified although its bytes and mtime are untouched (measured). A
+    /// project that vanished is dropped; one whose settled fingerprint
+    /// equals the last one emitted (a late duplicate event) is dropped too.
     pub fn poll(
         &mut self,
         now: Instant,
@@ -412,6 +477,9 @@ impl Debouncer {
         let mut done = Vec::new();
         for (project, pending) in self.pending.iter_mut() {
             let fp = stat(project);
+            if pending.first_fp.is_none() {
+                pending.first_fp = Some(fp.clone());
+            }
             if pending.fp.as_ref() != Some(&fp) {
                 pending.fp = Some(fp);
                 pending.fp_since = now;
@@ -428,6 +496,14 @@ impl Debouncer {
             };
             let Some(Some(fp)) = pending.fp else { continue };
             if self.last_emitted.get(&project.path) == Some(&fp) {
+                continue;
+            }
+            let moved = pending.first_fp.as_ref() != Some(&Some(fp.clone()));
+            let threshold = pending
+                .first_event_wall
+                .checked_sub(self.settle + RECENT_WRITE_SLACK)
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            if !moved && !written_since(&fp, threshold) {
                 continue;
             }
             self.last_emitted.insert(project.path.clone(), fp);
@@ -626,6 +702,7 @@ fn run_loop(
             Err(RecvTimeoutError::Disconnected) => return,
         };
         let now = Instant::now();
+        let wall = SystemTime::now();
         let mut rescan: BTreeSet<PathBuf> = BTreeSet::new();
         for raw_event in first.into_iter().chain(raw.try_iter()) {
             let event = match raw_event {
@@ -646,6 +723,9 @@ fn run_loop(
                         .map(|r| r.path().to_path_buf()),
                 );
             }
+            if !is_content_event(&event.kind) {
+                continue;
+            }
             for path in &event.paths {
                 let ignored = config
                     .ignore
@@ -659,7 +739,7 @@ fn run_loop(
                 };
                 if let Some(project) = classify(path, root, &exists) {
                     roots_of.insert(project.path.clone(), root.path().to_path_buf());
-                    debouncer.observe(project, now);
+                    debouncer.observe(project, now, wall);
                 }
             }
         }
@@ -846,6 +926,48 @@ mod tests {
     }
 
     #[test]
+    fn a_restore_being_staged_is_not_a_project_until_renamed() {
+        let (_d, r) = root(RootKind::UserFolder);
+        for rel in [
+            ".wit-staging-123-456-0",
+            ".wit-staging-123-456-0/Alternatives/000/ProjectData",
+            ".wit-staging-123-456-0/Alternatives/000/.wit-tmp-9",
+        ] {
+            assert_eq!(classify(&at(&r, rel), &r, &never), None, "{rel}");
+        }
+        let landed = classify(&at(&r, "Song — 2026-09-29.logicx"), &r, &never).unwrap();
+        assert_eq!(landed.kind, ProjectKind::Logic);
+    }
+
+    #[test]
+    fn only_content_events_count() {
+        use notify::event::{
+            AccessKind, AccessMode, CreateKind, DataChange, EventKind, MetadataKind, ModifyKind,
+            RenameMode,
+        };
+        for kind in [
+            EventKind::Access(AccessKind::Open(AccessMode::Any)),
+            EventKind::Access(AccessKind::Read),
+            EventKind::Access(AccessKind::Close(AccessMode::Read)),
+            EventKind::Modify(ModifyKind::Metadata(MetadataKind::AccessTime)),
+        ] {
+            assert!(!is_content_event(&kind), "{kind:?}");
+        }
+        for kind in [
+            EventKind::Access(AccessKind::Close(AccessMode::Write)),
+            EventKind::Create(CreateKind::File),
+            EventKind::Modify(ModifyKind::Data(DataChange::Any)),
+            EventKind::Modify(ModifyKind::Name(RenameMode::To)),
+            EventKind::Modify(ModifyKind::Metadata(MetadataKind::WriteTime)),
+            EventKind::Remove(notify::event::RemoveKind::Any),
+            EventKind::Any,
+            EventKind::Other,
+        ] {
+            assert!(is_content_event(&kind), "{kind:?}");
+        }
+    }
+
+    #[test]
     fn paths_outside_the_root_are_ignored() {
         let (_d, r) = root(RootKind::UserFolder);
         let (_e, other) = root(RootKind::UserFolder);
@@ -873,7 +995,7 @@ mod tests {
         let mut out = Vec::new();
         for step in 0..=6 {
             size += 10;
-            d.observe(p.clone(), ms(t0, step * 150));
+            d.observe(p.clone(), ms(t0, step * 150), SystemTime::now());
             out.extend(d.poll(ms(t0, step * 150), |_| fp(size)));
         }
         assert!(out.is_empty(), "nothing settles mid-save");
@@ -882,11 +1004,11 @@ mod tests {
         assert_eq!(d.poll(ms(t0, 1_400), |_| fp(size)), vec![p.clone()]);
         assert!(d.is_idle());
         // A late duplicate event with an identical fingerprint is swallowed.
-        d.observe(p.clone(), ms(t0, 1_500));
+        d.observe(p.clone(), ms(t0, 1_500), SystemTime::now());
         assert!(d.poll(ms(t0, 1_500), |_| fp(size)).is_empty());
         assert!(d.poll(ms(t0, 2_100), |_| fp(size)).is_empty());
         // The next real save emits again.
-        d.observe(p.clone(), ms(t0, 3_000));
+        d.observe(p.clone(), ms(t0, 3_000), SystemTime::now());
         assert!(d.poll(ms(t0, 3_000), |_| fp(size + 1)).is_empty());
         assert_eq!(d.poll(ms(t0, 3_600), |_| fp(size + 1)), vec![p]);
     }
@@ -899,12 +1021,48 @@ mod tests {
             kind: ProjectKind::Ableton,
         };
         let mut d = Debouncer::new(Duration::from_millis(500));
-        d.observe(p.clone(), t0);
+        d.observe(p.clone(), t0, SystemTime::now());
         assert!(d.poll(t0, |_| fp(1)).is_empty());
         // No events, but the size keeps moving (coalesced/lost events).
         assert!(d.poll(ms(t0, 600), |_| fp(2)).is_empty());
         assert!(d.poll(ms(t0, 1_000), |_| fp(2)).is_empty());
         assert_eq!(d.poll(ms(t0, 1_100), |_| fp(2)), vec![p]);
+    }
+
+    fn fp_at(size: u64, mtime: SystemTime) -> Option<Fingerprint> {
+        Some(vec![(PathBuf::new(), size, Some(mtime))])
+    }
+
+    #[test]
+    fn an_event_that_changed_nothing_is_not_a_save() {
+        // e.g. APFS reporting a clone's *source* as created + modified.
+        let t0 = Instant::now();
+        let wall = SystemTime::now();
+        let old = wall - Duration::from_secs(3_600);
+        let p = ProjectRoot {
+            path: "/x/a.logicx".into(),
+            kind: ProjectKind::Logic,
+        };
+        let mut d = Debouncer::new(Duration::from_millis(500));
+        d.observe(p.clone(), t0, wall);
+        assert!(d.poll(t0, |_| fp_at(7, old)).is_empty());
+        assert!(d.poll(ms(t0, 600), |_| fp_at(7, old)).is_empty());
+        assert!(d.is_idle(), "settled, and dropped as a non-save");
+    }
+
+    #[test]
+    fn an_atomic_save_that_finished_before_the_first_poll_still_counts() {
+        let t0 = Instant::now();
+        let wall = SystemTime::now();
+        let p = ProjectRoot {
+            path: "/x/a.als".into(),
+            kind: ProjectKind::Ableton,
+        };
+        let mut d = Debouncer::new(Duration::from_millis(500));
+        d.observe(p.clone(), t0, wall);
+        // The fingerprint never moves while pending, but the file is fresh.
+        assert!(d.poll(t0, |_| fp_at(7, wall)).is_empty());
+        assert_eq!(d.poll(ms(t0, 600), |_| fp_at(7, wall)), vec![p]);
     }
 
     #[test]
@@ -915,7 +1073,7 @@ mod tests {
             kind: ProjectKind::Ableton,
         };
         let mut d = Debouncer::new(Duration::from_millis(100));
-        d.observe(p, t0);
+        d.observe(p, t0, SystemTime::now());
         assert!(d.poll(t0, |_| None).is_empty());
         assert!(d.poll(ms(t0, 200), |_| None).is_empty());
         assert!(d.is_idle());

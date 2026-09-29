@@ -10,7 +10,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use wit_platform::clone::{write_file_in_restores, RestoresDir};
 use wit_platform::roots::{RootKind, WatchedRoots};
 use wit_platform::watch::{ProjectKind, ProjectWatcher, WatchConfig, WatchEvent};
@@ -90,6 +90,29 @@ fn settled_after_save(w: &ProjectWatcher) -> Vec<(PathBuf, ProjectKind)> {
         }
     }
     settled
+}
+
+/// Make every file under `dir` look last saved an hour ago. Setting a file
+/// time needs a handle with write access on Windows, so open for writing
+/// (without truncating) rather than with `File::open`.
+fn age(dir: &Path) {
+    let old = SystemTime::now() - Duration::from_secs(3_600);
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for entry in fs::read_dir(&d).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                OpenOptions::new()
+                    .write(true)
+                    .open(&path)
+                    .unwrap()
+                    .set_modified(old)
+                    .unwrap();
+            }
+        }
+    }
 }
 
 fn write_in_chunks(path: &Path, chunks: usize) {
@@ -245,6 +268,37 @@ fn a_restore_is_watched_and_appears_as_exactly_one_new_project() {
     write_in_chunks(&landed, 3);
     let got = settled_after_save(&r.watcher);
     assert_eq!(got, vec![(landed, ProjectKind::Ableton)]);
+}
+
+#[test]
+fn a_restore_being_staged_is_invisible_until_renamed_into_place() {
+    let r = rig(RootKind::Discovery, None, |w| {
+        let alt = w.join("Song.logicx/Alternatives/000");
+        fs::create_dir_all(alt.join("Project File Backups/00")).unwrap();
+        fs::write(alt.join("ProjectData"), b"current").unwrap();
+        fs::write(alt.join("Project File Backups/00/ProjectData"), b"older").unwrap();
+        // A real source was saved long before anyone restores from it. (On
+        // APFS, cloning it makes FSEvents report it as modified anyway.)
+        age(&w.join("Song.logicx"));
+    });
+    let mut new = r
+        .restores
+        .begin_restore("Song", "2026-09-29", Some("logicx"))
+        .unwrap();
+    new.clone_tree_from(&r.base.join("watched/Song.logicx"))
+        .unwrap();
+    new.write_file(Path::new("Alternatives/000/ProjectData"), b"older")
+        .unwrap();
+    // Linger in staging for three settle windows: nothing may surface, and
+    // reading the source package must not look like a save either.
+    let during: Vec<WatchEvent> = collect(&r.watcher, SETTLE * 3)
+        .into_iter()
+        .filter(|e| matches!(e, WatchEvent::Settled { .. }))
+        .collect();
+    assert!(during.is_empty(), "staging surfaced: {during:?}");
+    let landed = new.commit().unwrap();
+    let got = settled_after_save(&r.watcher);
+    assert_eq!(got, vec![(landed, ProjectKind::Logic)]);
 }
 
 #[test]
