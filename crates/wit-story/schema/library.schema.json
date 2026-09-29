@@ -1,0 +1,1353 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Library",
+  "description": "Everything the app's first screens need, in one document.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "shelf": {
+      "description": "One card per song, most recently worked first.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ShelfCard"
+      }
+    },
+    "stories": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Story"
+      }
+    },
+    "trust": {
+      "$ref": "#/$defs/TrustPanel"
+    }
+  },
+  "required": [
+    "schema_version",
+    "shelf",
+    "stories",
+    "trust"
+  ],
+  "$defs": {
+    "Artwork": {
+      "oneOf": [
+        {
+          "description": "Logic's own `WindowImage.jpg`. The app fetches it by [`SongId`].",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "window_image"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "No artwork on disk: draw one from this seed, so a song always gets\nthe same picture.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "generated"
+            },
+            "seed": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kind",
+            "seed"
+          ]
+        }
+      ]
+    },
+    "CapabilityNote": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "tier": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Tier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "text"
+      ]
+    },
+    "Comparison": {
+      "description": "A compare between any two moments of one Story.",
+      "type": "object",
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/MomentId"
+        },
+        "heading": {
+          "description": "\"Since Mon 21 Sep\" / \"What changed at Thu 23:05\".",
+          "type": "string"
+        },
+        "listen": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ListenRef"
+          }
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sentences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Sentence"
+          }
+        },
+        "subheading": {
+          "description": "\"compared with the save before\" / \"oldest kept moment to newest\".",
+          "type": "string"
+        },
+        "to": {
+          "$ref": "#/$defs/MomentId"
+        },
+        "track_heat": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TrackHeat"
+          }
+        },
+        "verdict": {
+          "$ref": "#/$defs/Verdict"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "heading",
+        "subheading",
+        "verdict",
+        "sentences",
+        "track_heat",
+        "listen"
+      ]
+    },
+    "Confidence": {
+      "oneOf": [
+        {
+          "description": "Read directly from the file through a verified mapping.",
+          "type": "string",
+          "const": "exact"
+        },
+        {
+          "description": "Read from the file, then converted with an assumption (a bar\nposition under a tempo change).",
+          "type": "string",
+          "const": "approximate"
+        },
+        {
+          "description": "Wit's best reading of indirect evidence (one name gone and one new\nname in the same save, read as a rename).",
+          "type": "string",
+          "const": "inferred"
+        }
+      ]
+    },
+    "Daw": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "logic",
+            "garage_band",
+            "ableton",
+            "fl_studio"
+          ]
+        },
+        {
+          "description": "The generic History tier: every save kept and restorable, no\n\"what changed\" sentences.",
+          "type": "string",
+          "const": "other"
+        }
+      ]
+    },
+    "DurationSource": {
+      "oneOf": [
+        {
+          "description": "First to last save. Always shown as \"about\": the session started\nbefore the first save.",
+          "type": "string",
+          "const": "save_times"
+        },
+        {
+          "description": "The DAW's process was seen open and quit.",
+          "type": "string",
+          "const": "daw_running"
+        }
+      ]
+    },
+    "Family": {
+      "description": "A song's copies and lines, drawn as branches.",
+      "type": "object",
+      "properties": {
+        "evidence": {
+          "description": "Why Wit thinks these belong together.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FamilyEvidence"
+          }
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FamilyMember"
+          }
+        }
+      },
+      "required": [
+        "members",
+        "evidence"
+      ]
+    },
+    "FamilyEvidence": {
+      "oneOf": [
+        {
+          "description": "Lines inside one project (Logic alternatives): certain.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "same_project"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Byte-identical audio files in both.",
+          "type": "object",
+          "properties": {
+            "files": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "shared_audio"
+            }
+          },
+          "required": [
+            "kind",
+            "files"
+          ]
+        },
+        {
+          "description": "The same region identities (Logic region UUIDs survive Save As).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "shared_regions"
+            },
+            "regions": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kind",
+            "regions"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "similar_name"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "FamilyMember": {
+      "type": "object",
+      "properties": {
+        "is_current": {
+          "description": "This member is the Story being viewed.",
+          "type": "boolean"
+        },
+        "last_worked": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parent": {
+          "description": "Index into [`Family::members`] of the member this one came from.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "relation": {
+          "$ref": "#/$defs/Relation"
+        },
+        "song_id": {
+          "$ref": "#/$defs/SongId"
+        },
+        "story_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StoryId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "song_id",
+        "title",
+        "relation",
+        "is_current"
+      ]
+    },
+    "Icon": {
+      "type": "string",
+      "enum": [
+        "add",
+        "remove",
+        "move",
+        "trim",
+        "duplicate",
+        "rename",
+        "record",
+        "tempo",
+        "key",
+        "meter",
+        "mute",
+        "mix",
+        "plugin",
+        "marker",
+        "automation",
+        "midi",
+        "tracks",
+        "audio_file"
+      ]
+    },
+    "KeptSummary": {
+      "type": "object",
+      "properties": {
+        "daw_keeps": {
+          "description": "How many saves the DAW itself keeps (Logic keeps 10 backups, Live 10\nautosaves per set). `None` when unknown.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "label": {
+          "description": "\"41 moments kept · Logic keeps 10\".",
+          "type": "string"
+        },
+        "moments": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "moments",
+        "label"
+      ]
+    },
+    "ListenRef": {
+      "description": "Source audio to play for \"Listen to the new parts\". The app resolves\n`file_name` inside the song's own folder; a Story never holds a path.",
+      "type": "object",
+      "properties": {
+        "duration_secs": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "file_name": {
+          "type": "string"
+        },
+        "region": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "start_secs": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "file_name"
+      ]
+    },
+    "Moment": {
+      "description": "One kept save.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "id": {
+          "$ref": "#/$defs/MomentId"
+        },
+        "label": {
+          "description": "\"Thu 23:05\".",
+          "type": "string"
+        },
+        "listen": {
+          "description": "Source audio behind the new parts, for \"Listen to the new parts\".",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ListenRef"
+          }
+        },
+        "note": {
+          "description": "The line shown when there are no sentences (\"No change Wit can see.\nProbably a mix move, or you just hit save. Wit kept it anyway.\").",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sentences": {
+          "description": "Compared with the moment before it in this Story.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Sentence"
+          }
+        },
+        "source": {
+          "$ref": "#/$defs/MomentSource"
+        },
+        "source_label": {
+          "description": "\"Logic backup 04\", \"current save\", \"kept by Wit\".",
+          "type": "string"
+        },
+        "track_heat": {
+          "description": "Sparse heat-strip column for this moment.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TrackHeat"
+          }
+        },
+        "verdict": {
+          "$ref": "#/$defs/Verdict"
+        },
+        "weight": {
+          "description": "How much changed, for the timeline tick's height: the number of\nsentences. 0 for a routine save.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "at",
+        "label",
+        "source",
+        "source_label",
+        "verdict",
+        "weight",
+        "sentences",
+        "track_heat",
+        "listen"
+      ]
+    },
+    "MomentId": {
+      "description": "One kept save inside a Story.",
+      "type": "string"
+    },
+    "MomentSource": {
+      "oneOf": [
+        {
+          "description": "`Alternatives/<alternative>/Project File Backups/<slot>/`.",
+          "type": "object",
+          "properties": {
+            "alternative": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "logic_backup"
+            },
+            "slot": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "alternative",
+            "slot"
+          ]
+        },
+        {
+          "description": "`Alternatives/<alternative>/ProjectData` — the save on disk now.",
+          "type": "object",
+          "properties": {
+            "alternative": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "logic_current"
+            }
+          },
+          "required": [
+            "kind",
+            "alternative"
+          ]
+        },
+        {
+          "description": "A Live autosave in the set's `Backup/` folder.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ableton_autosave"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "A Live set saved by hand.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ableton_save"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "An FL autosave in `Backup/`.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "fl_autosave"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "fl_save"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "A save the DAW has since recycled; Wit kept a copy first.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "kept_by_wit"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "A copy Wit wrote into the Restores folder (ADR-0007).",
+          "type": "object",
+          "properties": {
+            "from": {
+              "$ref": "#/$defs/MomentId"
+            },
+            "kind": {
+              "type": "string",
+              "const": "restored"
+            }
+          },
+          "required": [
+            "kind",
+            "from"
+          ]
+        }
+      ]
+    },
+    "OutsideFile": {
+      "type": "object",
+      "properties": {
+        "file_name": {
+          "type": "string"
+        },
+        "reason": {
+          "description": "\"outside the project folder\", \"missing on this computer\".",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file_name",
+        "reason"
+      ]
+    },
+    "PilotCounters": {
+      "description": "Local-only counters (no telemetry, no network). The pilot report copies\nthem only when the owner presses *Copy pilot report*.",
+      "type": "object",
+      "properties": {
+        "compares_opened": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "restores_made": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "shares_created": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "since": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "compares_opened",
+        "shares_created",
+        "restores_made"
+      ]
+    },
+    "Place": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "whole_song"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "1-based bars. `end` is inclusive.",
+          "type": "object",
+          "properties": {
+            "approximate": {
+              "description": "\"about bar N\": Wit assumed a tempo or meter to get here.",
+              "type": "boolean"
+            },
+            "end": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "kind": {
+              "type": "string",
+              "const": "bars"
+            },
+            "section": {
+              "description": "The marker or locator the start falls in (\"Chorus 2\").",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "start": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          "required": [
+            "kind",
+            "start",
+            "approximate"
+          ]
+        }
+      ]
+    },
+    "PluginUse": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "stock": {
+          "description": "Ships with the DAW. `None` when Wit can't tell.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "tracks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "tracks"
+      ]
+    },
+    "Relation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "original"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "A Logic alternative inside the same project.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "alternative"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "A separate project saved from this one with Save As.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "save_as_copy"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "A copy Wit restored (ADR-0007).",
+          "type": "object",
+          "properties": {
+            "from": {
+              "$ref": "#/$defs/MomentId"
+            },
+            "kind": {
+              "type": "string",
+              "const": "restored"
+            }
+          },
+          "required": [
+            "kind",
+            "from"
+          ]
+        }
+      ]
+    },
+    "SendReady": {
+      "description": "\"Will this open on my friend's machine?\"",
+      "type": "object",
+      "properties": {
+        "headline": {
+          "description": "\"Ready to send\" / \"2 things to check before you send\".",
+          "type": "string"
+        },
+        "outside_files": {
+          "description": "Audio the project uses from outside its own folder. Names only.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OutsideFile"
+          }
+        },
+        "plugins": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PluginUse"
+          }
+        },
+        "ready": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ready",
+        "headline",
+        "plugins",
+        "outside_files"
+      ]
+    },
+    "Sentence": {
+      "description": "One plain sentence about one change.",
+      "type": "object",
+      "properties": {
+        "confidence": {
+          "$ref": "#/$defs/Confidence"
+        },
+        "icon": {
+          "$ref": "#/$defs/Icon"
+        },
+        "place": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Place"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "place_label": {
+          "description": "\"bars 17–32 · Verse 2\", \"whole song\", \"about bar 9\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "spans": {
+          "description": "The same text, split so a UI can style names without parsing.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Span"
+          }
+        },
+        "text": {
+          "description": "The whole sentence as plain text (copy-as-text, the CLI, screen\nreaders). Always equal to the concatenation of `spans`.",
+          "type": "string"
+        },
+        "tier": {
+          "$ref": "#/$defs/Tier"
+        },
+        "track": {
+          "description": "The track this sentence is about, when known.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "icon",
+        "text",
+        "spans",
+        "confidence",
+        "tier"
+      ]
+    },
+    "Session": {
+      "type": "object",
+      "properties": {
+        "duration": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionDuration"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ended": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "description": "\"Mon · night · about 1h 40m\".",
+          "type": "string"
+        },
+        "moments": {
+          "description": "Oldest first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Moment"
+          }
+        },
+        "started": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      },
+      "required": [
+        "id",
+        "started",
+        "ended",
+        "label",
+        "moments"
+      ]
+    },
+    "SessionDuration": {
+      "type": "object",
+      "properties": {
+        "secs": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "source": {
+          "$ref": "#/$defs/DurationSource"
+        }
+      },
+      "required": [
+        "secs",
+        "source"
+      ]
+    },
+    "ShelfCard": {
+      "type": "object",
+      "properties": {
+        "artwork": {
+          "$ref": "#/$defs/Artwork"
+        },
+        "copies": {
+          "description": "Other members of this song's family (copies, alternatives,\nrestores) — the \"+2 copies\" badge. 0 = no badge.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "daw": {
+          "$ref": "#/$defs/Daw"
+        },
+        "digest": {
+          "description": "The tray's one line for this song. Worded \"no changes Wit can see\",\nnever \"nothing new\".",
+          "type": "string"
+        },
+        "last_worked": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_worked_label": {
+          "description": "\"Thu 23:05\", or \"21 Sep\" when older than a week.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "moments_kept": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "song_id": {
+          "$ref": "#/$defs/SongId"
+        },
+        "story_ids": {
+          "description": "The Story for each lineage, newest-worked first. Always non-empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/StoryId"
+          }
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "song_id",
+        "title",
+        "daw",
+        "moments_kept",
+        "copies",
+        "artwork",
+        "digest",
+        "story_ids"
+      ]
+    },
+    "SongHeader": {
+      "type": "object",
+      "properties": {
+        "daw": {
+          "$ref": "#/$defs/Daw"
+        },
+        "daw_label": {
+          "description": "\"Logic\", \"GarageBand\", \"Live\", \"FL Studio\".",
+          "type": "string"
+        },
+        "kept": {
+          "$ref": "#/$defs/KeptSummary"
+        },
+        "key": {
+          "description": "\"C minor\". Only when the project states it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_worked": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lineage": {
+          "description": "Which line of the song this is, when it has more than one\n(\"Alternative 2\"). `None` for a single-lineage song.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "subtitle": {
+          "description": "\"Logic · 98 BPM · C minor · last worked Thu 23:05\".",
+          "type": "string"
+        },
+        "tempo_bpm": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "time_signature": {
+          "description": "\"4/4\". Only when the project states it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "daw",
+        "daw_label",
+        "subtitle",
+        "kept"
+      ]
+    },
+    "SongId": {
+      "description": "One song on the Shelf: a project, with every lineage it has.",
+      "type": "string"
+    },
+    "Span": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/SpanKind"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "text"
+      ]
+    },
+    "SpanKind": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "region",
+            "file",
+            "plugin",
+            "marker"
+          ]
+        },
+        {
+          "description": "Wit's own words.",
+          "type": "string",
+          "const": "plain"
+        },
+        {
+          "description": "A name the musician chose (track, region, file, marker…). Render as\ntext, never as markup: it can contain anything.",
+          "type": "string",
+          "const": "track"
+        },
+        {
+          "description": "A number with its unit (\"124 BPM\", \"−6.0 dB\").",
+          "type": "string",
+          "const": "value"
+        }
+      ]
+    },
+    "Story": {
+      "description": "One line of saves, read as a story.",
+      "type": "object",
+      "properties": {
+        "capability": {
+          "description": "What Wit can and can't see for this DAW, in plain words. Shown under\nevery change card.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CapabilityNote"
+          }
+        },
+        "family": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Family"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "header": {
+          "$ref": "#/$defs/SongHeader"
+        },
+        "id": {
+          "$ref": "#/$defs/StoryId"
+        },
+        "overview": {
+          "description": "The first compare the Song view shows: oldest kept moment against\nthe newest. Never an adjacent pair (a quarter of real adjacent saves\nshow nothing — design-review-1). `None` with fewer than two moments.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Comparison"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "send_ready": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SendReady"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sessions": {
+          "description": "Oldest first. Saves more than 45 minutes apart start a new session.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Session"
+          }
+        },
+        "song_id": {
+          "$ref": "#/$defs/SongId"
+        },
+        "tracks": {
+          "description": "Heat-strip rows, in the DAW's track order where known.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TrackLane"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "song_id",
+        "header",
+        "tracks",
+        "sessions",
+        "capability"
+      ]
+    },
+    "StoryId": {
+      "description": "One line of saves: a Logic alternative, an Ableton lineage, an FL\nproject with its autosaves.",
+      "type": "string"
+    },
+    "Tier": {
+      "description": "The honesty tiers (wit-planning/PLAN.md \"Honesty tiers\").",
+      "oneOf": [
+        {
+          "description": "Logic/GarageBand: names, regions, files, tempo. No knobs or faders.",
+          "type": "string",
+          "const": "structure"
+        },
+        {
+          "description": "Ableton (and FL ≤ v24): the full musical vocabulary.",
+          "type": "string",
+          "const": "semantic"
+        },
+        {
+          "description": "Any DAW, from two bounces.",
+          "type": "string",
+          "const": "ears"
+        },
+        {
+          "description": "Any DAW: every save kept and restorable, no sentences.",
+          "type": "string",
+          "const": "history"
+        }
+      ]
+    },
+    "Timestamp": {
+      "description": "Seconds since the Unix epoch, UTC.",
+      "type": "integer",
+      "format": "int64"
+    },
+    "TrackHeat": {
+      "type": "object",
+      "properties": {
+        "level": {
+          "description": "1 = a little, 2 = more, 3 = a lot (or the track was added/removed).",
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "track": {
+          "description": "Index into [`Story::tracks`].",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "track",
+        "level"
+      ]
+    },
+    "TrackLane": {
+      "type": "object",
+      "properties": {
+        "color": {
+          "description": "\"#RRGGBB\" in the DAW's own track colour, when Wit can read it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "key": {
+          "description": "Stable within a Story: the DAW's track id where it has one,\notherwise the name.",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "name"
+      ]
+    },
+    "TrustPanel": {
+      "type": "object",
+      "properties": {
+        "counters": {
+          "$ref": "#/$defs/PilotCounters"
+        },
+        "statements": {
+          "description": "\"Wit never changes your projects.\", \"Nothing leaves this computer.\"",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "watched_folders": {
+          "description": "Folder names as the owner sees them (\"~/Music/Logic\"). Shown only on\nthe owner's own screen; never copied into a share page.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "watched_folders",
+        "statements",
+        "counters"
+      ]
+    },
+    "Verdict": {
+      "oneOf": [
+        {
+          "description": "The oldest moment: nothing to compare with.",
+          "type": "string",
+          "const": "first"
+        },
+        {
+          "description": "Wit can name at least one change.",
+          "type": "string",
+          "const": "changed"
+        },
+        {
+          "description": "The file changed, but nothing Wit can read did: a routine save, or\na knob or fader move Wit can't see yet.",
+          "type": "string",
+          "const": "nothing_visible"
+        },
+        {
+          "description": "Byte-for-byte the same file as the moment before.",
+          "type": "string",
+          "const": "identical"
+        },
+        {
+          "description": "Wit couldn't read this save (for example a newer DAW version).",
+          "type": "string",
+          "const": "unreadable"
+        }
+      ]
+    }
+  }
+}
