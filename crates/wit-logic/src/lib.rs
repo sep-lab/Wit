@@ -5,7 +5,8 @@
 //!
 //! One walker covers both `.logicx` (Logic) and `.band` (GarageBand) — same
 //! magic, same root-record tag (`gnoS`), version word varies (`d009`,
-//! `d109`, `c509` all observed on real files; see `frame.rs`).
+//! `d109`, `c509` on real files, and `cf09` on all 113 saves of the upstream
+//! Logic 11.2.2 corpus; see `frame.rs`).
 //!
 //! **`semantic_equal` v1 is census + [`Extracted`] equality only**
 //! (M2 tracking issue guardrail). Byte comparison

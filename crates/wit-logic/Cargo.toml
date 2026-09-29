@@ -13,3 +13,5 @@ workspace = true
 
 [dev-dependencies]
 proptest = "1"
+# The M2 gate reads `plutil -extract … json` output (tests/jonkubis_fixtures.rs).
+serde_json = "1"

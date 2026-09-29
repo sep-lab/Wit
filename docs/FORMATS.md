@@ -396,8 +396,11 @@ What its spec already documents:
 - **No absolute-offset pointers**, so records can be grown or inserted as long as the root
   length is fixed up. This is precisely what makes writing feasible.
 
-It also ships **30 real Logic 11.2.2 fixtures**, which are arguably worth more than the
-code.
+It also ships real Logic-made fixtures, which are arguably worth more than the code: at
+the pinned commit `1f77c5c` (measured 2026-09-29), **87 `.logicx` bundles holding 113
+`ProjectData` files**, every bundle recording Logic Pro 11.2.2 as last saved from. An
+earlier version of this section said "30 fixtures"; that count is not reproducible at the
+pinned commit. Wit walks all 113 in `just logic-fixtures-gate`.
 
 ⚠️ **Two time origins at 960 PPQ**, and confusing them silently corrupts arrangement
 placement: region placements use origin **34560** (9 bars); tempo, marker *and note*
@@ -604,7 +607,9 @@ Logic→Ableton conversion is solved. **It is not**, and the details are instruc
   byte-scrapes. It never walks Logic's record framing. Clip positions come from WAV `bext`
   timestamps, not from `ProjectData`. Mixer state cannot be read at all — the user must
   hand-write a `mixer_overrides.json`.
-- Its MIDI extraction recovers **zero notes** across all 30 real Logic 11.2.2 fixtures. Its
+- Its MIDI extraction recovered **zero notes** across the Logic 11.2.2 fixtures it was
+  run on (the "30 fixtures" of an earlier snapshot; not re-run against the 113-file corpus
+  at the pinned commit). Its
   15-byte signature expects `00` where real events carry note-off-velocity `0x40`.
 - **The generalisable lesson:** even with that byte corrected, fixed-signature scanning
   *structurally* cannot find the last note of a region, because a terminal flag bit inside

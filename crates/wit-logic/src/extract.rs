@@ -8,9 +8,10 @@
 //! comments for the exact cross-check against that project's
 //! `MetaData.plist` ground truth. This is a **single real file**. The
 //! runtime-fetched upstream corpus (`tests/jonkubis_fixtures.rs`, 113 saves
-//! at the pinned commit) proves the walk and that extraction never fails on
-//! them; it does not check the extracted names against ground truth, so the
-//! offsets stay spot-checked, not corpus-verified.
+//! at the pinned commit) checks the walk, tempo against `MetaData.plist`
+//! `BeatsPerMinute`, and audio-file names against `AudioFiles`; track and
+//! region names have no ground truth there, so those offsets stay
+//! spot-checked, not corpus-verified.
 //!
 //! **Extracted names are diagnostic-tier, not a musician-facing claim.**
 //! `possible_track_names` in particular is a best-effort filtered list, not

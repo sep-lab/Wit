@@ -42,9 +42,9 @@ lint-rust:
 licenses:
     cargo deny check licenses advisories
 
-# The M2 gate: fetch the MIT-licensed jonkubis/LogicProFormatWriter corpus at the
-# pinned commit into a temp dir (never into the repo — CI refuses ProjectData
-# paths) and walk every real Logic save in it. Needs network.
+# Fetches the MIT-licensed jonkubis/LogicProFormatWriter corpus at the pinned
+# commit into a temp dir (never the repo: CI refuses ProjectData paths).
+# M2 gate: walk all 113 upstream Logic saves, check them against MetaData.plist (needs network)
 logic-fixtures-gate:
     #!/usr/bin/env bash
     set -euo pipefail

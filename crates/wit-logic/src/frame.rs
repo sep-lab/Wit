@@ -16,7 +16,7 @@
 //! ```text
 //! ROOT FRAME (offset 0), 24-byte header:
 //!   +0x00  4   magic 23 47 C0 AB
-//!   +0x04  2   version word (varies — d009, d109, c509 all observed; accept all)
+//!   +0x04  2   version word (varies — d009, d109, c509, cf09 all observed; accept all)
 //!   +0x06  10  (stable, unvalidated — see PROJECTDATA_FORMAT.md §2)
 //!   +0x10  4   uint32 LENGTH = filesize - 24        (little-endian)
 //!   +0x14  4   (unvalidated)
