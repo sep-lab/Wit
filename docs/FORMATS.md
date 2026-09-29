@@ -172,74 +172,143 @@ uses the logical one. Both conventions are in use, so state which you mean.
 
 The container census says *"79 regions became 96"*. These two payloads say *which*
 region, and where it went. All offsets are **record-relative** (from the start of the
-36-byte record header); payload-relative = record − `0x24`. Fields are **2-byte
-aligned**, not 4 — Logic descends from Emagic's m68k-era Notator, and it shows.
+36-byte record header); payload-relative = record − `0x24`. Fields sit on **2-byte**
+boundaries, not 4 (the length at `+0x3A`, the name length at `+0x6E`).
+
+**Material and dates.** Unless a figure says otherwise it was measured with
+`experiments/logic_region_map.py` on the 10-save chain of the `You make my crazy!` fixture
+([EXPERIMENTS.md §0](EXPERIMENTS.md)), re-measured **2026-09-29**; "backup 00" is that
+chain's oldest save. Library-wide figures come from the **2026-08-16** `--scan` of the
+32-project library and say so. Per-figure reproduction commands are in
+[EXPERIMENTS.md §12](EXPERIMENTS.md#12-logic-region-payloads--which-region-and-where-it-went).
+
+**Upstream.** This section corrects and extends §3, §8 and §8.1 of
+[`PROJECTDATA_FORMAT.md`](https://github.com/jonkubis/LogicProFormatWriter/blob/1f77c5c37d49ccd9551cc8e9107750e8db2f1fed/PROJECTDATA_FORMAT.md)
+in `jonkubis/LogicProFormatWriter` (MIT, pinned at the SHA `wit-logic` already cites).
+Where they agree it says so below; where they differ, the difference is stated.
 
 **`AuRg`/`gRuA` — the region object.**
 
 | Offset | Type | Meaning |
 |---|---|---|
-| `+0x08` | u32 | `familyIndex << 18`. Low 18 bits are zero on every record measured. |
-| `+0x3A` | u32 | Region length, in frames **of the source file's sample rate** |
-| `+0x6E` | u16 | Name length |
-| `+0x70` | ASCII | Name, padded to an even length |
+| `+0x08` | u32 | `familyIndex << 18`. Low 18 bits are zero on 903/903 records of the chain; no region's family index changes between saves (0 of 96). Upstream §8.1 documents the same `index << 18` encoding. |
+| `+0x3A` | u32 | Region length, in frames **of the source file's sample rate** (upstream §8: payload `+0x16`, the same field) |
+| `+0x6E` | u16 | Name length, in bytes (upstream §8: payload `+0x4a`, the same field) |
+| `+0x70` | UTF-8 | Name, padded to an even length — decode as UTF-8, see below |
 | name end `+0x56` | 16 B | Region UUID (RFC 4122 v1 layout) |
 
 The name is variable-length **and the record is sized to fit it**:
-`payload_size == 209 + nlen + (nlen & 1)`, exact on all 79 records of one save (40 even
-names → `+209`, 39 odd → `+210`). Everything behind the name shifts with it, so the
+`payload_size == 209 + nlen + (nlen & 1)`, exact on all 79 records of backup 00 (40 even
+names → `+209`, 39 odd → `+210`) and on 903/903 across the chain. Upstream §8 found the
+same resizing independently. Everything behind the name shifts with it, so the
 suffix — a constant 133 bytes — must be addressed from the padded name end, never from a
 fixed offset. The length field is a *region* length, not a file length: a trimmed region
 reads shorter than its source (`Reverse Hat Beat 01.1` = 89,128 frames against the
-source's 235,200). It was confirmed against `afinfo` on five independent files, e.g.
-`Deep Down Shaker` at 173,509 frames = 3.934444 s × 44,100.
+source's 235,200). Untrimmed lengths match `afinfo`'s "valid frames" on six of the
+fixture's source files, e.g. `Deep Down Shaker` at 173,509 frames = 3.934444 s × 44,100.
+
+**Name encoding: decode UTF-8.** Upstream §8 calls the name ASCII. Every name on the
+chain is 7-bit ASCII (903/903), where ASCII and UTF-8 are byte-identical, so nothing
+measured tells them apart. The port should use UTF-8: it is a strict superset, it is
+what `wit-logic`'s `extract.rs` already uses for this field, and a name that is not valid
+UTF-8 fails the decode (and is counted) instead of being mis-read. How Logic writes a
+non-ASCII name is **untested** — no such name exists in the material.
 
 **The UUID is the important field.** It is unique per region and *stable across saves*:
-all 79 region UUIDs in the oldest save of one 10-save chain are still present in the
-newest, which adds exactly 17 more. That is Logic's equivalent of the Ableton `Id` this
-document relies on elsewhere, and it is what makes a cross-save region diff possible.
-Its node field is random per UUID (96 distinct over 96 regions, multicast and
-locally-administered bits both mixed), so it is **not** a hardware MAC address and
-carries no machine identity.
+all 79 region UUIDs of backup 00 are still present in the newest save, which adds exactly
+17 more. That is Logic's equivalent of the Ableton `Id` this document relies on
+elsewhere, and it is what makes a cross-save region diff possible. Its node field is
+random per UUID (96 distinct over the newest save's 96 regions; the multicast bit is set
+on 50 and the locally-administered bit on 43), so it is **not** a hardware MAC address
+and carries no machine identity.
 
 **`EvSq`/`qSvE` — where position actually lives.**
 
-Region position is **not** in `AuRg`. Two sibling copies of one region differ by only
-four bytes outside their name and UUID. Position lives in the arrangement:
+Region position is **not** in `AuRg`. Upstream §8 puts it in the placement event and
+validated that in Logic with a one-bar move (+3840 ticks); the one move on the chain
+agrees (backup 00 → 01, bar 55.5 → 55.75: the placement's `+0x04` changed by exactly
+960). An earlier version of this section also said two sibling copies of a region differ
+by only four bytes outside name and UUID; that did not reproduce — a byte-compare of
+same-size sibling records on backup 00, done by hand and not by a script mode, found 2
+to 25 differing bytes — and the claim is withdrawn.
 
-> Every `qSvE` payload is a stream of **16-byte typed events** — 13,606 of 13,606
-> payloads across a 32-project library are an exact multiple of 16, with byte `+7` of
-> each unit a type code and exactly one terminator event
-> (`f1 00 00 00 ff ff ff 3f` + 8 zero bytes) per record.
+> Every `qSvE` payload is a grid of **16-byte units**: 13,606 of 13,606 payloads in the
+> 32-project library (2026-08-16) and 1,550 of 1,550 on the chain are an exact multiple
+> of 16. On the chain every payload holds exactly one terminator unit
+> (`f1 00 00 00 ff ff ff 3f` + 8 zero bytes, the tail upstream §3 documents), always its
+> last (1,550/1,550); library-wide that is unmeasured until the re-run.
 
-An audio placement is a group headed by `24 00 00 00` on that grid, at *variable*
-spacing. Within the group:
+Byte `+7` of each unit behaves like a type code — **[inferred]**; nothing here interprets
+it. Backup 00 carries **12** distinct values: `00 3f 88 89 8a a3 a4 a7 aa b2 bb bc`. `3f`
+occurs only on the terminator (1,550 `3f` units and 1,550 terminators on the chain). Upstream §3 gives fixed event sizes
+(tempo 32 B, signature and marker 48 B) and §8.1 80-byte placement events; all are
+multiples of 16, consistent with the grid, which is the one invariant that held on every
+payload measured.
+
+An audio placement is a 48-byte group — three units — headed by `24 00 00 00` on that grid.
+Within the group:
 
 | Offset | Type | Meaning |
 |---|---|---|
-| `+0x04` | u32 | Position = `34560 + tick@960` (regions use origin 34560, tempo/markers 38400) |
-| `+0x10` | u32 | Event id |
+| `+0x04` | u32 | Position = `34560 + tick@960` (regions use origin 34560, tempo/markers 38400). Its **high byte `+0x07` is also the head unit's byte `+7`**: `0x00` on every placement head measured (592/592). |
+| `+0x10` | u32 | Upstream §8.1 calls it a per-region id. **Not a per-placement key** — on backup 00 the 56 placements carry 30 distinct values, one per occupied track (30 tracks, 30 distinct value/track pairs). Do not key on it. |
 | `+0x14` | u8 | **Track number, 1-based** |
-| `+0x2c` | u32 | Region link; `link / 4` == `familyIndex` |
+| `+0x2c` | u32 | Region link; `link / 4` == `familyIndex` (upstream §8.1 agrees) |
 
-Measured with `experiments/logic_region_map.py --scan` over 32 real Logic projects,
-132 saves: 132/132 saves walked to clean EOF; 10,020/10,020 region records decoded both a
-name and a distinct UUID; 5,282/5,282 placements resolved to a region family; and
-132/132 saves had every decoded track number within that save's `MetaData.plist`
-`NumberOfTracks`. 4,995 of 5,282 placements land on the 960-tick grid — the rest are
-legitimate, a region dragged with snap off sits at tick resolution.
+**The unit types are a structural collision filter.** The three units of every placement
+group carry byte `+7` = `00` / `89` / `bc` (56/56 on backup 00, 592/592 on the chain).
+Every rejected marker hit on the chain has a head byte `+7` of `0x88` (10/10), and any
+position at or past bar 4,362 (2²⁴ ticks) puts a nonzero value in that same byte. So checking head
+byte `+7 == 0x00` separates placements from collisions without a bar bound. The script
+**counts** this (`placements_with_unit_types_00_89_bc`, `rejected_marker_head_byte`) but
+does not yet filter on it: it is unmeasured library-wide, and a filter that drops a
+genuine placement is worse than a collision the track and range checks already reject.
 
-The four-byte marker does collide with data inside other event types, so 265 hits were
-rejected: 264 carrying track 0 (the byte is 1-based) and one at bar 821,376 on a
-five-track project. Rejections are counted, never silently dropped.
+**No fixed stride.** Upstream §8.1 models placement events as 80 bytes, `0x50` apart —
+true of its 3-region fixture. On backup 00 the 55 gaps between consecutive placement heads
+are 160, 240 (46 of them), 320, 480, 720 and 1,440 bytes. Every gap is a multiple of 80,
+but a placement is followed by one or more non-placement 80-byte blocks, so a reader that
+takes every 80-byte block for a placement event mis-reads two of every three blocks at the
+commonest, 240-byte, spacing. Find heads by the marker on the 16-byte grid; do not stride.
 
-**What is still open — [inferred].** A placement links to a region *family* (one source
-file), not to an individual region record. `Angelic Vocal FX 03` and its `.1`/`.2`/`.3`
-copies share one link value. On the measured project 23 of 35 families hold exactly as
-many region records as placements and pair 1:1; the other 12 hold more — 79 region
-objects for 56 placements, so 23 region objects exist that are not on the timeline. Which
-copy a given placement refers to is **not** resolvable from the fields above, and the
-tooling reports those as "one of N copies" rather than guessing.
+**Decode rates.** Library-wide, 2026-08-16: 132/132 saves walked to clean EOF;
+5,282/5,282 placements resolved to a region family; 132/132 saves had every decoded track
+number within that save's `MetaData.plist` `NumberOfTracks`; 4,995 of 5,282 placements
+landed on the 960-tick grid. The rest are **[inferred]** to be regions placed with snap
+off — none was checked against Logic's display, and the chain has none to check (592/592
+on the grid). That pass also decoded **10,020** `gRuA` records, which is a count, **not a
+rate**: it counted only the records that decoded, so a failure could not show, and the
+"10,020/10,020" first published here was true by construction. The library-wide decode
+rate is **unmeasured** until the re-run. With the corrected counter, on the chain:
+**903 of 903 `gRuA` records seen were decoded.**
+
+The four-byte marker collides with data inside other units. The 2026-08-16 pass rejected
+265 of 5,547 hits; the split it was reported with — 264 carrying track 0, one at bar
+821,376 on a five-track project — and its highest accepted placement, bar 689, came from
+a one-off pass rather than a script mode. `--scan` now prints both
+(`placement_markers_rejected_*`, `placement_highest_bar`), so the re-run can confirm them.
+On the chain: 602 hits, 10 rejected, all track 0; highest placement bar 149. Rejections
+are counted, never silently dropped. A placement before bar 1 (position < 34560, i.e.
+pre-roll) is rejected as `before_origin`, not decoded; the chain has none.
+
+**What is still open — which copy [measured].** A placement links to a region *family*
+(one source file), not to a region record: `Angelic Vocal FX 03` and its `.1`/`.2`/`.3`
+copies share one link value. On backup 00 there are 35 families: 20 hold one region object
+(16 placed once, 4 not placed) and **15 hold two or more — and those 15 carry 40 of the 56
+placements.** For those 40, which copy is on the timeline is not resolvable from any field
+above; the map prints "one of N copies" and the diff "a '*stem*' region". 12 families hold
+more region objects than placements (79 objects for 56 placements); the map reports a
+per-family surplus count and never names which copies are off the timeline. An earlier
+version of this section put the gap at "12 of 35 families" by counting families whose
+record count equals their placement count — which includes 7 multi-copy families whose
+copies cannot be told apart. The gap is **40 of 56 placements**.
+
+**How the diff pairs placements.** `--diff` compares placements as (track, position,
+family) multisets. Exact matches cancel; a family with exactly one placement gone and
+exactly one new is reported as a move; everything else is reported as placements added
+and removed, never paired by guess. Two copies of *one* family swapping places cancel out
+and are not reported. The comparison relies on family indexes being stable across saves,
+which holds on the chain (0 of 96 change).
 
 **What is demonstrated is now a region-level diff, and still not a full semantic diff.**
 Region add/remove/rename/resize and placement moves are readable, and
@@ -458,9 +527,12 @@ reassign element IDs rather than synthesising Live's schema from nothing.
 
 1. Are Ableton IDs stable across **Live versions**, and across duplicate/copy-paste?
 2. Full `ProjectData` payload schemas per remaining chunk tag. The container, the
-   region object (`AuRg`) and the placement events in `EvSq` are mapped; `Trak`,
-   `AuCU`, and the other six `EvSq` event types are not. Within the mapped set, which
-   *copy* of a multi-region family a placement refers to is still unresolved.
+   region object (`AuRg`) and the audio placement groups in `EvSq` are mapped; `Trak`,
+   `AuCU`, MIDI placements, and every other `EvSq` unit are not — one save carries 12
+   distinct byte-`+7` values, of which a placement group uses three (`00`/`89`/`bc`).
+   Within the mapped set, which *copy* of a multi-region family a placement refers to is
+   still unresolved (40 of 56 placements on the measured save), and placement `+0x10` is
+   unexplained beyond "one value per track".
 3. The FL Studio v25 scalar keystream.
 4. Does a Wit-written `.als` open cleanly in Live? **Untested — release gate.**
 5. Studio One and modern Cubase need first-hand verification; ours is second-hand.
