@@ -45,17 +45,16 @@ Building the 0.0 pilot — no released artifact yet.
 - **Logic region payload map** — `experiments/logic_region_map.py`, which answers *which*
   region moved and where, not just how many records changed. Maps `AuRg`/`gRuA` (name,
   length in source frames, and a per-region UUID that is **stable across saves** — the
-  Logic equivalent of Ableton's track `Id`) and the audio placement events inside
+  Logic equivalent of Ableton's track `Id`) and the audio placement groups inside
   `EvSq`/`qSvE` (position, 1-based track number, region link). Also corrects the upstream
-  spec: `qSvE` payloads are a stream of **16-byte typed events**, not the fixed-stride
-  32/48/80-byte records documented elsewhere — the fixed-stride reading produces garbage
-  for two of every three events on a real 31-track project. Measured over 32 real Logic
-  projects / 132 saves: 132/132 saves walked clean, 13,606/13,606 event payloads 16-byte
-  aligned, 10,020/10,020 regions decoding a name and a distinct UUID, 5,282/5,282
-  placements resolved. See [docs/FORMATS.md](docs/FORMATS.md) for the offset tables and
-  [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) §12 for the measurement and its limits —
-  including the one that is not closed: which *copy* of a multi-region family a placement
-  refers to — [#3](https://github.com/sep-lab/Wit/issues/3)
+  spec: `qSvE` payloads are a grid of **16-byte units**, and placement heads sit at
+  variable spacing, not at the fixed 80-byte stride upstream §8.1 documents. Library-wide
+  (32 projects / 132 saves, 2026-08-16): 132/132 saves walked clean, 13,606/13,606 event
+  payloads 16-byte aligned, 5,282/5,282 placements resolved, 10,020 region records decoded
+  (a count — that scan could not see decode failures, so the library-wide decode *rate* is
+  unmeasured until a re-run). See [docs/FORMATS.md](docs/FORMATS.md) for the offset tables
+  and [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) §12 for the measurement and its limits —
+  [#3](https://github.com/sep-lab/Wit/issues/3), [PR #45](https://github.com/sep-lab/Wit/pull/45)
 - Research findings across Ableton `.als`, Logic `ProjectData`, GarageBand `.band` and
   FL Studio `.flp`, measured on real projects ([docs/EXPERIMENTS.md](docs/EXPERIMENTS.md))
 - Working prototypes: Ableton semantic differ, CDC dedup harness, FLP parser, storage bench
@@ -77,6 +76,16 @@ Building the 0.0 pilot — no released artifact yet.
   ordering, two rename-coalescing false positives, and `cdc_dedup.pairwise()`
   undercounting reuse — the last of which required re-measuring and correcting
   `EXPERIMENTS.md` §6a) — [PR #28](https://github.com/sep-lab/Wit/pull/28), closes #10
+- `experiments/logic_region_map.py` as merged in #45: its tests built fixtures from the
+  parser's own offset constants, so a drifted offset stayed green (now: literal golden
+  bytes, and 29 of 29 constant mutations fail the suite); its diff paired placements by
+  bar order and reported false moves (now: (track, position, family) comparison, a move
+  only for an unambiguous same-family pair); its decode rate could not fall below 100%
+  (now: every `gRuA` record is counted as seen — 903/903 decoded on the one project
+  re-measured); its map named specific copies as off the timeline by alphabetical guess
+  (now: a per-family count); and its docs understated the "which copy" gap as 12 of 35
+  families when it is 40 of 56 placements. Docs re-scoped in FORMATS.md and
+  EXPERIMENTS.md §12
 
 ### Findings that shaped the design
 - **M2.5 reality gate — the Logic empty-verdict rate, measured at scale and passed.**

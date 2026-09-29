@@ -729,53 +729,101 @@ moved from bar 12 to bar 16. Two payloads close that gap — `AuRg`/`gRuA` (the 
 object) and the placement events inside `EvSq`/`qSvE`. Field offsets are in
 [FORMATS.md](FORMATS.md).
 
-**Material.** 32 real Logic projects, 132 saves (each alternative's current save plus its
-`Project File Backups` slots), 28 GB. The same library §11 walked. Plus three real
-GarageBand `.band` projects.
+**Correction, 2026-09-29.** The first version of this section (#45) overstated three
+things, and this one replaces it: its region decode rate could not fall below 100% (the
+counter saw only records that decoded), its "which copy" gap was understated (12 of 35
+families; it is 40 of 56 placements), and its diff paired placements by bar order, which
+reported false moves. Details are under each result below.
 
-**Method.** `experiments/logic_region_map.py --scan <library-root>` walks every
-`ProjectData`, decodes both payloads, and counts what decoded. Nothing is sampled; every
-save in the library is read. Region length was independently cross-checked against
-`afinfo` durations on five audio files, and decoded track numbers against each save's
-`MetaData.plist` `NumberOfTracks`.
+**Material.** Two runs, reported separately:
 
-**Result — measured, n = 132 saves / 32 projects:**
+- **Library, 2026-08-16:** 32 real Logic projects, 132 saves (each alternative's current
+  save plus its `Project File Backups` slots), 28 GB — the library §11 walked — plus three
+  real GarageBand `.band` projects.
+- **Chain, 2026-09-29:** the `You make my crazy!` fixture (§0), all 10 saves, read from a
+  read-only copy. "Backup 00" is its oldest save. Every chain figure below was re-measured
+  with the corrected counters; the library has not been re-read since.
 
-| | |
-|---|---|
-| Saves walked to clean EOF | **132 / 132** |
-| `EvSq` payloads an exact multiple of 16 bytes | **13,606 / 13,606** |
-| Region records decoding a name **and** a distinct UUID | **10,020 / 10,020** |
-| Placements resolving to a region family | **5,282 / 5,282** |
-| Saves where every decoded track number ≤ `NumberOfTracks` | **132 / 132** |
-| Placements on the 960-tick grid | 4,995 / 5,282 (94.6%) |
-| Marker hits rejected as collisions | 265 |
+**Method.** `experiments/logic_region_map.py --scan <root>` walks every `ProjectData`,
+decodes both payloads, and counts what decoded; nothing is sampled. Since 2026-09-29 it
+counts every `gRuA` record it *sees*, not only those that decode, and breaks placement
+marker rejects down by reason. The map mode (one save) prints the per-save figures. Region
+length was cross-checked against `afinfo` on six source files, and decoded track numbers
+against each save's `MetaData.plist` `NumberOfTracks`.
 
-The 5.4% off-grid placements are legitimate — a region dragged with snap off sits at tick
-resolution; the sampled ones land on musical positions like bar 66⅚. The 265 rejects are
-false positives from the four-byte marker colliding with other event data: 264 carry
-track 0 (the byte is 1-based) and one sits at bar 821,376 on a five-track project. The
-largest genuine placement in the whole library is bar 689.
+**Result — measured:**
 
-**The result that matters most** is not in the table. On one project's 10-save chain, all
-**79** region UUIDs from the oldest save are still present in the newest, which adds
-exactly **17** more. Region identity is stable across saves, so a diff can name what
-changed instead of counting it:
+| | Library, 2026-08-16 (132 saves) | Chain, 2026-09-29 (10 saves) |
+|---|---|---|
+| Saves walked to clean EOF | **132 / 132** | **10 / 10** |
+| `EvSq` payloads an exact multiple of 16 bytes | **13,606 / 13,606** | **1,550 / 1,550** |
+| …holding exactly one terminator, as their last unit | not measured | **1,550 / 1,550** |
+| `gRuA` records decoded / seen | 10,020 decoded — **seen not counted, so no rate** | **903 / 903** |
+| Region UUIDs distinct within their save | 10,020 | 903 |
+| Placements resolving to a region family | **5,282 / 5,282** | **592 / 592** |
+| Placements whose copy cannot be attributed (family of 2+ region objects) | not measured | 426 / 592 |
+| Saves where every decoded track number ≤ `NumberOfTracks` | **132 / 132** | **10 / 10** |
+| Placements on the 960-tick grid | 4,995 / 5,282 (94.6%) | 592 / 592 |
+| Placement groups whose units carry byte `+7` = `00`/`89`/`bc` | not measured | **592 / 592** |
+| Marker hits rejected as collisions | 265 of 5,547 | 10 of 602 — all track 0 |
+| Highest accepted placement | bar 689 (one-off pass, see below) | bar 149 |
+| Region UUIDs changing family index between saves | not measured | 0 of 96 |
+
+**The library decode figure is re-scoped, not re-measured.** #45 published "10,020 / 10,020
+regions decoding a name and a distinct UUID". The scan behind it counted regions only after
+they decoded, so the denominator was the numerator and the rate was 100% by construction.
+10,020 decoded records is real; the library-wide decode *rate* is **unmeasured** until the
+scan is re-run with the corrected counter (pending permission to read the library again —
+command below). On the one project re-measured, 903 of 903 records seen decoded.
+
+**Figures from a one-off pass.** The 2026-08-16 reject split (264 carrying track 0, one at
+bar 821,376 on a five-track project) and the library's highest genuine placement (bar 689)
+did not come from a script mode. `--scan` now prints both (`placement_markers_rejected_*`,
+`placement_highest_bar`) so the re-run can confirm or correct them.
+
+**Inferred, not measured:** the 5.4% of library placements off the 960-tick grid are
+*presumably* regions placed with snap off. None was checked against Logic's display, and
+the chain has no off-grid placement to check.
+
+**The result that matters most** is not in the table. Across the chain, all **79** region
+UUIDs of backup 00 are still present in the newest save, which adds exactly **17** more,
+and no region's family index changes between saves. Region identity is stable, so a diff
+can name what changed instead of counting it. On backup 00 → backup 01 (the pair this
+example comes from):
 
 ```
 region 'Untitled 3_2 #12.4' resized: 1321937 -> 1121286 frames
 track 3: a 'Untitled 3_2 #12' region moved from bar 55.5 to bar 55.75
 ```
 
+**The diff pairs placements honestly now.** #45's diff paired a track's placements by bar
+order, so moving one region past another (Kick at bar 1, Snare at 5 → Kick to 9) printed
+two moves, and two regions swapping bars printed nothing. It now compares
+(track, position, family) placements, cancels exact matches, calls a change a *move* only
+when one placement of a family left and one arrived, and reports everything else as
+placements added and removed. Each of those cases is a test in
+`tests/test_logic_region_map.py`.
+
 **Limits.**
 
-- **n = 1 library, one person's projects, all Logic 12.** Nothing here says a Logic 10
-  or 11 file decodes the same way. The version word is not gated on, so a mismatch would
-  surface as a decode failure rather than as silent garbage — but it has not been tested.
-- **A placement links to a region family, not to an individual region record.** 23 of 35
-  families on the measured project pair 1:1 with their placements; 12 hold more region
-  records than placements. Which copy moved is unresolved, and the tool says "one of N
-  copies" rather than guessing.
+- **Which copy is unresolved for 40 of 56 placements.** A placement links to a region
+  family, not to a region record. On backup 00, 20 of 35 families hold one region object
+  (16 placed, 4 not) and 15 hold two or more — those 15 carry 40 of the 56 placements, and
+  for them the tool says "one of N copies" / "a '*stem*' region" rather than guessing. The
+  12 families with more objects than placements are reported as a surplus count; the
+  copies off the timeline are never named. (#45 said "12 of 35 families"; that counted
+  families whose record and placement counts match, including 7 multi-copy families.)
+- **Two copies of one family swapping bars are invisible** to the diff: at family
+  granularity nothing changed.
+- **n = 1 library, one person's projects, all Logic 12**, and only one project re-measured
+  with the corrected counters. Nothing here says a Logic 10 or 11 file decodes the same
+  way. The version word is not gated on. A `gRuA` layout change would surface as a counted
+  decode failure, because the size law (`payload_size == 209 + nlen + (nlen & 1)`) fails
+  first. A *placement* layout change is **[inferred]** to be less visible: a group is
+  accepted on its marker, a nonzero track byte and a position range, so shifted fields
+  could still pass — the `00`/`89`/`bc` unit-type count is the signal to watch.
+- **Pre-roll is not decoded.** A placement before bar 1 (position < 34560) is rejected as
+  `before_origin`; none exists on the chain, and the library count is unmeasured.
 - **No labelled edit chain was used.** Every save pair here is *found* material where
   nobody recorded what changed, so the numbers measure that fields decode, not that the
   reported change is the only change. The "one known edit produces exactly one reported
@@ -787,16 +835,29 @@ track 3: a 'Untitled 3_2 #12' region moved from bar 55.5 to bar 55.75
 - These payloads are mapped in `experiments/` only. `wit-logic`, the shipping crate, does
   not read them, so no Wit verdict changes as a result of this experiment.
 
-**Reproduce (read-only; point it at a copy if unsure):**
+**Reproduce (read-only; point it at a copy if unsure).** Library, the pending re-run:
 
 ```bash
 python3 experiments/logic_region_map.py --scan ~/Music/Logic
 ```
 
+Chain — `P` is the fixture bundle, `B` its backups folder:
+
 ```bash
-python3 experiments/logic_region_map.py --diff \
-  'Project.logicx/Alternatives/000/Project File Backups/07' \
-  'Project.logicx/Alternatives/000/Project File Backups/08'
+P='/path/to/You make my crazy!.logicx'; B="$P/Alternatives/000/Project File Backups"
+python3 experiments/logic_region_map.py --scan "$P"                # the chain column
+python3 experiments/logic_region_map.py "$B/00"                    # backup 00: families, which-copy split, EVENT GRID
+python3 experiments/logic_region_map.py --diff "$B/00" "$B/01"     # the example above
+python3 experiments/logic_region_map.py --diff "$B/00" "$P"        # 17 regions added, none removed
+afinfo "$P/Media/Audio Files/Deep Down Shaker.caf"                 # 173509 valid frames
+```
+
+Per-name and per-UUID figures in FORMATS.md (40 even / 39 odd names, node bits) come from
+the map's `--json` output:
+
+```bash
+python3 experiments/logic_region_map.py --json "$B/00" | python3 -c 'import json,sys; r=json.load(sys.stdin)["regions"]; print(sum(len(x["name"].encode())%2==0 for x in r), "even of", len(r))'
+python3 experiments/logic_region_map.py --json "$P" | python3 -c 'import json,sys; n=[x["uuid"][-12:] for x in json.load(sys.stdin)["regions"]]; print(len(set(n)), "distinct;", sum(int(x[:2],16)&1 for x in n), "multicast;", sum(int(x[:2],16)&2>0 for x in n), "local")'
 ```
 
 ---
