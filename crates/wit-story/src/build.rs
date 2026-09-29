@@ -26,8 +26,13 @@ const NEVER_CHANGED: &str = "Your project is never changed.";
 
 /// Build the whole library under `root`: every Logic/GarageBand project and
 /// Ableton lineage Wit can discover, the Shelf, and the trust panel.
-/// `root_label` is how the owner sees the folder ("~/Music/Logic"); it goes
-/// into the trust panel instead of the real path.
+///
+/// `root_label` is how the owner sees the folder ("~/Music/Logic"). It goes
+/// into the trust panel instead of the real path, **and it scopes every id**
+/// (song, story, moment), so the same layout under two watched folders never
+/// collides. The caller must therefore pass a label that is unique across
+/// watched folders and never changes for a folder: changing it changes every
+/// id under it.
 pub fn build_library(root: &Path, root_label: &str, clock: &Clock) -> Library {
     let mut songs: Vec<(ShelfCard, Vec<Story>)> = Vec::new();
 
@@ -277,7 +282,8 @@ fn heat(sentences: &[Sentence]) -> Vec<TrackHeat> {
         .collect()
 }
 
-/// "14 changes Wit can see: 9 added, 3 removed, 2 renamed" — for busy
+/// "14 changes Wit can see: 9 regions added, 3 new audio files, 2 probable
+/// renames" — for busy
 /// saves only. Counts extracted, named changes (sentences), never container
 /// records.
 fn summary(sentences: &[Sentence]) -> Option<String> {

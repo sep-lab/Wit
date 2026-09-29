@@ -33,7 +33,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Bumped on any breaking change to these types.
-pub const SCHEMA_VERSION: u32 = 1;
+///
+/// 2 (2026-09-29): ids are scoped by the watched folder, and an Ableton
+/// song's id no longer depends on which save sorts first.
+pub const SCHEMA_VERSION: u32 = 2;
 
 macro_rules! id_type {
     ($(#[$meta:meta])* $name:ident) => {
@@ -251,7 +254,7 @@ pub struct Moment {
     /// Compared with [`Moment::compared_with`].
     pub sentences: Vec<Sentence>,
     /// A one-line digest when there are many sentences ("14 changes Wit can
-    /// see: 9 added, 3 removed, 2 renamed"), so the card and timeline stay
+    /// see: 9 regions added, 3 new audio files, 2 probable renames"), so the card and timeline stay
     /// readable on a busy save. `None` for three sentences or fewer.
     pub summary: Option<String>,
     /// The line shown when there are no sentences ("No change Wit can see —

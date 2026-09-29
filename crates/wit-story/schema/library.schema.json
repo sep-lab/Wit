@@ -550,7 +550,7 @@
           "type": "string"
         },
         "summary": {
-          "description": "A one-line digest when there are many sentences (\"14 changes Wit can\nsee: 9 added, 3 removed, 2 renamed\"), so the card and timeline stay\nreadable on a busy save. `None` for three sentences or fewer.",
+          "description": "A one-line digest when there are many sentences (\"14 changes Wit can\nsee: 9 regions added, 3 new audio files, 2 probable renames\"), so the card and timeline stay\nreadable on a busy save. `None` for three sentences or fewer.",
           "type": [
             "string",
             "null"
