@@ -1,0 +1,968 @@
+//! A recursive folder watcher that reports **one event per save**, and only
+//! once the save has finished.
+//!
+//! DAWs don't save in one write. Logic rewrites `ProjectData`, rotates nine
+//! `Project File Backups`, and updates two plists; Live writes a temp file,
+//! moves the old set into `Backup/`, and renames the new one into place;
+//! other apps write a file in chunks. A raw watcher sees dozens of events
+//! per save. This module turns them into one [`WatchEvent::Settled`] per
+//! project, emitted only after that project's relevant files' `(size,
+//! mtime)` have been unchanged for the settle window (default 2 s) **and**
+//! no new raw event has arrived for it in that window.
+//!
+//! # Guarantees
+//!
+//! - **Read-only.** The watcher only stats files; it never opens one for
+//!   writing (nor, for that matter, for reading).
+//! - **Wit's own folders are ignored.** Events under the Restores folder
+//!   (always) and under any folder passed to [`WatchConfig::ignore`] (Wit's
+//!   data dir) are dropped before classification.
+//! - **Only roots proven disjoint from the Restores folder are watched.**
+//!   [`WatchConfig::new`] requires the [`RestoresDir`] and re-runs
+//!   [`RestoresDir::check_against`] on the exact root set.
+//! - **Classification is a whitelist** (AGENTS.md: blacklists leak), and is
+//!   a pure function ([`classify`]); debouncing is a pure state machine
+//!   ([`Debouncer`]) driven by an injected clock. Both are unit-tested
+//!   without touching the OS watcher.
+//! - **No async runtime.** Events arrive on a `std::sync::mpsc` channel;
+//!   read them with [`ProjectWatcher::recv`], [`recv_timeout`](ProjectWatcher::recv_timeout),
+//!   [`try_recv`](ProjectWatcher::try_recv) or [`iter`](ProjectWatcher::iter).
+//!   Dropping the watcher stops its thread.
+//!
+//! # What counts as a project, and which files count
+//!
+//! | Path under a watched root | Project root reported | Relevant (triggers + fingerprint) |
+//! |---|---|---|
+//! | inside `X.logicx/` or `X.band/` | the package | `Alternatives/*/ProjectData`, `Alternatives/*/MetaData.plist`, `Alternatives/*/Project File Backups/**`, `Resources/ProjectInformation.plist`, the package itself |
+//! | `X.als` | the file | the file |
+//! | `Backup/X [2026-05-05 095412].als` (Live's pattern) | `../X.als`, always (Live moves the old set into `Backup/` just before renaming the new one in) | the main set |
+//! | `X.flp`, and `Backup/X (…).flp` / `Backup/X […].flp` | the file; a backup maps to `../X.flp` only if that exists (FL's backup naming is unverified) | the file |
+//! | other DAW formats (`.rpp`, `.bwproject`, `.ardour`, `.song`, `.cpr`, `.dawproject`, …) | the file (`x.rpp-bak` → `x.rpp`) | the file |
+//! | any other file, **in a user-added folder only** | the file (generic History tier) | the file |
+//!
+//! Never counted: hidden names (a leading `.` on any component), editor
+//! and download temp names (`~$x`, `x~`, `.tmp`, `.part`, …), `Media/`,
+//! `Undo Data.nosync/` and UI-state files inside packages, and anything
+//! under a `(A Document Being Saved By …)` folder (macOS safe-save
+//! scratch). A project whose root has vanished when it settles (a moved
+//! scratch copy, a deleted file) is dropped silently.
+//!
+//! # Honest limits
+//!
+//! - The save sequences above are **inferred** from the on-disk results of
+//!   real saves (FORMATS.md) and from how these apps are documented to save;
+//!   the watcher was never run against a live DAW while writing this. The
+//!   integration test replays synthetic save sequences (chunked writes,
+//!   rename-into-place, backup rotation) on the real OS watcher.
+//! - Two saves within one mtime tick that leave identical sizes (possible
+//!   on HFS+'s 1 s or FAT's 2 s mtime) are reported once.
+//! - If the OS drops events (inotify queue overflow, FSEvents "must
+//!   rescan"), a [`WatchEvent::NeedsRescan`] is sent for each root; the
+//!   caller should rescan with discovery.
+
+use crate::clone::{CloneError, RestoresDir};
+use crate::paths::{self, CaseSensitivity};
+use crate::roots::{RootKind, WatchedRoot, WatchedRoots};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::Arc;
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant, SystemTime};
+
+/// Default settle window.
+pub const DEFAULT_SETTLE: Duration = Duration::from_millis(2000);
+/// How often pending projects are re-checked.
+const TICK: Duration = Duration::from_millis(100);
+
+/// What kind of project a settled event is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ProjectKind {
+    /// A `.logicx` package.
+    Logic,
+    /// A `.band` package.
+    GarageBand,
+    /// An `.als` file.
+    Ableton,
+    /// An `.flp` file.
+    FlStudio,
+    /// Another DAW's project file (`.rpp`, `.bwproject`, …): History tier.
+    OtherDaw,
+    /// Any other file in a user-added folder: History tier.
+    Generic,
+}
+
+/// A project, identified by the path Wit versions it under.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ProjectRoot {
+    pub path: PathBuf,
+    pub kind: ProjectKind,
+}
+
+/// Other DAWs' project formats (lower-case), recognised in every root.
+const OTHER_DAW_EXTENSIONS: &[&str] = &[
+    "rpp",        // REAPER
+    "bwproject",  // Bitwig Studio
+    "ardour",     // Ardour
+    "song",       // Studio One
+    "cpr",        // Cubase
+    "npr",        // Nuendo
+    "ptx",        // Pro Tools
+    "dawproject", // DAWproject exchange
+    "mmpz",       // LMMS
+    "mmp",        // LMMS (uncompressed)
+    "rns",        // Renoise
+    "reason",     // Reason
+    "aup3",       // Audacity
+];
+
+fn lower_ext(name: &str) -> Option<String> {
+    let (_, ext) = name.rsplit_once('.')?;
+    Some(ext.to_ascii_lowercase())
+}
+
+/// Temp/lock names editors and browsers leave next to real files.
+fn is_scratch_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    name.starts_with('.')
+        || name.starts_with("~$")
+        || name.ends_with('~')
+        || name == "Icon\r"
+        || lower == "thumbs.db"
+        || lower == "desktop.ini"
+        || [
+            ".tmp",
+            ".temp",
+            ".swp",
+            ".part",
+            ".crdownload",
+            ".download",
+            ".partial",
+        ]
+        .iter()
+        .any(|s| lower.ends_with(s))
+}
+
+fn in_backup_dir(file: &Path) -> bool {
+    file.parent()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.eq_ignore_ascii_case("Backup"))
+}
+
+/// Live's backup naming, `Backup/<name> [YYYY-MM-DD HHMMSS].als` (the same
+/// pattern `wit-index`'s discovery groups lineages by): the main set is
+/// `../<name>.als`, **unconditionally** — Live moves the old set into
+/// `Backup/` a moment before renaming the new one into place, so checking
+/// whether the main set exists at that instant would race.
+fn live_backup_owner(file: &Path) -> Option<PathBuf> {
+    if !in_backup_dir(file) {
+        return None;
+    }
+    let stem = file.file_stem()?.to_str()?;
+    if stem.len() < 20 || !stem.is_char_boundary(stem.len() - 20) {
+        return None;
+    }
+    let (name, tail) = stem.split_at(stem.len() - 20);
+    let b = tail.as_bytes();
+    let digits = |r: std::ops::Range<usize>| b[r].iter().all(u8::is_ascii_digit);
+    let ok = b[0] == b' '
+        && b[1] == b'['
+        && digits(2..6)
+        && b[6] == b'-'
+        && digits(7..9)
+        && b[9] == b'-'
+        && digits(10..12)
+        && b[12] == b' '
+        && digits(13..19)
+        && b[19] == b']';
+    if !ok || name.is_empty() {
+        return None;
+    }
+    Some(file.parent()?.parent()?.join(format!("{name}.als")))
+}
+
+/// Any other `Backup/<prefix> [..].ext` or `Backup/<prefix> (..).ext`
+/// (FL Studio's backup naming isn't verified): the main project is
+/// `../<prefix>.ext` — only when that exists, so a user's own file that
+/// merely looks like a backup is never swallowed.
+fn backup_owner(file: &Path, ext: &str, exists: &dyn Fn(&Path) -> bool) -> Option<PathBuf> {
+    if !in_backup_dir(file) {
+        return None;
+    }
+    let parent = file.parent()?;
+    let stem = file.file_stem()?.to_str()?;
+    for sep in [" [", " ("] {
+        if let Some(i) = stem.rfind(sep) {
+            let owner = parent.parent()?.join(format!("{}.{ext}", &stem[..i]));
+            if exists(&owner) {
+                return Some(owner);
+            }
+        }
+    }
+    None
+}
+
+/// Is `inner` (a path relative to a `.logicx`/`.band` package) one of the
+/// files a save rewrites?
+fn is_relevant_in_package(inner: &[&str]) -> bool {
+    matches!(
+        inner,
+        [] | ["Alternatives", _, "ProjectData" | "MetaData.plist"]
+            | ["Alternatives", _, "Project File Backups", ..]
+            | ["Resources", "ProjectInformation.plist"]
+    )
+}
+
+/// Map a raw event path to the project it belongs to — or `None` if it is
+/// irrelevant. Pure apart from `exists`, which is only consulted to map a
+/// `Backup/` file to its main project.
+///
+/// `path` must already be canonical and lie under `root` (the watcher
+/// guarantees both).
+pub fn classify(
+    path: &Path,
+    root: &WatchedRoot,
+    exists: &dyn Fn(&Path) -> bool,
+) -> Option<ProjectRoot> {
+    if !paths::is_within_canonical(path, root.path(), CaseSensitivity::Insensitive) {
+        return None;
+    }
+    let skip = root.path().components().count();
+    let rel: Vec<Component<'_>> = path.components().skip(skip).collect();
+    let mut names: Vec<&str> = Vec::with_capacity(rel.len());
+    for c in &rel {
+        let Component::Normal(n) = c else { return None };
+        names.push(n.to_str()?);
+    }
+    if names
+        .iter()
+        .any(|n| n.starts_with('.') || n.starts_with("(A Document Being Saved By"))
+    {
+        return None;
+    }
+    let mut base = root.path().to_path_buf();
+    for (i, name) in names.iter().enumerate() {
+        base.push(name);
+        let ext = lower_ext(name);
+        let package_kind = match ext.as_deref() {
+            Some("logicx") => Some(ProjectKind::Logic),
+            Some("band") => Some(ProjectKind::GarageBand),
+            _ => None,
+        };
+        if let Some(kind) = package_kind {
+            return is_relevant_in_package(&names[i + 1..])
+                .then_some(ProjectRoot { path: base, kind });
+        }
+        if i + 1 < names.len() {
+            continue;
+        }
+        // The last component: a file.
+        if is_scratch_name(name) {
+            return None;
+        }
+        let file = base;
+        let kind = match ext.as_deref() {
+            Some("als") => ProjectKind::Ableton,
+            Some("flp") => ProjectKind::FlStudio,
+            Some("rpp-bak") => {
+                let owner = file.with_extension("rpp");
+                return Some(ProjectRoot {
+                    path: if exists(&owner) { owner } else { file },
+                    kind: ProjectKind::OtherDaw,
+                });
+            }
+            Some(e) if OTHER_DAW_EXTENSIONS.contains(&e) => ProjectKind::OtherDaw,
+            _ if root.kind() == RootKind::UserFolder => ProjectKind::Generic,
+            _ => return None,
+        };
+        let path = match (kind, ext.as_deref()) {
+            (ProjectKind::Ableton, Some(e)) => live_backup_owner(&file)
+                .or_else(|| backup_owner(&file, e, exists))
+                .unwrap_or(file),
+            (ProjectKind::FlStudio, Some(e)) => backup_owner(&file, e, exists).unwrap_or(file),
+            _ => file,
+        };
+        return Some(ProjectRoot { path, kind });
+    }
+    None
+}
+
+/// `(relative path, size, mtime)` of every relevant file of a project.
+pub type Fingerprint = Vec<(PathBuf, u64, Option<SystemTime>)>;
+
+fn stat_into(path: &Path, rel: PathBuf, out: &mut Fingerprint) {
+    if let Ok(m) = std::fs::symlink_metadata(path) {
+        if m.is_file() {
+            out.push((rel, m.len(), m.modified().ok()));
+        }
+    }
+}
+
+fn subdirs(dir: &Path) -> Vec<(String, PathBuf)> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter_map(|e| Some((e.file_name().to_str()?.to_string(), e.path())))
+        .collect()
+}
+
+/// Stat a project's relevant files. `None` if the project is gone.
+pub fn fingerprint(project: &ProjectRoot) -> Option<Fingerprint> {
+    let meta = std::fs::symlink_metadata(&project.path).ok()?;
+    let mut fp = Fingerprint::new();
+    match project.kind {
+        ProjectKind::Logic | ProjectKind::GarageBand => {
+            if !meta.is_dir() {
+                return None;
+            }
+            let root = &project.path;
+            for (alt, alt_dir) in subdirs(&root.join("Alternatives")) {
+                let rel = PathBuf::from("Alternatives").join(&alt);
+                for f in ["ProjectData", "MetaData.plist"] {
+                    stat_into(&alt_dir.join(f), rel.join(f), &mut fp);
+                }
+                let backups = alt_dir.join("Project File Backups");
+                for (slot, slot_dir) in subdirs(&backups) {
+                    if let Ok(files) = std::fs::read_dir(&slot_dir) {
+                        for f in files.flatten() {
+                            let name = f.file_name();
+                            stat_into(
+                                &f.path(),
+                                rel.join("Project File Backups").join(&slot).join(name),
+                                &mut fp,
+                            );
+                        }
+                    }
+                }
+            }
+            stat_into(
+                &root.join("Resources/ProjectInformation.plist"),
+                PathBuf::from("Resources/ProjectInformation.plist"),
+                &mut fp,
+            );
+        }
+        _ => {
+            if !meta.is_file() {
+                return None;
+            }
+            fp.push((PathBuf::new(), meta.len(), meta.modified().ok()));
+        }
+    }
+    fp.sort();
+    Some(fp)
+}
+
+#[derive(Debug)]
+struct Pending {
+    last_event: Instant,
+    fp: Option<Option<Fingerprint>>,
+    fp_since: Instant,
+}
+
+/// The write-stability state machine, separated from the OS watcher so it
+/// can be tested with a fake clock and scripted fingerprints.
+#[derive(Debug)]
+pub struct Debouncer {
+    settle: Duration,
+    pending: BTreeMap<ProjectRoot, Pending>,
+    last_emitted: BTreeMap<PathBuf, Fingerprint>,
+}
+
+impl Debouncer {
+    pub fn new(settle: Duration) -> Debouncer {
+        Debouncer {
+            settle,
+            pending: BTreeMap::new(),
+            last_emitted: BTreeMap::new(),
+        }
+    }
+
+    /// A relevant raw event for `project` arrived at `now`.
+    pub fn observe(&mut self, project: ProjectRoot, now: Instant) {
+        self.pending
+            .entry(project)
+            .and_modify(|p| p.last_event = now)
+            .or_insert(Pending {
+                last_event: now,
+                fp: None,
+                fp_since: now,
+            });
+    }
+
+    /// Re-stat every pending project and return the ones that have settled:
+    /// no raw event **and** an unchanged fingerprint for the whole settle
+    /// window. A project that vanished is dropped; one whose settled
+    /// fingerprint equals the last one emitted (a late duplicate event) is
+    /// dropped too.
+    pub fn poll(
+        &mut self,
+        now: Instant,
+        mut stat: impl FnMut(&ProjectRoot) -> Option<Fingerprint>,
+    ) -> Vec<ProjectRoot> {
+        let mut settled = Vec::new();
+        let mut done = Vec::new();
+        for (project, pending) in self.pending.iter_mut() {
+            let fp = stat(project);
+            if pending.fp.as_ref() != Some(&fp) {
+                pending.fp = Some(fp);
+                pending.fp_since = now;
+            }
+            let quiet = now.saturating_duration_since(pending.last_event) >= self.settle;
+            let stable = now.saturating_duration_since(pending.fp_since) >= self.settle;
+            if quiet && stable {
+                done.push(project.clone());
+            }
+        }
+        for project in done {
+            let Some(pending) = self.pending.remove(&project) else {
+                continue;
+            };
+            let Some(Some(fp)) = pending.fp else { continue };
+            if self.last_emitted.get(&project.path) == Some(&fp) {
+                continue;
+            }
+            self.last_emitted.insert(project.path.clone(), fp);
+            settled.push(project);
+        }
+        settled
+    }
+
+    /// Whether anything is waiting to settle.
+    pub fn is_idle(&self) -> bool {
+        self.pending.is_empty()
+    }
+}
+
+/// What the watcher reports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WatchEvent {
+    /// A project finished saving.
+    Settled {
+        project: ProjectRoot,
+        /// The watched root it was found under.
+        root: PathBuf,
+        at: SystemTime,
+    },
+    /// The OS dropped events for this root; rescan it with discovery.
+    NeedsRescan { root: PathBuf },
+    /// A non-fatal watcher error (e.g. a folder that couldn't be watched).
+    Error(String),
+}
+
+#[derive(Debug)]
+pub enum WatchError {
+    /// The Restores folder overlaps a root in this set.
+    Restores(CloneError),
+    /// The OS watcher couldn't start or couldn't watch a root.
+    Notify(notify::Error),
+    /// No roots to watch.
+    NoRoots,
+}
+
+impl fmt::Display for WatchError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            WatchError::Restores(e) => write!(f, "{e}"),
+            WatchError::Notify(e) => write!(f, "the file watcher failed: {e}"),
+            WatchError::NoRoots => write!(f, "there are no folders to watch"),
+        }
+    }
+}
+
+impl std::error::Error for WatchError {}
+
+/// What to watch, and what to ignore.
+#[derive(Debug, Clone)]
+pub struct WatchConfig {
+    roots: WatchedRoots,
+    ignore: Vec<PathBuf>,
+    settle: Duration,
+}
+
+impl WatchConfig {
+    /// Watch `roots`, never looking inside `restores`. Fails if `restores`
+    /// overlaps any of these roots — so no root set that overlaps the
+    /// Restores folder is ever watched.
+    pub fn new(roots: WatchedRoots, restores: &RestoresDir) -> Result<WatchConfig, WatchError> {
+        restores
+            .check_against(&roots)
+            .map_err(WatchError::Restores)?;
+        Ok(WatchConfig {
+            roots,
+            ignore: vec![restores.path().to_path_buf()],
+            settle: DEFAULT_SETTLE,
+        })
+    }
+
+    /// Also ignore everything under `dir` (Wit's own data dir).
+    pub fn ignore(mut self, dir: &Path) -> WatchConfig {
+        if let Ok(c) = paths::canonicalize_lenient(dir) {
+            self.ignore.push(c);
+        }
+        self
+    }
+
+    /// Change the settle window (default [`DEFAULT_SETTLE`]).
+    pub fn settle(mut self, settle: Duration) -> WatchConfig {
+        self.settle = settle;
+        self
+    }
+}
+
+/// A running watcher. Drop it to stop.
+pub struct ProjectWatcher {
+    events: Receiver<WatchEvent>,
+    stop: Arc<AtomicBool>,
+    watcher: Option<notify::RecommendedWatcher>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl fmt::Debug for ProjectWatcher {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProjectWatcher").finish_non_exhaustive()
+    }
+}
+
+impl ProjectWatcher {
+    /// Start watching every outermost root recursively.
+    pub fn start(config: WatchConfig) -> Result<ProjectWatcher, WatchError> {
+        use notify::Watcher;
+        if config.roots.is_empty() {
+            return Err(WatchError::NoRoots);
+        }
+        let (raw_tx, raw_rx) = mpsc::channel::<notify::Result<notify::Event>>();
+        let mut watcher = notify::RecommendedWatcher::new(
+            raw_tx,
+            notify::Config::default().with_follow_symlinks(false),
+        )
+        .map_err(WatchError::Notify)?;
+        for root in config.roots.outermost() {
+            watcher
+                .watch(
+                    paths::simplified(root.path()),
+                    notify::RecursiveMode::Recursive,
+                )
+                .map_err(WatchError::Notify)?;
+        }
+        let (out_tx, out_rx) = mpsc::channel();
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let thread = std::thread::Builder::new()
+            .name("wit-watch".into())
+            .spawn(move || run_loop(config, raw_rx, out_tx, thread_stop))
+            .map_err(|e| WatchError::Notify(notify::Error::io(e)))?;
+        Ok(ProjectWatcher {
+            events: out_rx,
+            stop,
+            watcher: Some(watcher),
+            thread: Some(thread),
+        })
+    }
+
+    /// Block until the next event (`None` once the watcher has stopped).
+    pub fn recv(&self) -> Option<WatchEvent> {
+        self.events.recv().ok()
+    }
+
+    pub fn recv_timeout(&self, timeout: Duration) -> Result<WatchEvent, RecvTimeoutError> {
+        self.events.recv_timeout(timeout)
+    }
+
+    pub fn try_recv(&self) -> Option<WatchEvent> {
+        self.events.try_recv().ok()
+    }
+
+    /// Blocking iterator over events; ends when the watcher stops.
+    pub fn iter(&self) -> impl Iterator<Item = WatchEvent> + '_ {
+        self.events.iter()
+    }
+}
+
+impl Drop for ProjectWatcher {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        drop(self.watcher.take());
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+fn run_loop(
+    config: WatchConfig,
+    raw: Receiver<notify::Result<notify::Event>>,
+    out: Sender<WatchEvent>,
+    stop: Arc<AtomicBool>,
+) {
+    let mut debouncer = Debouncer::new(config.settle);
+    let mut roots_of: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
+    let exists = |p: &Path| p.exists();
+    loop {
+        if stop.load(Ordering::SeqCst) {
+            return;
+        }
+        let first = match raw.recv_timeout(TICK) {
+            Ok(e) => Some(e),
+            Err(RecvTimeoutError::Timeout) => None,
+            Err(RecvTimeoutError::Disconnected) => return,
+        };
+        let now = Instant::now();
+        let mut rescan: BTreeSet<PathBuf> = BTreeSet::new();
+        for raw_event in first.into_iter().chain(raw.try_iter()) {
+            let event = match raw_event {
+                Ok(e) => e,
+                Err(e) => {
+                    if out.send(WatchEvent::Error(e.to_string())).is_err() {
+                        return;
+                    }
+                    continue;
+                }
+            };
+            if event.need_rescan() {
+                rescan.extend(
+                    config
+                        .roots
+                        .outermost()
+                        .iter()
+                        .map(|r| r.path().to_path_buf()),
+                );
+            }
+            for path in &event.paths {
+                let ignored = config
+                    .ignore
+                    .iter()
+                    .any(|dir| paths::is_within_canonical(path, dir, CaseSensitivity::Insensitive));
+                if ignored {
+                    continue;
+                }
+                let Some(root) = config.roots.root_for(path) else {
+                    continue;
+                };
+                if let Some(project) = classify(path, root, &exists) {
+                    roots_of.insert(project.path.clone(), root.path().to_path_buf());
+                    debouncer.observe(project, now);
+                }
+            }
+        }
+        for root in rescan {
+            if out.send(WatchEvent::NeedsRescan { root }).is_err() {
+                return;
+            }
+        }
+        if debouncer.is_idle() {
+            continue;
+        }
+        for project in debouncer.poll(Instant::now(), fingerprint) {
+            let root = roots_of.get(&project.path).cloned().unwrap_or_default();
+            let event = WatchEvent::Settled {
+                project,
+                root,
+                at: SystemTime::now(),
+            };
+            if out.send(event).is_err() {
+                return;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn root(kind: RootKind) -> (tempfile::TempDir, WatchedRoot) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut roots = WatchedRoots::new();
+        roots.add(dir.path(), kind).unwrap();
+        let r = roots.iter().next().unwrap().clone();
+        (dir, r)
+    }
+
+    fn at(r: &WatchedRoot, rel: &str) -> PathBuf {
+        rel.split('/')
+            .fold(r.path().to_path_buf(), |p, c| p.join(c))
+    }
+
+    fn never(_: &Path) -> bool {
+        false
+    }
+
+    #[test]
+    fn logic_package_whitelist() {
+        let (_d, r) = root(RootKind::Discovery);
+        let pkg = at(&r, "Songs/Tune.logicx");
+        for rel in [
+            "Songs/Tune.logicx",
+            "Songs/Tune.logicx/Alternatives/000/ProjectData",
+            "Songs/Tune.logicx/Alternatives/001/MetaData.plist",
+            "Songs/Tune.logicx/Alternatives/000/Project File Backups/03/ProjectData",
+            "Songs/Tune.logicx/Resources/ProjectInformation.plist",
+        ] {
+            let got = classify(&at(&r, rel), &r, &never).unwrap_or_else(|| panic!("{rel}"));
+            assert_eq!(
+                got,
+                ProjectRoot {
+                    path: pkg.clone(),
+                    kind: ProjectKind::Logic
+                },
+                "{rel}"
+            );
+        }
+        for rel in [
+            "Songs/Tune.logicx/Media/Audio Files/Take 1.wav",
+            "Songs/Tune.logicx/Alternatives/000/Undo Data.nosync/1",
+            "Songs/Tune.logicx/Alternatives/000/DisplayState.plist",
+            "Songs/Tune.logicx/Alternatives/000/WindowImage.jpg",
+            "Songs/Tune.logicx/Alternatives/000/Autosave/ProjectData",
+            "(A Document Being Saved By Logic Pro)/Tune.logicx/Alternatives/000/ProjectData",
+            "Songs/.Tune.logicx/Alternatives/000/ProjectData",
+        ] {
+            assert_eq!(classify(&at(&r, rel), &r, &never), None, "{rel}");
+        }
+        let band = classify(&at(&r, "Jam.band/Alternatives/000/ProjectData"), &r, &never).unwrap();
+        assert_eq!(band.kind, ProjectKind::GarageBand);
+    }
+
+    #[test]
+    fn ableton_and_fl_backups_map_to_their_main_file_when_it_exists() {
+        let (_d, r) = root(RootKind::Discovery);
+        let main = at(&r, "Set Project/Set.als");
+        let exists = |p: &Path| p == main;
+        let got = classify(
+            &at(&r, "Set Project/Backup/Set [2026-05-05 095412].als"),
+            &r,
+            &exists,
+        )
+        .unwrap();
+        assert_eq!(
+            got,
+            ProjectRoot {
+                path: main.clone(),
+                kind: ProjectKind::Ableton
+            }
+        );
+        // Live's own naming maps even before the new main set is renamed in
+        // (it settles, or is dropped if the main set never appears).
+        let before_rename = classify(
+            &at(&r, "Set Project/Backup/Set [2026-05-05 095412].als"),
+            &r,
+            &never,
+        )
+        .unwrap();
+        assert_eq!(before_rename.path, main);
+        // A look-alike that isn't Live's pattern needs its owner to exist.
+        let lookalike = at(&r, "Other/Backup/Mix (final).als");
+        assert_eq!(classify(&lookalike, &r, &never).unwrap().path, lookalike);
+        let not_backup = at(&r, "Other/Set [2026-05-05 095412].als");
+        assert_eq!(classify(&not_backup, &r, &never).unwrap().path, not_backup);
+
+        let flp = at(&r, "Beat.flp");
+        let exists = |p: &Path| p == flp;
+        let got = classify(
+            &at(&r, "Backup/Beat (overwritten at 1709h24).flp"),
+            &r,
+            &exists,
+        )
+        .unwrap();
+        assert_eq!(
+            got,
+            ProjectRoot {
+                path: flp.clone(),
+                kind: ProjectKind::FlStudio
+            }
+        );
+        assert_eq!(
+            classify(&flp, &r, &never).unwrap().kind,
+            ProjectKind::FlStudio
+        );
+    }
+
+    #[test]
+    fn scratch_and_hidden_names_never_count() {
+        let (_d, r) = root(RootKind::UserFolder);
+        for rel in [
+            ".Set.als.tmp",
+            "Set.als.tmp",
+            "~$notes.docx",
+            "notes.txt~",
+            "x.part",
+            "Thumbs.db",
+            ".DS_Store",
+            "a/.git/HEAD",
+        ] {
+            assert_eq!(classify(&at(&r, rel), &r, &never), None, "{rel}");
+        }
+    }
+
+    #[test]
+    fn generic_tier_only_in_user_folders() {
+        let (_d, user) = root(RootKind::UserFolder);
+        let (_e, disc) = root(RootKind::Discovery);
+        assert_eq!(
+            classify(&at(&user, "a/take.txt"), &user, &never)
+                .unwrap()
+                .kind,
+            ProjectKind::Generic
+        );
+        assert_eq!(classify(&at(&disc, "a/take.txt"), &disc, &never), None);
+        for (rel, kind) in [
+            ("song.rpp", ProjectKind::OtherDaw),
+            ("x.bwproject", ProjectKind::OtherDaw),
+            ("Y.SONG", ProjectKind::OtherDaw),
+        ] {
+            assert_eq!(
+                classify(&at(&disc, rel), &disc, &never).unwrap().kind,
+                kind,
+                "{rel}"
+            );
+        }
+        let rpp = at(&disc, "song.rpp");
+        let exists = |p: &Path| p == rpp;
+        assert_eq!(
+            classify(&at(&disc, "song.rpp-bak"), &disc, &exists)
+                .unwrap()
+                .path,
+            rpp
+        );
+    }
+
+    #[test]
+    fn paths_outside_the_root_are_ignored() {
+        let (_d, r) = root(RootKind::UserFolder);
+        let (_e, other) = root(RootKind::UserFolder);
+        assert_eq!(classify(&at(&other, "x.als"), &r, &never), None);
+    }
+
+    fn ms(t0: Instant, n: u64) -> Instant {
+        t0 + Duration::from_millis(n)
+    }
+
+    fn fp(size: u64) -> Option<Fingerprint> {
+        Some(vec![(PathBuf::new(), size, None)])
+    }
+
+    #[test]
+    fn debouncer_waits_for_quiet_and_stable_then_emits_once() {
+        let t0 = Instant::now();
+        let p = ProjectRoot {
+            path: "/x/a.als".into(),
+            kind: ProjectKind::Ableton,
+        };
+        let mut d = Debouncer::new(Duration::from_millis(500));
+        // A save that writes for 900 ms in 150 ms chunks.
+        let mut size = 0;
+        let mut out = Vec::new();
+        for step in 0..=6 {
+            size += 10;
+            d.observe(p.clone(), ms(t0, step * 150));
+            out.extend(d.poll(ms(t0, step * 150), |_| fp(size)));
+        }
+        assert!(out.is_empty(), "nothing settles mid-save");
+        // Quiet from 900 ms; stable since the last size change at 900 ms.
+        assert!(d.poll(ms(t0, 1_300), |_| fp(size)).is_empty());
+        assert_eq!(d.poll(ms(t0, 1_400), |_| fp(size)), vec![p.clone()]);
+        assert!(d.is_idle());
+        // A late duplicate event with an identical fingerprint is swallowed.
+        d.observe(p.clone(), ms(t0, 1_500));
+        assert!(d.poll(ms(t0, 1_500), |_| fp(size)).is_empty());
+        assert!(d.poll(ms(t0, 2_100), |_| fp(size)).is_empty());
+        // The next real save emits again.
+        d.observe(p.clone(), ms(t0, 3_000));
+        assert!(d.poll(ms(t0, 3_000), |_| fp(size + 1)).is_empty());
+        assert_eq!(d.poll(ms(t0, 3_600), |_| fp(size + 1)), vec![p]);
+    }
+
+    #[test]
+    fn debouncer_waits_for_files_that_change_without_events() {
+        let t0 = Instant::now();
+        let p = ProjectRoot {
+            path: "/x/a.als".into(),
+            kind: ProjectKind::Ableton,
+        };
+        let mut d = Debouncer::new(Duration::from_millis(500));
+        d.observe(p.clone(), t0);
+        assert!(d.poll(t0, |_| fp(1)).is_empty());
+        // No events, but the size keeps moving (coalesced/lost events).
+        assert!(d.poll(ms(t0, 600), |_| fp(2)).is_empty());
+        assert!(d.poll(ms(t0, 1_000), |_| fp(2)).is_empty());
+        assert_eq!(d.poll(ms(t0, 1_100), |_| fp(2)), vec![p]);
+    }
+
+    #[test]
+    fn debouncer_drops_projects_that_vanish() {
+        let t0 = Instant::now();
+        let p = ProjectRoot {
+            path: "/x/gone.als".into(),
+            kind: ProjectKind::Ableton,
+        };
+        let mut d = Debouncer::new(Duration::from_millis(100));
+        d.observe(p, t0);
+        assert!(d.poll(t0, |_| None).is_empty());
+        assert!(d.poll(ms(t0, 200), |_| None).is_empty());
+        assert!(d.is_idle());
+    }
+
+    #[test]
+    fn fingerprint_reads_only_the_whitelisted_package_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let pkg = dir.path().join("T.logicx");
+        let alt = pkg.join("Alternatives/000");
+        std::fs::create_dir_all(alt.join("Project File Backups/00")).unwrap();
+        std::fs::create_dir_all(pkg.join("Media/Audio Files")).unwrap();
+        std::fs::create_dir_all(pkg.join("Resources")).unwrap();
+        std::fs::write(alt.join("ProjectData"), b"pd").unwrap();
+        std::fs::write(alt.join("DisplayState.plist"), b"ui").unwrap();
+        std::fs::write(alt.join("Project File Backups/00/ProjectData"), b"old").unwrap();
+        std::fs::write(pkg.join("Media/Audio Files/take.raw"), b"audio").unwrap();
+        std::fs::write(pkg.join("Resources/ProjectInformation.plist"), b"info").unwrap();
+        let project = ProjectRoot {
+            path: pkg.clone(),
+            kind: ProjectKind::Logic,
+        };
+        let got: Vec<PathBuf> = fingerprint(&project)
+            .unwrap()
+            .into_iter()
+            .map(|(p, ..)| p)
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                PathBuf::from("Alternatives/000/Project File Backups/00/ProjectData"),
+                PathBuf::from("Alternatives/000/ProjectData"),
+                PathBuf::from("Resources/ProjectInformation.plist"),
+            ]
+        );
+        assert_eq!(
+            fingerprint(&ProjectRoot {
+                path: dir.path().join("none.als"),
+                kind: ProjectKind::Ableton
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn config_refuses_roots_that_overlap_the_restores_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("Music");
+        std::fs::create_dir_all(music.join("Logic")).unwrap();
+        let mut roots = WatchedRoots::new();
+        roots
+            .add(&music.join("Logic"), RootKind::Discovery)
+            .unwrap();
+        let restores = RestoresDir::new(&music.join("Wit Restores"), &roots).unwrap();
+        assert!(WatchConfig::new(roots.clone(), &restores).is_ok());
+        let mut wider = roots;
+        wider.add(&music, RootKind::UserFolder).unwrap();
+        assert!(matches!(
+            WatchConfig::new(wider, &restores),
+            Err(WatchError::Restores(_))
+        ));
+    }
+}

@@ -169,6 +169,14 @@ flowchart LR
 v1 is a **filesystem watcher**, not a DAW plugin: it works across every DAW without SDK
 permission, and needs nothing from the vendors.
 
+The watcher lives in `crates/wit-platform` (module `watch`). A DAW save is dozens of raw
+filesystem events (Logic rewrites `ProjectData`, rotates its backups and updates two plists;
+Live renames a temp file into place after moving the old set into `Backup/`), so the
+watcher emits **one** event per project, only after that project's relevant files'
+(size, mtime) have been unchanged for a settle window (2 s by default). Which files count
+is a per-format whitelist, and the Restores folder and Wit's own data dir are never
+watched.
+
 Change detection keeps git's **stat cache** (size/mtime/inode per path, plus an fsmonitor
 daemon) so Wit can spot changes across gigabytes without hashing everything.
 

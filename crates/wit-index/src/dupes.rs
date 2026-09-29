@@ -120,21 +120,11 @@ fn walk_audio_files(dir: &Path, visit: &mut impl FnMut(&Path)) {
 /// privacy report's machine-enforced guarantee (M3 issue: "regex-tested:
 /// no `/Users/` ever in output"). Returns the offending substring on
 /// failure so a test failure is actionable, not just "false".
-pub fn assert_no_home_paths(text: &str) -> Result<(), String> {
-    for marker in ["/Users/", "/home/", "C:\\Users\\"] {
-        if let Some(idx) = text.find(marker) {
-            let end = text[idx..]
-                .find('\n')
-                .map(|n| idx + n)
-                .unwrap_or(text.len());
-            return Err(format!(
-                "found a home-directory path in report output: {:?}",
-                &text[idx..end]
-            ));
-        }
-    }
-    Ok(())
-}
+///
+/// This is `wit-platform`'s cross-platform check (macOS `/Users/…`, Linux
+/// `/home/…`, Windows `C:\Users\…` in every separator/escaping/verbatim
+/// spelling), re-exported so existing callers keep working.
+pub use wit_platform::paths::assert_no_home_paths;
 
 #[cfg(test)]
 mod tests {
