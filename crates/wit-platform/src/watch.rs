@@ -14,12 +14,15 @@
 //!
 //! - **Read-only.** The watcher only stats files; it never opens one for
 //!   writing (nor, for that matter, for reading).
-//! - **Wit's own folders are ignored.** Events under the Restores folder
-//!   (always) and under any folder passed to [`WatchConfig::ignore`] (Wit's
-//!   data dir) are dropped before classification.
-//! - **Only roots proven disjoint from the Restores folder are watched.**
-//!   [`WatchConfig::new`] requires the [`RestoresDir`] and re-runs
-//!   [`RestoresDir::check_against`] on the exact root set.
+//! - **The Restores folder is watched, like any root** (ADR-0007): a
+//!   musician who keeps working in a restored copy keeps its history.
+//!   [`WatchConfig::new`] requires the [`RestoresDir`], adds it as a root,
+//!   and re-runs [`RestoresDir::check_against`] on the exact root set (so no
+//!   watched root sits inside it). A restore in progress is invisible: it is
+//!   staged under a hidden `.wit-staging-…` name and appears as one new
+//!   project when it is renamed into place.
+//! - **Wit's data dir is ignored.** Events under any folder passed to
+//!   [`WatchConfig::ignore`] are dropped before classification.
 //! - **Classification is a whitelist** (AGENTS.md: blacklists leak), and is
 //!   a pure function ([`classify`]); debouncing is a pure state machine
 //!   ([`Debouncer`]) driven by an injected clock. Both are unit-tested
@@ -62,7 +65,7 @@
 
 use crate::clone::{CloneError, RestoresDir};
 use crate::paths::{self, CaseSensitivity};
-use crate::roots::{RootKind, WatchedRoot, WatchedRoots};
+use crate::roots::{RootError, RootKind, WatchedRoot, WatchedRoots};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
@@ -457,8 +460,11 @@ pub enum WatchEvent {
 
 #[derive(Debug)]
 pub enum WatchError {
-    /// The Restores folder overlaps a root in this set.
+    /// The Restores folder breaks ADR-0007's placement rules for this root
+    /// set (a root sits inside it, or it sits inside a project).
     Restores(CloneError),
+    /// The Restores folder couldn't be added as a watched root.
+    Root(RootError),
     /// The OS watcher couldn't start or couldn't watch a root.
     Notify(notify::Error),
     /// No roots to watch.
@@ -469,6 +475,7 @@ impl fmt::Display for WatchError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             WatchError::Restores(e) => write!(f, "{e}"),
+            WatchError::Root(e) => write!(f, "{e}"),
             WatchError::Notify(e) => write!(f, "the file watcher failed: {e}"),
             WatchError::NoRoots => write!(f, "there are no folders to watch"),
         }
@@ -486,16 +493,22 @@ pub struct WatchConfig {
 }
 
 impl WatchConfig {
-    /// Watch `roots`, never looking inside `restores`. Fails if `restores`
-    /// overlaps any of these roots — so no root set that overlaps the
-    /// Restores folder is ever watched.
-    pub fn new(roots: WatchedRoots, restores: &RestoresDir) -> Result<WatchConfig, WatchError> {
+    /// Watch `roots` **plus the Restores folder** (added as a user folder,
+    /// so a restored copy of any format keeps its history). Fails if a root
+    /// in `roots` sits inside the Restores folder or the Restores folder has
+    /// ended up inside a project — so no root set that breaks ADR-0007's
+    /// placement rules is ever watched.
+    pub fn new(mut roots: WatchedRoots, restores: &RestoresDir) -> Result<WatchConfig, WatchError> {
         restores
             .check_against(&roots)
             .map_err(WatchError::Restores)?;
+        restores.revalidate().map_err(WatchError::Restores)?;
+        roots
+            .add(restores.path(), RootKind::UserFolder)
+            .map_err(WatchError::Root)?;
         Ok(WatchConfig {
             roots,
-            ignore: vec![restores.path().to_path_buf()],
+            ignore: Vec::new(),
             settle: DEFAULT_SETTLE,
         })
     }
@@ -948,7 +961,7 @@ mod tests {
     }
 
     #[test]
-    fn config_refuses_roots_that_overlap_the_restores_folder() {
+    fn config_watches_restores_and_refuses_roots_inside_it() {
         let dir = tempfile::tempdir().unwrap();
         let music = dir.path().join("Music");
         std::fs::create_dir_all(music.join("Logic")).unwrap();
@@ -957,11 +970,21 @@ mod tests {
             .add(&music.join("Logic"), RootKind::Discovery)
             .unwrap();
         let restores = RestoresDir::new(&music.join("Wit Restores"), &roots).unwrap();
-        assert!(WatchConfig::new(roots.clone(), &restores).is_ok());
-        let mut wider = roots;
+        // The Restores folder becomes a watched root of its own ...
+        let config = WatchConfig::new(roots.clone(), &restores).unwrap();
+        assert!(config.roots.iter().any(|r| r.path() == restores.path()));
+        assert!(config.ignore.is_empty());
+        // ... a root around it (the user watching ~/Music) is fine ...
+        let mut wider = roots.clone();
         wider.add(&music, RootKind::UserFolder).unwrap();
+        assert!(WatchConfig::new(wider, &restores).is_ok());
+        // ... a root inside it is not.
+        let inner = restores.path().join("inner");
+        std::fs::create_dir(&inner).unwrap();
+        let mut inside = roots;
+        inside.add(&inner, RootKind::UserFolder).unwrap();
         assert!(matches!(
-            WatchConfig::new(wider, &restores),
+            WatchConfig::new(inside, &restores),
             Err(WatchError::Restores(_))
         ));
     }

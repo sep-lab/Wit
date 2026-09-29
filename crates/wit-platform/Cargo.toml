@@ -20,7 +20,7 @@ unicode-normalization = "0.1.25"
 [dev-dependencies]
 proptest = "1"
 # File identity (dev, inode / volume, file index) for the property test's
-# oracle, so "is this inside a watched root?" is answered without trusting
+# oracle, so "is this inside that folder?" is answered without trusting
 # the path logic under test. Already in the tree via notify -> walkdir.
 same-file = "1.0.6"
 tempfile = "3"

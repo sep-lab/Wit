@@ -11,26 +11,33 @@
 //! | [`watch`] | A `notify`-based recursive watcher that emits **one** event per save, only after the project's files have stopped changing |
 //! | [`daw`] | Which DAWs are running right now (`sysinfo`), and open/quit session bookkeeping |
 //! | [`reveal`] | Reveal in Finder / Explorer / the file manager, and "open with the DAW" — argv built by pure functions |
-//! | [`clone`] | Restore-as-copy **primitives**: [`clone::RestoresDir`], copy-on-write tree cloning, and write/remove helpers that can only address paths inside a Restores folder |
+//! | [`clone`] | Restore-as-copy **primitives**: [`clone::RestoresDir`], copy-on-write tree cloning, and a [`clone::NewRestore`] handle — the only way to write, and it can only touch the entry the current restore created |
 //!
 //! # The write law (ADR-0007, restore-as-copy)
 //!
-//! Wit never modifies a user's DAW project. The only writes this crate can
-//! perform land inside a [`clone::RestoresDir`], and that type cannot be
-//! constructed for a folder that is inside, equal to, or a parent of any
-//! watched root. None of the write functions accept a `Path` destination —
-//! they accept only destinations minted by a `RestoresDir`, so a watched
-//! project path cannot be passed to them even by mistake. See the
-//! [`clone`] module docs for the full argument, and
-//! `tests/no_write_in_watched_root.rs` for the property test that checks it
+//! **A restore never modifies, overwrites, renames or deletes anything that
+//! existed before the restore began.** It only creates one brand-new entry
+//! directly inside the Restores folder (`<Song> — <date>`, then ` (2)`, …),
+//! staged under a hidden temp name there and renamed into place at the end.
+//! The Restores folder may sit inside a watched root (and is watched), but
+//! never inside a DAW project and never above another watched root. None of
+//! the write functions accept a `Path` destination — only names minted by a
+//! [`clone::RestoresDir`] and paths relative to a [`clone::NewRestore`] — so
+//! an existing project or an earlier restore cannot be passed to them even by
+//! mistake. See the [`clone`] module docs for the full argument, and
+//! `tests/restore_never_touches_existing.rs` for the property test that checks it
 //! against generated trees full of symlinks, `..` components, trailing
 //! separators, NFC/NFD spellings and case variants.
 //!
 //! # What this crate will never do
 //!
-//! - **Write into a watched root, or anywhere outside a validated Restores
-//!   folder.** Not a file, not a directory, not an attribute. (Wit's own
-//!   data dir is written by `wit-index`, not by this crate.)
+//! - **Change anything that already exists.** No file, folder, symlink or
+//!   attribute that existed before a restore began is modified, overwritten,
+//!   renamed or deleted — not in a project, not in an earlier restore, not
+//!   anywhere. (Wit's own data dir is written by `wit-index`, not by this
+//!   crate.)
+//! - **Write anywhere but one new entry directly inside a validated
+//!   Restores folder.**
 //! - **Open a source file with write access.** Clone sources are opened
 //!   read-only (or cloned by the kernel with `clonefile`/`FICLONE`/
 //!   `FSCTL_DUPLICATE_EXTENTS`, which never modifies the source).
@@ -39,8 +46,10 @@
 //! - **Leave a half-written copy behind.** Copies are assembled under a
 //!   hidden staging name inside the Restores folder and renamed into place
 //!   only when complete; a failed or abandoned copy removes its staging dir.
-//! - **Delete anything except its own staging data.** The only removal APIs
-//!   operate inside a staging dir this process created.
+//! - **Delete anything except what the current restore created.** The only
+//!   removal APIs operate inside the staging folder of the restore in
+//!   progress; even a crashed earlier restore's staging folder is left
+//!   alone.
 //! - **Reproduce a symlink in a copy.** A symlink inside a project could point
 //!   back into the original project; a DAW opening the copy would then write
 //!   through it. Symlinks are skipped and reported instead.

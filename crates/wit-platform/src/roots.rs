@@ -8,9 +8,11 @@
 //!   home in a temp dir — nothing here ever looks at the real `~`.
 //! - **Only folders that exist are proposed.** A Windows user without FL
 //!   Studio doesn't get an FL Studio root.
-//! - **The default Restores folder is never inside a default root** on any
-//!   OS (unit-tested for all three): on Linux and Windows `Music` itself is
-//!   a discovery root, so Restores lives next to it rather than in it.
+//! - **The default Restores folder obeys ADR-0007's placement rules** on
+//!   every OS (unit-tested for all three): it is never a parent of a default
+//!   root and never inside a DAW project folder. It *may* sit inside a
+//!   watched root — on Linux and Windows `Music` itself is a discovery root —
+//!   and Wit watches it either way.
 //! - **[`WatchedRoots`] holds canonical paths only** (symlinks resolved,
 //!   verbatim prefix kept on Windows), so containment checks against it are
 //!   exact.
@@ -32,8 +34,8 @@
 //! | OS | Folder |
 //! |---|---|
 //! | macOS | `~/Music/Wit Restores` |
-//! | Windows | `%USERPROFILE%\Documents\Wit Restores` |
-//! | Linux | `~/Wit Restores` |
+//! | Windows | `%USERPROFILE%\Music\Wit Restores` |
+//! | Linux | `~/Music/Wit Restores` (the XDG music folder) |
 
 use crate::daw::Daw;
 use crate::paths;
@@ -239,11 +241,13 @@ pub fn dedupe_nested(roots: Vec<CandidateRoot>) -> Vec<CandidateRoot> {
 
 /// Where restores go by default on `os` (pure; not created here — see
 /// [`crate::clone::RestoresDir::new`]).
+///
+/// The same place on every OS: `Wit Restores` in the user's Music folder.
+/// The `os` parameter is kept so a future per-OS difference stays a pure,
+/// tested function.
 pub fn default_restores_dir(layout: &HomeLayout, os: TargetOs) -> PathBuf {
     match os {
-        TargetOs::MacOs => layout.music.join("Wit Restores"),
-        TargetOs::Windows => layout.documents.join("Wit Restores"),
-        TargetOs::Linux => layout.home.join("Wit Restores"),
+        TargetOs::MacOs | TargetOs::Windows | TargetOs::Linux => layout.music.join("Wit Restores"),
     }
 }
 
@@ -305,9 +309,9 @@ impl std::error::Error for RootError {}
 /// NFD, trailing separator) is stored once.
 ///
 /// Building a `WatchedRoots` grants nothing: it is the input a
-/// [`crate::clone::RestoresDir`] is validated against, and the
-/// [`crate::watch::ProjectWatcher`] re-checks the Restores folder against
-/// the exact set it is about to watch.
+/// [`crate::clone::RestoresDir`] is validated against, and
+/// [`crate::watch::WatchConfig::new`] re-checks the Restores folder against
+/// the exact set it is about to watch (and adds the Restores folder to it).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WatchedRoots {
     roots: Vec<WatchedRoot>,
@@ -542,19 +546,36 @@ mod tests {
     }
 
     #[test]
-    fn default_restores_dir_is_outside_every_default_root_on_every_os() {
+    fn default_restores_dir_obeys_the_placement_rules_on_every_os() {
+        use paths::CaseSensitivity::Insensitive;
         let layout = HomeLayout::from_home("/h");
         for os in ALL_OS {
             let restores = default_restores_dir(&layout, os);
+            assert_eq!(restores, Path::new("/h/Music/Wit Restores"), "{os:?}");
             for root in candidate_roots(&layout, os) {
+                // May be inside a root; must never contain one.
                 assert!(
-                    !paths::overlaps_canonical(&restores, &root.path),
-                    "{os:?}: {} overlaps {}",
+                    !paths::is_within_canonical(&root.path, &restores, Insensitive),
+                    "{os:?}: {} contains {}",
                     restores.display(),
                     root.path.display()
                 );
             }
         }
+    }
+
+    #[test]
+    fn default_restores_dir_is_accepted_on_a_fresh_home() {
+        let (_dir, layout) = fake_home();
+        for root in candidate_roots(&layout, TargetOs::current()) {
+            std::fs::create_dir_all(&root.path).unwrap();
+        }
+        let mut roots = WatchedRoots::new();
+        for root in default_roots(&layout) {
+            roots.add(&root.path, RootKind::Discovery).unwrap();
+        }
+        let restores = default_restores_dir(&layout, TargetOs::current());
+        crate::clone::RestoresDir::new(&restores, &roots).unwrap();
     }
 
     #[test]

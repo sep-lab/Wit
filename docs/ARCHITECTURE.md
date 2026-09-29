@@ -174,8 +174,10 @@ filesystem events (Logic rewrites `ProjectData`, rotates its backups and updates
 Live renames a temp file into place after moving the old set into `Backup/`), so the
 watcher emits **one** event per project, only after that project's relevant files'
 (size, mtime) have been unchanged for a settle window (2 s by default). Which files count
-is a per-format whitelist, and the Restores folder and Wit's own data dir are never
-watched.
+is a per-format whitelist. Wit's own data dir is never watched; the Restores folder is
+watched like any other root (a musician who keeps working in a restored copy keeps its
+history), and a restore in progress stays invisible under a hidden staging name until it
+is renamed into place.
 
 Change detection keeps git's **stat cache** (size/mtime/inode per path, plus an fsmonitor
 daemon) so Wit can spot changes across gigabytes without hashing everything.

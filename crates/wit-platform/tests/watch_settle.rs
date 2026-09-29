@@ -11,7 +11,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
-use wit_platform::clone::RestoresDir;
+use wit_platform::clone::{write_file_in_restores, RestoresDir};
 use wit_platform::roots::{RootKind, WatchedRoots};
 use wit_platform::watch::{ProjectKind, ProjectWatcher, WatchConfig, WatchEvent};
 
@@ -23,6 +23,7 @@ const CHUNK_GAP: Duration = Duration::from_millis(100);
 struct Rig {
     _tmp: tempfile::TempDir,
     base: PathBuf,
+    restores: RestoresDir,
     watcher: ProjectWatcher,
 }
 
@@ -49,6 +50,7 @@ fn rig(kind: RootKind, extra_ignore: Option<&str>, setup: impl FnOnce(&Path)) ->
     Rig {
         _tmp: tmp,
         base,
+        restores,
         watcher,
     }
 }
@@ -211,8 +213,6 @@ fn ignored_folders_and_scratch_files_are_silent_but_user_files_count() {
     fs::write(watched.join("mix.wav.part"), b"download").unwrap();
     let got = settled_after_save(&r.watcher);
     assert!(got.is_empty(), "ignored writes produced {got:?}");
-    // Writes into the Restores folder (outside every root) are never seen.
-    fs::write(r.base.join("Restores/Song — 2026-09-29.als"), b"restored").unwrap();
     // A plain file in a user-added folder is the generic History tier.
     let rpp = watched.join("song.rpp");
     fs::write(&rpp, b"<REAPER_PROJECT>").unwrap();
@@ -228,6 +228,23 @@ fn ignored_folders_and_scratch_files_are_silent_but_user_files_count() {
         got,
         vec![(fs::canonicalize(&notes).unwrap(), ProjectKind::Generic)]
     );
+}
+
+#[test]
+fn a_restore_is_watched_and_appears_as_exactly_one_new_project() {
+    let r = rig(RootKind::Discovery, None, |_| {});
+    // The staging entry is hidden; only the renamed-into-place restore counts.
+    let dest = r
+        .restores
+        .fresh_destination("Song", "2026-09-29", Some("als"))
+        .unwrap();
+    let landed = write_file_in_restores(dest, b"restored set").unwrap();
+    let got = settled_after_save(&r.watcher);
+    assert_eq!(got, vec![(landed.clone(), ProjectKind::Ableton)]);
+    // A musician keeps working in the restored copy: that's history too.
+    write_in_chunks(&landed, 3);
+    let got = settled_after_save(&r.watcher);
+    assert_eq!(got, vec![(landed, ProjectKind::Ableton)]);
 }
 
 #[test]

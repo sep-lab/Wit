@@ -2,59 +2,85 @@
 //! which bytes to put where for Logic, Ableton, FL — lives in the restore
 //! lane on top of these; this module only guarantees *where* bytes can go.
 //!
-//! # Why no write can land in a watched root
+//! # The law
+//!
+//! **A restore never modifies, overwrites, renames or deletes anything that
+//! existed before the restore began.** It only *creates* one brand-new entry
+//! directly inside the Restores folder — `<Song> — <date>`, then
+//! `<Song> — <date> (2)`, … — assembling it under a hidden staging name
+//! inside the Restores folder and renaming it into place at the end. It never
+//! writes into an existing entry, including earlier restores.
+//!
+//! The Restores folder **may** be inside a watched root (a user may watch
+//! `~/Music`, which holds `~/Music/Wit Restores`), and Wit watches it like any
+//! other root so the musician keeps history in restored copies. It may
+//! **not** be inside a DAW project (a `.logicx`/`.band` package, an Ableton
+//! project folder, or the folder an `.als`/`.flp` sits in), and may **not**
+//! be a parent of any other watched root.
+//!
+//! # Why that holds by construction
 //!
 //! 1. **A Restores folder is a type, not a path.** [`RestoresDir::new`] is
 //!    its only constructor. It resolves the folder the way the OS will
-//!    (symlinks, `..`, trailing separators; Unicode-normalised,
-//!    case-folded comparison keys — see [`crate::paths`]) and refuses it if
-//!    it is inside, equal to, or a parent of any watched root. It creates
-//!    the folder one component at a time, re-resolving and re-checking after
-//!    each, so a symlink planted mid-way can't redirect the creation.
-//! 2. **Write functions take no destination path.** [`clone_tree`],
-//!    [`write_file_in_restores`], [`StagedRestore`] and
-//!    [`remove_dir_contents_in_restores`] accept only a [`RestoreDest`] — a
-//!    fresh name minted by [`RestoresDir::fresh_destination`] from a
-//!    sanitised song name (no separators, no `..`, no leading dot, no
-//!    Windows device names) — or a [`StagedRestore`] plus a *relative* path
-//!    that is refused if it has a root, a drive prefix, `.`/`..`, a `:`, a
-//!    reserved name or a trailing dot/space. There is no API that accepts
-//!    an absolute destination, so a watched project path can't be passed in.
-//! 3. **Every write re-checks at write time.** Before touching the disk,
-//!    [`RestoresDir::revalidate`] re-resolves the Restores folder (it must
-//!    still resolve to exactly the path that was validated) and re-checks
-//!    it against every watched root, freshly resolved. Intermediate folders
-//!    inside a staged copy are walked with `symlink_metadata` and must be
-//!    real directories, never symlinks.
-//! 4. **Nothing is opened for writing that already existed.** New files are
+//!    (symlinks, `..`, trailing separators; Unicode-normalised, case-folded
+//!    comparison keys — see [`crate::paths`]), refuses a placement that
+//!    breaks the rules above, and creates the folder one component at a
+//!    time, re-resolving and re-checking after each, so a symlink planted
+//!    mid-way can't redirect it.
+//! 2. **No write function takes a destination path.** New entries are
+//!    named only by a [`RestoreDest`] — a fresh name minted by
+//!    [`RestoresDir::fresh_destination`] from a sanitised song name (no
+//!    separators, no `..`, no leading dot, no Windows device names), checked
+//!    free with `symlink_metadata` (so an existing file, folder, symlink or
+//!    dangling symlink all count as taken).
+//! 3. **Only the entry the current restore created can be changed.**
+//!    Multi-step restores (clone a package, swap in a stored `ProjectData`,
+//!    clear the copy's `Project File Backups`) go through a [`NewRestore`]
+//!    handle: it owns a staging folder *this call* created, and accepts only
+//!    paths *relative* to it — refused if they have a root, a drive prefix,
+//!    `.`/`..`, a `:`, a reserved name or a trailing dot/space. There is no
+//!    way to point it at an existing restore or a project.
+//! 4. **Nothing that existed is ever opened for writing.** New files are
 //!    created with `create_new` (which refuses to follow or reuse an
-//!    existing entry) under a temporary name and renamed into place; a hard
-//!    link planted in the Restores folder can't be written through. The
-//!    final rename refuses to replace anything that exists.
-//! 5. **Copies never contain symlinks.** A symlink inside a project could
+//!    existing entry), and the final rename refuses to replace anything
+//!    (`hard_link`-then-unlink for files; check-then-rename for folders,
+//!    where `rename(2)` can at most replace an *empty* folder that appeared
+//!    in between). Intermediate folders inside the staging folder are
+//!    walked with `symlink_metadata` and must be real directories.
+//! 5. **Every step re-checks.** Before touching the disk,
+//!    [`RestoresDir::revalidate`] re-resolves the Restores folder (it must
+//!    still resolve to exactly the validated path) and re-checks the
+//!    placement rules against the filesystem as it is now.
+//! 6. **Copies never contain symlinks.** A symlink inside a project could
 //!    point back into the original; a DAW opening the copy would then write
-//!    through it. [`clone_tree`] skips symlinks (and sockets/FIFOs) and
-//!    lists them in the [`CloneReport`].
+//!    through it. Cloning skips symlinks (and sockets/FIFOs) and lists them
+//!    in the [`CloneReport`].
 //!
-//! The watcher closes the remaining gap: [`crate::watch::ProjectWatcher`]
-//! re-runs [`RestoresDir::check_against`] on the exact root set it is about
-//! to watch, so a root added after the `RestoresDir` was built can't
-//! contain it either. `tests/no_write_in_watched_root.rs` checks all of
-//! this with proptest over generated trees (symlinks, `..`, trailing
-//! separators, NFC/NFD, case variants).
+//! [`crate::watch::WatchConfig::new`] re-runs [`RestoresDir::check_against`]
+//! on the exact root set it is about to watch, so a root added after the
+//! `RestoresDir` was built can't sit inside it either.
+//! `tests/restore_never_touches_existing.rs` checks the law with proptest: after
+//! any sequence of restores over generated trees (symlinks — including ones
+//! planted inside Restores pointing into projects — `..`, trailing
+//! separators, NFC/NFD, case variants, Restores inside a watched root),
+//! every pre-existing file and folder is byte-for-byte and
+//! metadata-identical, and each successful restore added exactly one new
+//! entry directly under Restores.
 //!
 //! What remains out of scope, honestly: another process with the user's
-//! own permissions racing Wit on the Restores folder between a check and
-//! the syscall that follows it. Every check is repeated immediately before
-//! the operation it guards, which narrows that window to one syscall.
+//! own permissions racing Wit inside the Restores folder between a check
+//! and the syscall that follows it. Every check is repeated immediately
+//! before the operation it guards, which narrows that window to one syscall.
 //!
 //! # Atomicity
 //!
 //! A copy is assembled under a hidden `.wit-staging-…` name **inside** the
 //! Restores folder (same volume, so the final rename is atomic) and renamed
-//! to its fresh name only when complete. A [`StagedRestore`] dropped without
-//! [`StagedRestore::commit`] removes its staging folder; a crash leaves a
-//! hidden staging entry that [`RestoresDir::remove_stale_staging`] clears.
+//! to its fresh name only when complete. A [`NewRestore`] dropped without
+//! [`NewRestore::commit`] removes its own staging folder. A crash mid-restore
+//! leaves a hidden `.wit-staging-…` entry behind; Wit never deletes it on a
+//! later run (it existed before that run's restore began), and the watcher
+//! ignores hidden names.
 //!
 //! # Copy strategy
 //!
@@ -80,7 +106,7 @@ use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Prefix of the hidden staging entries this module creates.
 pub const STAGING_PREFIX: &str = ".wit-staging-";
@@ -93,14 +119,17 @@ const MAX_CLONE_DEPTH: usize = 64;
 /// in 255 bytes on every filesystem Wit targets).
 const MAX_NAME_CHARS: usize = 100;
 const MIN_SPACE_MARGIN: u64 = 64 * 1024 * 1024;
+/// The folder Live creates inside every project folder.
+const ABLETON_PROJECT_MARKER: &str = "Ableton Project Info";
 
 /// Everything that can go wrong. Every refusal is an error value, never a
 /// panic and never a silent fallback to a different location.
 #[derive(Debug)]
 pub enum CloneError {
-    /// The Restores folder would be inside (or equal to) a watched root.
-    InsideWatchedRoot { restores: PathBuf, root: PathBuf },
-    /// The Restores folder would contain a watched root.
+    /// The Restores folder would be inside a DAW project (a `.logicx`/`.band`
+    /// package, an Ableton project folder, or the folder of an `.als`/`.flp`).
+    InsideProject { restores: PathBuf, project: PathBuf },
+    /// The Restores folder would be a parent of another watched root.
     ContainsWatchedRoot { restores: PathBuf, root: PathBuf },
     /// The Restores folder spelling can't be used (empty, `..` after a
     /// missing folder, not a directory, resolves somewhere unexpected).
@@ -108,7 +137,7 @@ pub enum CloneError {
     /// The Restores folder no longer resolves to the path that was validated
     /// (moved, replaced by a symlink, deleted).
     RestoresMoved { expected: PathBuf },
-    /// A relative path inside a staged copy was refused.
+    /// A relative path inside a new restore was refused.
     InvalidRelativePath { path: PathBuf, reason: &'static str },
     /// A name or extension was refused.
     InvalidName { name: String, reason: &'static str },
@@ -134,15 +163,15 @@ impl fmt::Display for CloneError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let d = |p: &Path| paths::display(p);
         match self {
-            CloneError::InsideWatchedRoot { restores, root } => write!(
+            CloneError::InsideProject { restores, project } => write!(
                 f,
-                "the Restores folder {} is inside the watched folder {} — Wit never writes inside a folder it watches",
+                "the Restores folder {} is inside the project {} — pick a folder outside any project",
                 d(restores),
-                d(root)
+                d(project)
             ),
             CloneError::ContainsWatchedRoot { restores, root } => write!(
                 f,
-                "the Restores folder {} contains the watched folder {} — pick a Restores folder outside it",
+                "the Restores folder {} contains the watched folder {} — pick a Restores folder that doesn't",
                 d(restores),
                 d(root)
             ),
@@ -210,9 +239,9 @@ struct Inner {
     roots: Vec<PathBuf>,
 }
 
-/// A folder Wit may write restores into — proven, at construction and again
-/// before every write, not to overlap any watched root. See the
-/// [module docs](self) for the full argument.
+/// The one folder restores are created in — proven, at construction and
+/// again before every step, not to be inside a DAW project and not to
+/// contain another watched root. See the [module docs](self) for the law.
 ///
 /// Cheap to clone (it's an `Arc`).
 #[derive(Debug, Clone)]
@@ -220,32 +249,75 @@ pub struct RestoresDir {
     inner: Arc<Inner>,
 }
 
-fn check_disjoint(restores: &Path, roots: &[PathBuf]) -> Result<(), CloneError> {
+fn has_extension(path: &Path, exts: &[&str]) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| exts.iter().any(|x| e.eq_ignore_ascii_case(x)))
+}
+
+/// The DAW project `restores` would sit inside, if any:
+/// - it or an ancestor is a `.logicx`/`.band` package;
+/// - it or an ancestor is an Ableton project folder (has `Ableton Project Info`);
+/// - its parent directly holds an `.als` or `.flp` file — the folder a
+///   project file sits in is that project's folder.
+///
+/// Works on a path whose tail doesn't exist yet (those parts are checked by
+/// name only).
+fn enclosing_project(restores: &Path) -> Option<PathBuf> {
+    for dir in restores.ancestors() {
+        if has_extension(dir, &["logicx", "band"]) {
+            return Some(dir.to_path_buf());
+        }
+        let marker = dir.join(ABLETON_PROJECT_MARKER);
+        if fs::symlink_metadata(&marker).is_ok_and(|m| m.is_dir()) {
+            return Some(dir.to_path_buf());
+        }
+    }
+    let parent = restores.parent()?;
+    let entries = fs::read_dir(parent).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_file = entry.file_type().is_ok_and(|t| t.is_file());
+        if is_file && has_extension(&path, &["als", "flp"]) {
+            return Some(parent.to_path_buf());
+        }
+    }
+    None
+}
+
+/// ADR-0007's placement rules for a canonical `restores` against canonical
+/// `roots`: not inside a project, and not a parent of any *other* root. (It
+/// may be inside a root, or be a root itself.) Case-folded on every OS, so
+/// the "contains a root" check errs toward refusing.
+fn check_placement(restores: &Path, roots: &[PathBuf]) -> Result<(), CloneError> {
     use paths::CaseSensitivity::Insensitive;
     for root in roots {
-        if paths::is_within_canonical(restores, root, Insensitive) {
-            return Err(CloneError::InsideWatchedRoot {
-                restores: restores.to_path_buf(),
-                root: root.clone(),
-            });
-        }
-        if paths::is_within_canonical(root, restores, Insensitive) {
+        let root_inside = paths::is_within_canonical(root, restores, Insensitive);
+        let same = root_inside && paths::is_within_canonical(restores, root, Insensitive);
+        if root_inside && !same {
             return Err(CloneError::ContainsWatchedRoot {
                 restores: restores.to_path_buf(),
                 root: root.clone(),
             });
         }
     }
+    if let Some(project) = enclosing_project(restores) {
+        return Err(CloneError::InsideProject {
+            restores: restores.to_path_buf(),
+            project,
+        });
+    }
     Ok(())
 }
 
 impl RestoresDir {
     /// Validate `path` against `watched`, create it if needed, and return
-    /// the only handle Wit's write functions accept.
+    /// the only handle Wit's restore functions accept.
     ///
-    /// Refuses (with no folder created) a path that resolves inside, equal
-    /// to, or above any watched root; a path whose missing tail contains
-    /// `..`; and a path that exists but isn't a directory.
+    /// Refuses (creating nothing) a path that resolves inside a DAW project
+    /// or above another watched root; a path whose missing tail contains
+    /// `..`; and a path that exists but isn't a directory. Being inside a
+    /// watched root, or being one, is fine.
     pub fn new(path: &Path, watched: &WatchedRoots) -> Result<RestoresDir, CloneError> {
         if path.as_os_str().is_empty() {
             return Err(CloneError::InvalidRestoresPath {
@@ -257,7 +329,7 @@ impl RestoresDir {
 
         // 1. Check where it *would* be, before creating anything.
         let planned = paths::canonicalize_lenient(path).map_err(io_err("resolve", path))?;
-        check_disjoint(&planned, &roots)?;
+        check_placement(&planned, &roots)?;
 
         // 2. Create the missing tail one component at a time, re-resolving
         //    and re-checking after each.
@@ -293,7 +365,7 @@ impl RestoresDir {
                 Err(e) => return Err(io_err("create folder", &next)(e)),
             };
             let resolved = fs::canonicalize(&next).map_err(io_err("resolve", &next))?;
-            if let Err(e) = check_disjoint(&resolved, &roots) {
+            if let Err(e) = check_placement(&resolved, &roots) {
                 if created {
                     // Only ever an empty folder this call just made.
                     let _ = fs::remove_dir(&next);
@@ -321,7 +393,7 @@ impl RestoresDir {
                 reason: "it resolves differently from one moment to the next",
             });
         }
-        check_disjoint(&dir, &roots)?;
+        check_placement(&dir, &roots)?;
         Ok(RestoresDir {
             inner: Arc::new(Inner { dir, roots }),
         })
@@ -341,14 +413,14 @@ impl RestoresDir {
     /// calls this with the exact set it is about to watch.
     pub fn check_against(&self, watched: &WatchedRoots) -> Result<(), CloneError> {
         let roots: Vec<PathBuf> = watched.iter().map(|r| r.path().to_path_buf()).collect();
-        check_disjoint(&self.inner.dir, &roots)
+        check_placement(&self.inner.dir, &roots)
     }
 
-    /// Re-prove the invariant against the filesystem as it is *now*: the
+    /// Re-prove the placement against the filesystem as it is *now*: the
     /// folder must still resolve to exactly the validated path, still be a
-    /// real directory, and still be disjoint from every watched root (both
-    /// as recorded and as those roots resolve today). Called before every
-    /// write.
+    /// real directory, still not be inside a project, and still not contain
+    /// another watched root (as recorded, and as those roots resolve today).
+    /// Called before every step of every restore.
     pub fn revalidate(&self) -> Result<(), CloneError> {
         let dir = &self.inner.dir;
         let moved = || CloneError::RestoresMoved {
@@ -359,14 +431,14 @@ impl RestoresDir {
         if now != *dir || !meta.is_dir() {
             return Err(moved());
         }
-        check_disjoint(dir, &self.inner.roots)?;
+        check_placement(dir, &self.inner.roots)?;
         let fresh: Vec<PathBuf> = self
             .inner
             .roots
             .iter()
             .filter_map(|r| fs::canonicalize(r).ok())
             .collect();
-        check_disjoint(dir, &fresh)
+        check_placement(dir, &fresh)
     }
 
     /// Mint a fresh, unused destination `<Song> — <date>[.ext]`, or
@@ -418,39 +490,16 @@ impl RestoresDir {
         Ok(dest)
     }
 
-    /// Remove `.wit-staging-…` leftovers from a crash that are older than
-    /// `older_than`. Only direct children of the Restores folder with the
-    /// staging prefix are touched; a symlink is removed as a link.
-    pub fn remove_stale_staging(&self, older_than: Duration) -> Result<usize, CloneError> {
-        self.revalidate()?;
-        let dir = &self.inner.dir;
-        let cutoff = SystemTime::now()
-            .checked_sub(older_than)
-            .unwrap_or(UNIX_EPOCH);
-        let mut removed = 0;
-        for entry in fs::read_dir(dir).map_err(io_err("list", dir))? {
-            let entry = entry.map_err(io_err("list", dir))?;
-            let name = entry.file_name();
-            let is_ours = name
-                .to_str()
-                .is_some_and(|n| n.starts_with(STAGING_PREFIX) || n.starts_with(TEMP_PREFIX));
-            if !is_ours {
-                continue;
-            }
-            let path = entry.path();
-            let meta = fs::symlink_metadata(&path).map_err(io_err("inspect", &path))?;
-            let old = meta.modified().map(|m| m < cutoff).unwrap_or(false);
-            if !old {
-                continue;
-            }
-            if meta.is_dir() {
-                fs::remove_dir_all(&path).map_err(io_err("remove", &path))?;
-            } else {
-                fs::remove_file(&path).map_err(io_err("remove", &path))?;
-            }
-            removed += 1;
-        }
-        Ok(removed)
+    /// Start a multi-step restore: mint a fresh destination and create its
+    /// (empty) staging folder. Shorthand for
+    /// [`fresh_destination`](Self::fresh_destination) + [`NewRestore::begin`].
+    pub fn begin_restore(
+        &self,
+        song: &str,
+        date_label: &str,
+        extension: Option<&str>,
+    ) -> Result<NewRestore, CloneError> {
+        NewRestore::begin(self.fresh_destination(song, date_label, extension)?)
     }
 }
 
@@ -828,7 +877,7 @@ fn resolve_source(
 pub fn clone_tree(src: &Path, dest: RestoreDest) -> Result<Restored, CloneError> {
     let (source, meta) = resolve_source(src, &dest.restores)?;
     if meta.is_dir() {
-        let mut staged = StagedRestore::begin(dest)?;
+        let mut staged = NewRestore::begin(dest)?;
         let report = staged.clone_tree_from(&source)?;
         let path = staged.commit()?;
         return Ok(Restored { path, report });
@@ -877,19 +926,20 @@ pub fn write_file_in_restores(dest: RestoreDest, bytes: &[u8]) -> Result<PathBuf
     })
 }
 
-/// Clear the contents of `rel` inside a staged restore (e.g. the copy's
-/// `Alternatives/000/Project File Backups`, so a restored project doesn't
-/// carry the original's backup history). See
-/// [`StagedRestore::remove_dir_contents`]; this free function exists so the
-/// only removal API is visibly scoped to a staged restore.
+/// Clear the contents of `rel` inside the restore being built (e.g. the
+/// copy's `Alternatives/000/Project File Backups`, so a restored project
+/// doesn't carry the original's backup history). See
+/// [`NewRestore::remove_dir_contents`]; this free function exists so the
+/// only removal API is visibly scoped to the entry the current restore
+/// created — it cannot name an existing restore or a project.
 pub fn remove_dir_contents_in_restores(
-    staged: &mut StagedRestore,
+    staged: &mut NewRestore,
     rel: &Path,
 ) -> Result<usize, CloneError> {
     staged.remove_dir_contents(rel)
 }
 
-/// Validate a path *relative to a staged restore*: only plain names — no
+/// Validate a path *relative to a new restore*: only plain names — no
 /// root, drive prefix, `.`/`..`, `:`, separators inside a name, control
 /// characters, Windows-reserved names or trailing dots/spaces.
 fn validate_relative(rel: &Path, allow_empty: bool) -> Result<Vec<OsString>, CloneError> {
@@ -923,29 +973,33 @@ fn validate_relative(rel: &Path, allow_empty: bool) -> Result<Vec<OsString>, Clo
     Ok(names)
 }
 
-/// A restore being assembled in a hidden staging folder inside the Restores
-/// folder, for multi-step restores (clone a package, swap in a stored
-/// `ProjectData`, clear its backups) that must appear all at once or not at
-/// all. Every path it accepts is relative to its own staging folder.
+/// The one entry the current restore is creating — the **only** handle
+/// through which anything can be written or removed. It owns a hidden
+/// staging folder that [`NewRestore::begin`] just created inside the
+/// Restores folder; every path it accepts is relative to that folder, so it
+/// cannot reach an earlier restore, a project, or anything else that
+/// existed before this restore began. Used for multi-step restores (clone a
+/// package, swap in a stored `ProjectData`, clear its backups) that must
+/// appear all at once or not at all.
 ///
-/// Dropping it without [`commit`](StagedRestore::commit) deletes the
-/// staging folder.
+/// [`commit`](NewRestore::commit) renames it to its fresh name; dropping it
+/// without committing deletes the staging folder (and only that).
 #[derive(Debug)]
-pub struct StagedRestore {
+pub struct NewRestore {
     dest: Option<RestoreDest>,
     staging: PathBuf,
 }
 
-impl StagedRestore {
-    /// Create an empty staging folder for `dest`.
-    pub fn begin(dest: RestoreDest) -> Result<StagedRestore, CloneError> {
+impl NewRestore {
+    /// Create an empty, brand-new staging folder for `dest`.
+    pub fn begin(dest: RestoreDest) -> Result<NewRestore, CloneError> {
         dest.restores.revalidate()?;
         let staging = dest
             .restores
             .path()
             .join(format!("{STAGING_PREFIX}{}", unique_suffix()));
         fs::create_dir(&staging).map_err(io_err("create staging folder", &staging))?;
-        Ok(StagedRestore {
+        Ok(NewRestore {
             dest: Some(dest),
             staging,
         })
@@ -960,7 +1014,7 @@ impl StagedRestore {
         &self
             .dest
             .as_ref()
-            .expect("a StagedRestore always holds its destination until commit")
+            .expect("a NewRestore holds its destination until commit")
             .restores
     }
 
@@ -1000,7 +1054,7 @@ impl StagedRestore {
     }
 
     /// Clone the *contents* of the directory `src` into the staging folder
-    /// (so the staged restore becomes a copy of `src`). The staging folder
+    /// (so the new restore becomes a copy of `src`). The staging folder
     /// must still be empty.
     pub fn clone_tree_from(&mut self, src: &Path) -> Result<CloneReport, CloneError> {
         self.check_staging()?;
@@ -1008,7 +1062,7 @@ impl StagedRestore {
         if !meta.is_dir() {
             return Err(CloneError::InvalidRelativePath {
                 path: source,
-                reason: "a staged restore clones a folder; use clone_tree for a single file",
+                reason: "a new restore clones a folder; use clone_tree for a single file",
             });
         }
         let not_empty = fs::read_dir(&self.staging)
@@ -1018,7 +1072,7 @@ impl StagedRestore {
         if not_empty {
             return Err(CloneError::InvalidRelativePath {
                 path: self.staging.clone(),
-                reason: "the staged restore already has content",
+                reason: "the new restore already has content",
             });
         }
         let total = tree_size(&source, 0)?;
@@ -1037,7 +1091,7 @@ impl StagedRestore {
         Ok(ctx.report)
     }
 
-    /// Write `bytes` at `rel` inside the staged restore, creating parent
+    /// Write `bytes` at `rel` inside the new restore, creating parent
     /// folders as needed. **Replaces** a file already staged there (that's
     /// how a stored `ProjectData` is swapped into a cloned package) — by
     /// writing a new file and renaming it over the old entry, never by
@@ -1064,10 +1118,10 @@ impl StagedRestore {
         })
     }
 
-    /// Remove everything inside the folder `rel` of the staged restore
+    /// Remove everything inside the folder `rel` of the new restore
     /// (keeping the folder itself). A missing folder is not an error.
     /// Symlinks are removed as links, never followed. Returns how many
-    /// entries were removed. An empty `rel` clears the whole staged restore.
+    /// entries were removed. An empty `rel` clears the whole new restore.
     pub fn remove_dir_contents(&mut self, rel: &Path) -> Result<usize, CloneError> {
         self.check_staging()?;
         let names = validate_relative(rel, true)?;
@@ -1096,7 +1150,7 @@ impl StagedRestore {
         let dest = self
             .dest
             .take()
-            .expect("a StagedRestore always holds its destination until commit");
+            .expect("a NewRestore holds its destination until commit");
         let restores = dest.restores.clone();
         match commit_entry(&self.staging, dest, true) {
             Ok(path) => Ok(path),
@@ -1115,7 +1169,7 @@ impl StagedRestore {
     }
 }
 
-impl Drop for StagedRestore {
+impl Drop for NewRestore {
     fn drop(&mut self) {
         // Committed: `dest` was taken and the staging folder was renamed away.
         let Some(dest) = &self.dest else { return };
@@ -1160,6 +1214,7 @@ pub fn date_label_utc(t: SystemTime) -> String {
 mod tests {
     use super::*;
     use crate::roots::RootKind;
+    use std::time::Duration;
 
     struct World {
         _dir: tempfile::TempDir,
@@ -1207,29 +1262,79 @@ mod tests {
     }
 
     #[test]
-    fn refuses_restores_inside_equal_to_or_above_a_watched_root() {
+    fn restores_may_be_inside_or_equal_to_a_watched_root() {
         let w = world();
         let inside = w.base.join("Music/Logic/Wit Restores");
-        assert!(matches!(
-            RestoresDir::new(&inside, &w.roots),
-            Err(CloneError::InsideWatchedRoot { .. })
-        ));
-        assert!(
-            !inside.exists(),
-            "a refused Restores folder is never created"
-        );
-        assert!(matches!(
-            RestoresDir::new(&w.base.join("Music/Logic"), &w.roots),
-            Err(CloneError::InsideWatchedRoot { .. })
-        ));
+        RestoresDir::new(&inside, &w.roots).unwrap();
+        assert!(inside.is_dir());
+        RestoresDir::new(&w.base.join("Music/Logic"), &w.roots).unwrap();
+    }
+
+    #[test]
+    fn refuses_restores_above_another_watched_root() {
+        let w = world();
         assert!(matches!(
             RestoresDir::new(&w.base.join("Music"), &w.roots),
             Err(CloneError::ContainsWatchedRoot { .. })
         ));
-        // Spelled with `..`, a trailing separator, and different case.
-        let sneaky = w.base.join("Other/../MUSIC/logic/x/");
+    }
+
+    #[test]
+    fn refuses_restores_inside_a_project_and_creates_nothing() {
+        let w = world();
+        let in_package = w.base.join("Music/Logic/Song.logicx/Wit Restores");
+        assert!(matches!(
+            RestoresDir::new(&in_package, &w.roots),
+            Err(CloneError::InsideProject { .. })
+        ));
+        assert!(
+            !in_package.exists(),
+            "a refused Restores folder is never created"
+        );
+        // Spelled with `..`, a trailing separator, and a case-variant extension.
+        let sneaky = w.base.join("Other/../MUSIC/logic/Song.LOGICX/x/");
         assert!(RestoresDir::new(&sneaky, &w.roots).is_err());
         assert!(!w.base.join("Other").exists());
+
+        // An Ableton project folder (Live's marker folder inside it).
+        let live = w.base.join("Live/Set Project");
+        fs::create_dir_all(live.join("Ableton Project Info")).unwrap();
+        assert!(matches!(
+            RestoresDir::new(&live.join("Restores"), &w.roots),
+            Err(CloneError::InsideProject { .. })
+        ));
+        // Next to an FL Studio project file.
+        let fl = w.base.join("FL");
+        fs::create_dir_all(&fl).unwrap();
+        fs::write(fl.join("Beat.flp"), b"flp").unwrap();
+        assert!(matches!(
+            RestoresDir::new(&fl.join("Restores"), &w.roots),
+            Err(CloneError::InsideProject { .. })
+        ));
+        assert!(!fl.join("Restores").exists());
+    }
+
+    #[test]
+    fn a_restore_inside_the_watched_root_leaves_every_existing_file_alone() {
+        let w = world();
+        let restores =
+            RestoresDir::new(&w.base.join("Music/Logic/Wit Restores"), &w.roots).unwrap();
+        let before = snapshot(&w.base.join("Music"));
+        let dest = restores
+            .fresh_destination("Song", "d", Some("logicx"))
+            .unwrap();
+        let restored = clone_tree(&w.base.join("Music/Logic/Song.logicx"), dest).unwrap();
+        let after = snapshot(&w.base.join("Music"));
+        let new: Vec<&PathBuf> = after
+            .iter()
+            .filter(|e| !before.contains(e))
+            .map(|(p, _)| p)
+            .collect();
+        assert!(
+            before.iter().all(|e| after.contains(e)),
+            "an existing file changed"
+        );
+        assert!(new.iter().all(|p| p.starts_with(&restored.path)), "{new:?}");
     }
 
     #[test]
@@ -1335,7 +1440,7 @@ mod tests {
             .fresh_destination("Song", "old", Some("logicx"))
             .unwrap();
         let final_path = dest.path();
-        let mut staged = StagedRestore::begin(dest).unwrap();
+        let mut staged = NewRestore::begin(dest).unwrap();
         staged.clone_tree_from(&src).unwrap();
         assert!(!final_path.exists(), "nothing appears before commit");
         staged
@@ -1371,7 +1476,7 @@ mod tests {
         let w = world();
         let restores = RestoresDir::new(&w.base.join("Restores"), &w.roots).unwrap();
         let dest = restores.fresh_destination("Song", "x", None).unwrap();
-        let mut staged = StagedRestore::begin(dest).unwrap();
+        let mut staged = NewRestore::begin(dest).unwrap();
         staged.write_file(Path::new("a/b"), b"x").unwrap();
         drop(staged);
         assert_eq!(fs::read_dir(restores.path()).unwrap().count(), 0);
@@ -1382,7 +1487,7 @@ mod tests {
         let w = world();
         let restores = RestoresDir::new(&w.base.join("Restores"), &w.roots).unwrap();
         let dest = restores.fresh_destination("Song", "x", None).unwrap();
-        let mut staged = StagedRestore::begin(dest).unwrap();
+        let mut staged = NewRestore::begin(dest).unwrap();
         let absolute = w
             .base
             .join("Music/Logic/Song.logicx/Alternatives/000/ProjectData");
@@ -1434,7 +1539,7 @@ mod tests {
         let w = world();
         let restores = RestoresDir::new(&w.base.join("Restores"), &w.roots).unwrap();
         let dest = restores.fresh_destination("Song", "x", None).unwrap();
-        let mut staged = StagedRestore::begin(dest).unwrap();
+        let mut staged = NewRestore::begin(dest).unwrap();
         let project = w.base.join("Music/Logic/Song.logicx/Alternatives/000");
         std::os::unix::fs::symlink(&project, staged.staging_path().join("evil")).unwrap();
         assert!(matches!(
@@ -1493,23 +1598,26 @@ mod tests {
     }
 
     #[test]
-    fn stale_staging_is_removed_and_nothing_else() {
+    fn leftovers_from_an_earlier_crash_are_never_touched() {
         let w = world();
         let restores = RestoresDir::new(&w.base.join("Restores"), &w.roots).unwrap();
-        fs::create_dir(restores.path().join(format!("{STAGING_PREFIX}old"))).unwrap();
-        fs::write(restores.path().join("Keep me.als"), b"x").unwrap();
-        // Filesystem timestamps can be coarser than the clock; let the
-        // staging entry become strictly older than "now".
-        std::thread::sleep(Duration::from_millis(50));
-        assert_eq!(restores.remove_stale_staging(Duration::ZERO).unwrap(), 1);
-        assert!(restores.path().join("Keep me.als").exists());
-        // Nothing is "stale" under a long cutoff.
-        fs::create_dir(restores.path().join(format!("{STAGING_PREFIX}new"))).unwrap();
-        assert_eq!(
+        let leftover = restores.path().join(format!("{STAGING_PREFIX}crashed"));
+        fs::create_dir(&leftover).unwrap();
+        fs::write(leftover.join("half.bin"), b"half").unwrap();
+        let earlier = restores.path().join("Song — d.als");
+        fs::write(&earlier, b"an earlier restore the user kept working on").unwrap();
+        let landed = write_file_in_restores(
             restores
-                .remove_stale_staging(Duration::from_secs(3_600))
+                .fresh_destination("Song", "d", Some("als"))
                 .unwrap(),
-            0
+            b"new",
+        )
+        .unwrap();
+        assert!(landed.ends_with("Song — d (2).als"));
+        assert_eq!(fs::read(leftover.join("half.bin")).unwrap(), b"half");
+        assert_eq!(
+            fs::read(&earlier).unwrap(),
+            b"an earlier restore the user kept working on"
         );
     }
 
@@ -1517,13 +1625,19 @@ mod tests {
     fn check_against_catches_a_root_added_later() {
         let w = world();
         let restores = RestoresDir::new(&w.base.join("Restores"), &w.roots).unwrap();
-        let mut more = w.roots.clone();
-        more.add(&w.base, RootKind::UserFolder).unwrap();
+        // A root *around* the Restores folder is fine ...
+        let mut around = w.roots.clone();
+        around.add(&w.base, RootKind::UserFolder).unwrap();
+        restores.check_against(&around).unwrap();
+        // ... a root *inside* it is not.
+        let inner = restores.path().join("inner");
+        fs::create_dir(&inner).unwrap();
+        let mut inside = w.roots.clone();
+        inside.add(&inner, RootKind::UserFolder).unwrap();
         assert!(matches!(
-            restores.check_against(&more),
-            Err(CloneError::ContainsWatchedRoot { .. }) | Err(CloneError::InsideWatchedRoot { .. })
+            restores.check_against(&inside),
+            Err(CloneError::ContainsWatchedRoot { .. })
         ));
-        restores.check_against(&w.roots).unwrap();
     }
 
     #[test]

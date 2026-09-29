@@ -319,9 +319,9 @@ pub fn is_within_with(child: &Path, root: &Path, case: CaseSensitivity) -> bool 
     }
 }
 
-/// `true` if either path contains the other (or they're the same) — the
-/// relation the Restores folder must never have with a watched root.
-/// Conservative in the same way as [`is_within`].
+/// `true` if either path contains the other (or they're the same) — e.g.
+/// for deduplicating nested roots. Conservative in the same way as
+/// [`is_within`].
 pub fn overlaps(a: &Path, b: &Path) -> bool {
     match (canonicalize_lenient(a), canonicalize_lenient(b)) {
         (Ok(a), Ok(b)) => overlaps_canonical(&a, &b),
