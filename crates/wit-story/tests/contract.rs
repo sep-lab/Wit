@@ -308,3 +308,41 @@ fn ids_are_unique_across_watched_folders() {
         assert_ne!(x.song_id, y.song_id);
     }
 }
+
+/// PLAN-V2 (2026-09-29, "Phase C → Ableton"): once a project's time
+/// signature is actually read, an Ableton bar position is exact, not
+/// "about" — and a position inside a locator's range names that section.
+/// The demo's Ableton chain has a save that moves a clip from bar 1 into
+/// the "Chorus" locator at bar 5 for exactly this reason.
+#[test]
+fn ableton_bars_are_exact_and_sectioned_once_the_meter_is_read() {
+    let (_dir, lib) = demo_library();
+    let story = lib
+        .stories
+        .iter()
+        .find(|s| s.header.daw_label == "Live")
+        .expect("the demo library has an Ableton story");
+    assert_eq!(story.header.time_signature.as_deref(), Some("4/4"));
+
+    let moved = story
+        .sessions
+        .iter()
+        .flat_map(|s| s.moments.iter())
+        .flat_map(|m| m.sentences.iter())
+        .find(|s| s.text.starts_with("Moved clip"))
+        .expect("the demo's move-into-chorus save produced a sentence");
+
+    assert_eq!(moved.confidence, Confidence::Exact);
+    match &moved.place {
+        Some(wit_story::Place::Bars {
+            approximate,
+            section,
+            ..
+        }) => {
+            assert!(!approximate, "bars must be exact once the meter is read");
+            assert_eq!(section.as_deref(), Some("Chorus"));
+        }
+        other => panic!("expected Place::Bars, got {other:?}"),
+    }
+    assert_eq!(moved.place_label.as_deref(), Some("bars 5–8 · Chorus"));
+}

@@ -122,6 +122,58 @@ Wit gunzips before hashing anyway (see ADR-0002).
 **Interchange — [verified]** by scanning the Live 12 binary: **no dawproject, no AAF**.
 Live exports audio, MIDI files, and Live packs only.
 
+### PLAN-V2 additions (2026-09-29, "Phase C → Ableton")
+
+**Locators — [verified]** on the real 29-file Backup chain: `LiveSet/Locators/Locators/
+Locator` carries `Time` (beats, same unit as a clip's `CurrentStart`), `Name`, and
+`IsSongStart`. Only 3 of the 29 files have any locator at all (one each), matching the
+memory file's pattern that Ableton's structuring features go largely unused in real
+practice.
+
+**Time signature is not a plain field — [verified], and a correction to a prior
+assumption.** `LiveSet/MainTrack/DeviceChain/Mixer/TimeSignature/Manual` (`MasterTrack` on
+older Live) is a `RemoteableEnum` per Live 12's own shipped schema
+(`/Applications/Ableton Live 12 Suite.app/Contents/App-Resources/Schema/12.0_12402.txt`),
+not a literal numerator/denominator — and every file in the real chain carries the same raw
+value (`201`), so there is no way to test a decode table against real material without
+launching Live, which is out of scope here. Wit instead reads the *explicit*
+`Numerator`/`Denominator` Ableton writes on a clip's own warp/grid time-signature record
+(`.//TimeSignature/TimeSignatures/RemoteableTimeSignature`, class `SingleTimeSignatureManager`)
+— **[cited]**, matching a tested, MIT-licensed open-source parser
+(github.com/owenbush/ableton-inspector). All 29 real files agree: `4/4`.
+
+**Key/scale — [verified] the gate, [cited] the tables.** `LiveSet/ScaleInformation`
+(`Root`/`Name`, both enums) plus the sibling `InKey` flag exist in every real file, and
+`InKey` is `false` in all 29 — the scale feature is measurably unused in this material, the
+same adoption pattern as locators. Root-note order (0=C chromatic) is the near-universal
+MIDI convention; the 35-entry scale-name table is cited from
+github.com/owenbush/ableton-inspector (`constants/scales.ts`). Neither has been exercised
+against real material, since nothing in the chain turns the feature on.
+
+**Third-party plugin names — [verified].** A device's `PluginDesc/AuPluginInfo` carries a
+literal `Name`/`Manufacturer` — not `PlugName`, which the same third-party parser assumes
+for every plugin format (its assumption does not match Live 12.3.5/12.4.2's AU shape,
+measured). `Vst`/`Vst3PluginInfo` are read the same way but unverified: the real chain's
+only third-party plugin is an AU. The device wrapper tag itself (`AuPluginDevice`,
+measured) is not required for extraction — Wit keys on the presence of `PluginDesc`, so it
+never depends on enumerating every wrapper tag Live uses.
+
+**Device display names — [verified]**, by a new method: decompressing a factory preset
+from each device's own folder under `.../Core Library/Devices/<category>/<name>/` (presets
+are gzipped XML, exactly like a `.als`) and reading the preset's own root tag. This caught
+two corrections to the tags a musician's intuition would guess: the modern "Auto Filter" is
+`AutoFilter2` (`AutoFilter` alone is the *Legacy* category's device, a different tag with a
+different, older sound), and "Compressor" is `Compressor2` — there is no bare `Compressor`
+tag among Live 12's factory presets. See `crates/wit-als/src/tables.rs`.
+
+**Master bus devices — [verified].** `LiveSet/MainTrack/DeviceChain` nests `Mixer` and a
+second `DeviceChain/Devices` exactly like a regular track's `DeviceChain` does. A real,
+reviewed save toggled a mastering plugin off on the master bus and Wit said nothing,
+because extraction only ever walked `LiveSet/Tracks`; the master bus's own device on/off
+state is encoded the same way a regular device's is (`<On><Manual Value="true|false"/>`),
+so once the master track is walked at all, the existing parameter-fingerprint mechanism
+(ADR-0004) already reports the toggle correctly.
+
 ---
 
 ## Logic Pro — `.logicx` 🟡

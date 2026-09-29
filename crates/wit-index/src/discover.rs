@@ -138,8 +138,18 @@ pub struct AbletonLineage {
 /// matching the pattern joins the lineage named by its prefix; a file that
 /// doesn't (a deliberately-named save like `v1.als`) becomes its own
 /// singleton lineage.
+///
+/// Grouping is scoped to a **set's own folder** (an autosave's `Backup/`
+/// folder counts as its parent's), not by name alone across the whole
+/// `root` — two unrelated sets that happen to share a name in different
+/// folders (a common shape: an artist's "v2"/"final" naming, or the same
+/// song saved into two different projects) must never merge into one
+/// lineage just because nobody renamed one of them. This was measured as a
+/// real bug: the previous grouping (`lineage_name` only) would have merged
+/// two same-named, unrelated sets from different folders in the real
+/// 29-file Backup chain's naming pattern into a single lineage.
 pub fn discover_ableton_lineages(root: &Path) -> Vec<AbletonLineage> {
-    let mut by_name: std::collections::BTreeMap<String, Vec<PathBuf>> =
+    let mut by_key: std::collections::BTreeMap<(PathBuf, String), Vec<PathBuf>> =
         std::collections::BTreeMap::new();
     walk(root, 0, &mut |path| {
         if path.extension().and_then(|e| e.to_str()) == Some("als") {
@@ -150,21 +160,36 @@ pub fn discover_ableton_lineages(root: &Path) -> Vec<AbletonLineage> {
                         .unwrap_or(filename)
                         .to_string()
                 });
-                by_name
-                    .entry(lineage_name)
+                let folder_key = set_folder_key(path);
+                by_key
+                    .entry((folder_key, lineage_name))
                     .or_default()
                     .push(path.to_path_buf());
             }
         }
         true
     });
-    by_name
+    by_key
         .into_iter()
-        .map(|(name, mut saves)| {
+        .map(|((_, name), mut saves)| {
             saves.sort();
             AbletonLineage { name, saves }
         })
         .collect()
+}
+
+/// The folder a `.als` file's lineage is scoped to: its own parent, unless
+/// that parent is named `Backup` (Live's autosave folder), in which case
+/// it's the grandparent — the same folder the set itself lives in. Mirrors
+/// `wit-story::build::ableton_story`'s own `dir` computation, which needs
+/// the identical fold for the same reason (a song id must not change the
+/// first time Live writes an autosave).
+fn set_folder_key(path: &Path) -> PathBuf {
+    let folder = path.parent().unwrap_or(path);
+    match folder.file_name() {
+        Some(n) if n == "Backup" => folder.parent().unwrap_or(folder).to_path_buf(),
+        _ => folder.to_path_buf(),
+    }
 }
 
 /// If `filename` matches `"<name> [YYYY-MM-DD HHMMSS].als"`, return
@@ -241,8 +266,8 @@ impl FlpProject {
 /// shared-Backup-folder shape rather than Ableton's flat lineage-of-equals
 /// one (see [`FlpProject`]'s doc for why).
 ///
-/// **Known limitation, inherited from the same design
-/// [`discover_ableton_lineages`] already accepts:** grouping is by name
+/// **Known limitation** (PLAN-V2, 2026-09-29, fixed this same wave for
+/// [`discover_ableton_lineages`], not yet ported here): grouping is by name
 /// alone, globally across `root`, so two unrelated projects that happen to
 /// share a filename in different folders would incorrectly merge into one
 /// lineage. Scoping backups to a per-project directory instead would avoid
@@ -436,6 +461,50 @@ mod tests {
         assert_eq!(lineages[0].saves.len(), 2);
         assert_eq!(lineages[1].name, "v1");
         assert_eq!(lineages[1].saves.len(), 1);
+    }
+
+    #[test]
+    fn same_named_sets_in_different_folders_stay_separate_lineages() {
+        // The bug this fixes: two unrelated sets that happen to share a
+        // name in different folders must never merge into one lineage.
+        let dir = tempfile::tempdir().unwrap();
+        touch(&dir.path().join("Song A/Song.als"));
+        touch(&dir.path().join("Song B/Song.als"));
+
+        let lineages = discover_ableton_lineages(dir.path());
+        assert_eq!(lineages.len(), 2, "{lineages:?}");
+        assert!(lineages.iter().all(|l| l.name == "Song"));
+        assert!(lineages.iter().all(|l| l.saves.len() == 1));
+        assert_ne!(lineages[0].saves[0], lineages[1].saves[0]);
+    }
+
+    #[test]
+    fn an_autosave_still_joins_its_own_sets_lineage_across_the_backup_folder() {
+        // The fold this fix must not break: Backup/ belongs to its parent.
+        let dir = tempfile::tempdir().unwrap();
+        touch(&dir.path().join("Song/Song.als"));
+        touch(&dir.path().join("Song/Backup/Song [2026-05-05 095412].als"));
+
+        let lineages = discover_ableton_lineages(dir.path());
+        assert_eq!(lineages.len(), 1, "{lineages:?}");
+        assert_eq!(lineages[0].saves.len(), 2);
+    }
+
+    #[test]
+    fn a_same_named_autosave_chain_in_a_sibling_backup_folder_stays_separate() {
+        let dir = tempfile::tempdir().unwrap();
+        touch(
+            &dir.path()
+                .join("Song A/Backup/Song [2026-05-05 095412].als"),
+        );
+        touch(
+            &dir.path()
+                .join("Song B/Backup/Song [2026-05-05 095412].als"),
+        );
+
+        let lineages = discover_ableton_lineages(dir.path());
+        assert_eq!(lineages.len(), 2, "{lineages:?}");
+        assert_ne!(lineages[0].saves[0], lineages[1].saves[0]);
     }
 
     fn touch_at(path: &Path, epoch_secs: u64) {

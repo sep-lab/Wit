@@ -41,6 +41,14 @@ pub struct SetSpec {
     pub creator: String,
     pub tempo_bpm: f64,
     pub tracks: Vec<TrackSpec>,
+    /// (numerator, denominator). `wit-als` reads this from a clip's own
+    /// explicit `RemoteableTimeSignature`, not from the enum-encoded value
+    /// on `MainTrack` (see that crate's `extract.rs`), so when this is
+    /// `Some`, every clip in every track gets one.
+    pub time_signature: Option<(u16, u16)>,
+    /// (name, time in beats), written as Ableton's own arrangement
+    /// locators.
+    pub locators: Vec<(String, f64)>,
 }
 
 /// XML-escape a value destined for a double-quoted attribute. Demo project
@@ -68,7 +76,16 @@ fn num(v: f64) -> String {
     format!("{v:.6}")
 }
 
-fn clip_xml(clip: &ClipSpec) -> String {
+fn clip_xml(clip: &ClipSpec, time_signature: Option<(u16, u16)>) -> String {
+    let time_signature_xml = time_signature
+        .map(|(numerator, denominator)| {
+            format!(
+                r#"<TimeSignature><TimeSignatures>
+                    <RemoteableTimeSignature Id="0"><Numerator Value="{numerator}"/><Denominator Value="{denominator}"/><Time Value="0"/></RemoteableTimeSignature>
+                </TimeSignatures></TimeSignature>"#
+            )
+        })
+        .unwrap_or_default();
     format!(
         r#"<AudioClip Id="{id}">
               <Name Value="{name}"/>
@@ -76,6 +93,7 @@ fn clip_xml(clip: &ClipSpec) -> String {
               <CurrentEnd Value="{end}"/>
               <Disabled Value="{disabled}"/>
               <SampleRef><FileRef><RelativePath Value="Samples/Imported/{sample}"/></FileRef></SampleRef>
+              {time_signature_xml}
             </AudioClip>"#,
         id = clip.id,
         name = esc(&clip.name),
@@ -86,7 +104,7 @@ fn clip_xml(clip: &ClipSpec) -> String {
     )
 }
 
-fn track_xml(track: &TrackSpec) -> String {
+fn track_xml(track: &TrackSpec, time_signature: Option<(u16, u16)>) -> String {
     let devices: String = track
         .devices
         .iter()
@@ -98,7 +116,11 @@ fn track_xml(track: &TrackSpec) -> String {
             )
         })
         .collect();
-    let clips: String = track.clips.iter().map(clip_xml).collect();
+    let clips: String = track
+        .clips
+        .iter()
+        .map(|c| clip_xml(c, time_signature))
+        .collect();
 
     format!(
         r#"<AudioTrack Id="{id}">
@@ -121,15 +143,41 @@ fn track_xml(track: &TrackSpec) -> String {
     )
 }
 
+fn locators_xml(locators: &[(String, f64)]) -> String {
+    if locators.is_empty() {
+        return String::new();
+    }
+    let entries: String = locators
+        .iter()
+        .enumerate()
+        .map(|(i, (name, time))| {
+            format!(
+                r#"<Locator Id="{i}"><Time Value="{time}"/><Name Value="{name}"/><IsSongStart Value="{is_start}"/></Locator>"#,
+                i = i,
+                time = num(*time),
+                name = esc(name),
+                is_start = i == 0,
+            )
+        })
+        .collect();
+    format!(r#"<Locators><Locators>{entries}</Locators></Locators>"#)
+}
+
 /// Render the uncompressed Live-set XML. Exposed for tests and for anyone
 /// wanting to eyeball what the demo generator actually writes.
 pub fn build_als_xml(spec: &SetSpec) -> String {
-    let tracks: String = spec.tracks.iter().map(track_xml).collect();
+    let tracks: String = spec
+        .tracks
+        .iter()
+        .map(|t| track_xml(t, spec.time_signature))
+        .collect();
+    let locators = locators_xml(&spec.locators);
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <Ableton MajorVersion="5" MinorVersion="12.0_12120" Creator="{creator}">
   <LiveSet>
     <Tracks>{tracks}</Tracks>
+    {locators}
     <MainTrack>
       <DeviceChain><Mixer>
         <Tempo><Manual Value="{tempo}"/></Tempo>
@@ -179,6 +227,8 @@ mod tests {
                     disabled: false,
                 }],
             }],
+            time_signature: Some((4, 4)),
+            locators: vec![("Verse".into(), 0.0), ("Chorus".into(), 16.0)],
         }
     }
 
@@ -210,6 +260,36 @@ mod tests {
         // The path is written in full and reduced to a basename on read.
         assert_eq!(track.clips["3"].sample, "rhodes take 3.wav");
         assert_eq!(track.clips["3"].name, "verse rhodes");
+        assert_eq!(
+            model.time_signature,
+            Some(wit_model::TimeSignature {
+                numerator: 4,
+                denominator: 4
+            })
+        );
+        assert_eq!(
+            model.locators,
+            vec![
+                wit_model::Locator {
+                    name: "Verse".into(),
+                    time_beats: 0.0
+                },
+                wit_model::Locator {
+                    name: "Chorus".into(),
+                    time_beats: 16.0
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_spec_with_no_time_signature_or_locators_omits_both() {
+        let mut bare = spec();
+        bare.time_signature = None;
+        bare.locators = vec![];
+        let model = model_of(&bare);
+        assert_eq!(model.time_signature, None);
+        assert!(model.locators.is_empty());
     }
 
     #[test]

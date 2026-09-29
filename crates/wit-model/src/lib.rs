@@ -22,7 +22,9 @@ mod model;
 
 pub use change::{render_text, BarPos, ChangeRecord, MixField, MixValue, TimeSignature};
 pub use fmt::{fmt_num, round3, round_places};
-pub use model::{Clip, Device, Fingerprint, Model, Track, TrackId, TrackKind};
+pub use model::{
+    beats_per_bar, Clip, Device, Fingerprint, Locator, Model, Track, TrackId, TrackKind,
+};
 
 #[cfg(test)]
 mod tests {
