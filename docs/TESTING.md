@@ -1,10 +1,17 @@
 # Testing strategy
 
-**Status: partially built.** The suite now exists — **266 tests, 21 strict `xfail`s
-documenting real prototype bugs, and 12 opt-in real-fixture skips** — behind a 7-job CI
-pipeline. What is *not* built is most of what this document argues for: no property-based
-tests, no fuzzing, no round-trip serialisation tests, and no DAW-acceptance checklist has
-ever been executed.
+**Status: partially built.** The suite now exists — **373 tests** (measured:
+`python3 -m pytest tests/ -q -rx` → 357 passed, 16 skipped, **0 `xfail`s**) — behind a
+9-job CI pipeline (`.github/workflows/ci.yml`: `lint`, `test`, `guardrails`, `claims`,
+`benchmark`, `rust`, `licenses`, `docs-repro`, `ci-ok`). The suite once carried 21 strict
+`xfail`s documenting 13 real prototype bugs; [PR #28](https://github.com/sep-lab/Wit/pull/28)
+fixed all of them, closing [issue #10](https://github.com/sep-lab/Wit/issues/10) — the
+strict-xfail doctrine below stays in force for whichever bug is found next. 15 of the 16
+skips are opt-in real-fixture tests (`WIT_FIXTURES`: 12 in `test_real_fixtures.py`, 3 in
+`test_logic_region_map.py`); the 16th is a timing test too fast to measure reliably on
+some machines. What is *not* built is most of what this document argues for: no
+property-based tests, no fuzzing, no round-trip serialisation tests, and no
+DAW-acceptance checklist has ever been executed.
 
 This document is the plan, written in the order the failure modes deserve rather than the
 order a testing pyramid is usually drawn. Sections marked **built** are done; the rest is

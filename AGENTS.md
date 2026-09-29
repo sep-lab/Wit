@@ -74,14 +74,20 @@ Each ADR lists what evidence would overturn it. Bring that evidence, or leave th
 
 ## Testing
 
-`tests/` holds **266 tests** (pytest, run with `python3 -m pytest tests/ -q`). CI runs them
+`tests/` holds **373 tests** (pytest, run with `python3 -m pytest tests/ -q`; measured via
+`python3 -m pytest tests/ -q -rx`: 357 passed, 16 skipped, 0 xfail). CI runs them
 on Python 3.9/3.11/3.13 across ubuntu and macOS with a coverage floor.
 
 Two rules specific to this suite:
 
-- **The 21 `xfail`s are strict and deliberate.** Each documents a real prototype bug with
-  its reproduction and fix. If you fix one, the test turns `XPASS` → failure until you
-  remove the marker in the same commit. That is the intended workflow, not a problem.
+- **`xfail` is strict and deliberate.** Each documents a real prototype bug with its
+  reproduction and fix in the `reason` string. If you fix one, the test turns `XPASS` →
+  failure until you remove the marker in the same commit. That is the intended workflow,
+  not a problem — it is why there are 0 `xfail`s today rather than a stale bug list: the
+  suite once carried 21 markers documenting 13 bugs, and
+  [PR #28](https://github.com/sep-lab/Wit/pull/28) fixed all of them, closing
+  [issue #10](https://github.com/sep-lab/Wit/issues/10). The next bug anyone finds gets
+  the same treatment.
 - **Fixtures are generated in code**, never committed — no audio or project file may enter
   this repo. Tests against real material are opt-in and skip **loudly**.
 

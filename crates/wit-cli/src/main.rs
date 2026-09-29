@@ -21,6 +21,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
+use wit_model::fmt_num;
 
 #[derive(Parser)]
 #[command(name = "wit", about = "Version control for music projects", version)]
@@ -223,8 +224,9 @@ fn logic_probe(old: &std::path::Path, new: &std::path::Path) -> ExitCode {
             );
             if a.extracted.tempo_bpm != b.extracted.tempo_bpm {
                 println!(
-                    "    tempo: {:?} -> {:?} BPM",
-                    a.extracted.tempo_bpm, b.extracted.tempo_bpm
+                    "    tempo: {} -> {} BPM",
+                    fmt_tempo(a.extracted.tempo_bpm),
+                    fmt_tempo(b.extracted.tempo_bpm)
                 );
             }
         }
@@ -322,6 +324,17 @@ fn print_name_diff(label: &str, a: &[String], b: &[String]) {
     }
     for removed in sa.difference(&sb) {
         println!("    {label} removed: '{removed}'");
+    }
+}
+
+/// Render an optional tempo the way a musician reads it: a plain number
+/// (never Rust's `Some(98.0)`/`None` debug spelling) via [`fmt_num`], or the
+/// word "unknown" when Logic's three tempo slots didn't agree (see
+/// `wit_logic::extract::tempo_bpm`).
+fn fmt_tempo(bpm: Option<f64>) -> String {
+    match bpm {
+        Some(bpm) => fmt_num(bpm),
+        None => "unknown".to_string(),
     }
 }
 
