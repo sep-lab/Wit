@@ -18,6 +18,12 @@ WHAT THIS DOES
               previous step. Steps marked allow_identical (the pure-churn save,
               the Save-a-copy, the bounce) only need a NEW save (mtime moved),
               not new bytes; --allow-identical forces that for any step.
+              "Previous" is the nearest EARLIER step in script order, so a
+              `--replace` of step 02 after 03 compares against 01. A step folder
+              that already exists without a live capture (an interrupted run) is
+              never written over: watch refuses, and --replace keeps the old
+              folder as <label>.orphaned-<time>. Only regular files are read, so
+              a FIFO named like a project file is skipped, not waited on.
       next    advances the step pointer and prints the next edit's instructions.
       status  prints run progress and the current step's instructions.
 
@@ -86,6 +92,7 @@ import json
 import os
 import platform
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -194,6 +201,8 @@ def collect(run_real: Path, daw: str) -> List[Dict]:
             if role is None:
                 continue
             st = os.lstat(full)
+            if not stat.S_ISREG(st.st_mode):
+                continue  # a FIFO, socket or device named like a project file is never opened
             out.append({"path": rel, "role": role, "size": st.st_size, "mtime_ns": st.st_mtime_ns})
     out.sort(key=lambda e: e["path"])
     return out
@@ -518,14 +527,23 @@ def cmd_watch(args) -> int:
     if existing and not args.replace:
         raise FileExistsError("step %s is already captured (%s). Use --replace to capture it again "
                               "(the old capture is kept, marked superseded)." % (step["key"], existing[0]["label"]))
-    previous = [c for c in live_captures(m) if c["key"] != step["key"]]
-    prev = previous[-1] if previous else None
+    cdir = corpus_run_dir(daw, run)
+    dest = cdir / step["label"]
+    orphan = dest.exists() and not existing
+    if orphan and not args.replace:
+        raise FileExistsError(
+            "corpus folder %s already exists but the manifest has no live capture of step %s (an "
+            "interrupted capture?). Nothing was overwritten. Re-run with --replace to capture again; "
+            "the old folder is kept, renamed %s.orphaned-<time>." % (step["label"], step["key"], step["label"]))
+    # "Previous" means the nearest EARLIER step in script order, not the last capture
+    # appended to the manifest: re-capturing step 02 after 03 compares against 01.
+    here = _step_index(m, step["key"])
+    earlier = [c for c in live_captures(m) if _step_index(m, c["key"]) < here]
+    prev = max(earlier, key=lambda c: _step_index(m, c["key"])) if earlier else None
     allow_identical = bool(args.allow_identical or step["allow_identical"])
 
     _log("watching %s for step %s (%s)%s — save in the DAW now if you have not"
          % (labcore.redact(rd), step["key"], step["id"], " [identical bytes allowed]" if allow_identical else ""))
-    cdir = corpus_run_dir(daw, run)
-    dest = cdir / step["label"]
     while True:
         try:
             entries, hashes, cmp, stable_for = wait_for_save(
@@ -546,15 +564,16 @@ def cmd_watch(args) -> int:
             _log("  … the project changed during the copy (%s); waiting for it to settle again" % exc)
 
     captured_at = labcore.now_iso()
-    if existing:
+    aside = None
+    if staging != dest:
         stamp = captured_at.replace(":", "").replace("-", "")
-        aside = cdir / ("%s.superseded-%s" % (step["label"], stamp))
+        aside = cdir / ("%s.%s-%s" % (step["label"], "superseded" if existing else "orphaned", stamp))
         os.rename(str(dest), str(aside))
         os.rename(str(staging), str(dest))
-        for c in m["captures"]:
-            if c["key"] == step["key"] and not c.get("superseded"):
-                c["superseded"] = True
-                c["superseded_dir"] = aside.name
+    for c in m["captures"]:
+        if c["key"] == step["key"] and not c.get("superseded"):
+            c["superseded"] = True
+            c["superseded_dir"] = aside.name if aside else None
 
     prev_hash = {f["path"]: f.get("sha256") for f in (prev["files"] if prev else [])}
     files = []
@@ -581,6 +600,7 @@ def cmd_watch(args) -> int:
         "files": files,
         "listing": [{k: e[k] for k in ("path", "size", "mtime_ns")} for e in entries if e["role"] == ROLE_LISTING],
         "note": args.note,
+        "replaced_orphan": aside.name if (aside and orphan) else None,
         "superseded": False,
     }
     m["captures"].append(entry)

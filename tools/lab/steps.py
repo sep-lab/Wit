@@ -14,6 +14,21 @@ WHAT THIS DOES
     8a/8b (Persian track name, then a Persian audio FILE name — the plan's Unicode
     risk covers both), 17a/17b, 18a/18b, 23a/23b, 25a/25b. Keys look like "08a".
 
+    Tracks are named unambiguously. 8a renames the click-drums track to آواز;
+    8b imports a file with a DIFFERENT Persian name, صدا.wav, because FL Studio
+    (and possibly others) names a new track or channel after the imported file —
+    a file called آواز.wav would create a second "آواز" and make every later
+    "the آواز track" instruction ambiguous (step 24 could then delete the track
+    holding all the edits). Track targets therefore say what the track HOLDS
+    ({"track": "آواز", "holds": "click-drums.wav"}), and validate() proves that no
+    two tracks can ever share a name (adds_track / renames_track / deletes_track).
+
+    Pan (17a/17b) is the same MUSICAL position in every DAW — half-way between
+    centre and hard left/right — written in each DAW's native units: Logic -32/+32
+    on its -64..+63 knob, Live 25L/25R on its 50L..50R scale (Live's 50L is HARD
+    left), FL 50% left/right on its ±100% knob. expected_by_daw records the native
+    value and scale next to the shared {"position", "fraction"}.
+
     Applicability: Logic runs everything; Ableton everything but the Logic-only
     Alternative (25b); FL Studio 20 everything it supports (no project key, no
     Alternatives); GarageBand 12 steps (the plan says "about 10": it shares
@@ -21,8 +36,8 @@ WHAT THIS DOES
     routing steps are skipped). Every non-applicable DAW has a stated reason.
 
     EXPECTED_KEYS is the vocabulary of expectations. Values are exact where the
-    edit sets an exact value (tempo 124, volume -6 dB, pan L50) and descriptive
-    where the DAW picks (a new track's default name is not asserted).
+    edit sets an exact value (tempo 124, volume -6 dB, pan half left) and
+    descriptive where the DAW picks (a new track's default name is not asserted).
 
 USAGE
     python3 tools/lab/steps.py                  # the whole script, all DAWs
@@ -47,6 +62,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import unicodedata
 from typing import Dict, List, Optional
 
 SCRIPT_VERSION = 1
@@ -72,10 +88,19 @@ SAVE_HINT = {
     "fl": "Save: File ▸ Save (⌘S).",
 }
 
-PERSIAN = "آواز"
+PERSIAN = unicodedata.normalize("NFC", "آواز")  # the track name set in 8a ("song, voice")
+# The synthetic Persian-named FILE imported in 8b ("sound"). It must differ from
+# PERSIAN: FL names a new channel after the imported file (see the module docstring).
+PERSIAN_FILE = unicodedata.normalize("NFC", "صدا.wav")
+MAIN_AUDIO = "click-drums.wav"
+MIDI_13 = "the MIDI region from step 13"
+TRACK = "%s (click-drums)" % PERSIAN  # how instructions name the track all later edits go to
+TRACK_TARGET = {"track": PERSIAN, "holds": MAIN_AUDIO}
 
 # Each step: n, sub, id, edit, purpose, expected, daws{daw: instruction},
-# optional: not_applicable{daw: reason}, expected_by_daw{daw: {...}}, target, allow_identical.
+# optional: not_applicable{daw: reason}, expected_by_daw{daw: {...}}, target, allow_identical,
+# and the track bookkeeping validate() checks: adds_track (what the new track holds),
+# renames_track {"holds", "to"}, deletes_track (what the deleted track holds).
 STEPS: List[Dict] = [
     {
         "n": 1, "sub": "", "id": "baseline",
@@ -147,6 +172,7 @@ STEPS: List[Dict] = [
     {
         "n": 6, "sub": "", "id": "add-audio-track",
         "edit": "Add an audio track and import click-drums.wav at bar 1",
+        "adds_track": MAIN_AUDIO,
         "purpose": "Track added; audio region and audio-file record",
         "expected": {"track_added": {"kind": "audio"},
                      "region_added": {"file": "click-drums.wav", "start_bar": 1}},
@@ -167,7 +193,8 @@ STEPS: List[Dict] = [
     },
     {
         "n": 7, "sub": "", "id": "rename-track-drums",
-        "edit": "Rename that track to Drums",
+        "edit": "Rename that track (it holds click-drums) to Drums",
+        "renames_track": {"holds": MAIN_AUDIO, "to": "Drums"},
         "purpose": "Rename; track-name mapping for Logic",
         "expected": {"track_renamed": {"to": "Drums"}},
         "expected_by_daw": {"fl": {"channel_renamed": {"to": "Drums"}}},
@@ -180,7 +207,8 @@ STEPS: List[Dict] = [
     },
     {
         "n": 8, "sub": "a", "id": "rename-track-persian",
-        "edit": "Rename the Drums track to %s (Persian)" % PERSIAN,
+        "edit": "Rename the Drums track (it holds click-drums) to %s (Persian)" % PERSIAN,
+        "renames_track": {"holds": MAIN_AUDIO, "to": PERSIAN},
         "purpose": "Unicode track name",
         "expected": {"track_renamed": {"from": "Drums", "to": PERSIAN}},
         "expected_by_daw": {"fl": {"channel_renamed": {"from": "Drums", "to": PERSIAN}}},
@@ -192,15 +220,19 @@ STEPS: List[Dict] = [
     },
     {
         "n": 8, "sub": "b", "id": "import-persian-file",
-        "edit": "Add a second audio track and import %s.wav at bar 1 (leave the track's default name)" % PERSIAN,
+        "edit": "Add a second audio track and import %s at bar 1 (leave the track's default name; FL "
+                "names it after the file, %s — never %s)" % (PERSIAN_FILE, PERSIAN_FILE[:-4], PERSIAN),
+        "adds_track": PERSIAN_FILE,
         "purpose": "Unicode audio FILE name (Logic stores audio file names as UTF-16LE)",
-        "expected": {"track_added": {"kind": "audio"}, "audio_file_added": PERSIAN + ".wav"},
-        "expected_by_daw": {"fl": {"channel_added": {"kind": "audio_clip"}, "audio_file_added": PERSIAN + ".wav"}},
+        "expected": {"track_added": {"kind": "audio"}, "audio_file_added": PERSIAN_FILE},
+        "expected_by_daw": {"fl": {"channel_added": {"kind": "audio_clip"}, "audio_file_added": PERSIAN_FILE}},
         "daws": {
-            "logic": "Track ▸ New Audio Track (⌥⌘A); File ▸ Import ▸ Audio File… → ~/WitLab/audio/%s.wav at bar 1." % PERSIAN,
-            "ableton": "Create ▸ Insert Audio Track (⌘T); drag ~/WitLab/audio/%s.wav onto it at bar 1." % PERSIAN,
-            "fl": "Drag ~/WitLab/audio/%s.wav into an empty Playlist track at bar 1." % PERSIAN,
-            "garageband": "Track ▸ New Track ▸ Audio; drag ~/WitLab/audio/%s.wav to bar 1 of it." % PERSIAN,
+            "logic": "Track ▸ New Audio Track (⌥⌘A); File ▸ Import ▸ Audio File… → ~/WitLab/audio/%s at bar 1."
+                     % PERSIAN_FILE,
+            "ableton": "Create ▸ Insert Audio Track (⌘T); drag ~/WitLab/audio/%s onto it at bar 1." % PERSIAN_FILE,
+            "fl": "Drag ~/WitLab/audio/%s into an empty Playlist track at bar 1 (FL names the new channel %s)."
+                  % (PERSIAN_FILE, PERSIAN_FILE[:-4]),
+            "garageband": "Track ▸ New Track ▸ Audio; drag ~/WitLab/audio/%s to bar 1 of it." % PERSIAN_FILE,
         },
     },
     {
@@ -208,7 +240,7 @@ STEPS: List[Dict] = [
         "edit": "Move the click-drums region 2 bars later",
         "purpose": "Arrangement: move",
         "expected": {"region_moved_bars": 2},
-        "target": {"region": "click-drums"},
+        "target": {"region": MAIN_AUDIO},
         "daws": {
             "logic": "Select the click-drums region; in the region inspector raise Position by 2 bars (or drag it 2 bars right).",
             "ableton": "Arrangement View: move the click-drums clip 2 bars later.",
@@ -221,7 +253,7 @@ STEPS: List[Dict] = [
         "edit": "Trim the end of the click-drums region by 1 bar",
         "purpose": "Arrangement: trim",
         "expected": {"region_trimmed": {"end_bars": -1}},
-        "target": {"region": "click-drums"},
+        "target": {"region": MAIN_AUDIO},
         "daws": {
             "logic": "Drag the region's lower-right edge 1 bar to the left (or shorten Length by 1 bar in the inspector).",
             "ableton": "Drag the clip's right edge 1 bar to the left.",
@@ -234,7 +266,7 @@ STEPS: List[Dict] = [
         "edit": "Duplicate the click-drums region once (the copy lands right after it)",
         "purpose": "Arrangement: duplicate",
         "expected": {"region_duplicated": 1},
-        "target": {"region": "click-drums"},
+        "target": {"region": MAIN_AUDIO},
         "daws": {
             "logic": "Select the region, Edit ▸ Repeat ▸ Once (⌘R).",
             "ableton": "Select the clip, Edit ▸ Duplicate (⌘D).",
@@ -256,6 +288,7 @@ STEPS: List[Dict] = [
     },
     {
         "n": 13, "sub": "", "id": "midi-track",
+        "adds_track": MIDI_13,
         "edit": "Add an instrument track with the stock default instrument and a 1-bar MIDI region at bar 1 "
                 "holding three quarter notes: middle C, E, G (MIDI 60, 64, 67)",
         "purpose": "MIDI",
@@ -276,24 +309,24 @@ STEPS: List[Dict] = [
     },
     {
         "n": 14, "sub": "", "id": "volume-minus-6",
-        "edit": "Set the %s track's volume to -6 dB" % PERSIAN,
+        "edit": "Set the %s track's volume to -6 dB" % TRACK,
         "purpose": "Volume sweep: decode Logic's fader encoding",
         "expected": {"volume_db": -6},
-        "target": {"track": PERSIAN},
+        "target": dict(TRACK_TARGET),
         "daws": {
-            "logic": "On the %s channel strip, double-click the fader value and type -6, Return." % PERSIAN,
-            "ableton": "Click the %s track's Volume value, type -6, Return." % PERSIAN,
+            "logic": "On the %s channel strip, double-click the fader value and type -6, Return." % TRACK,
+            "ableton": "Click the %s track's Volume value, type -6, Return." % TRACK,
             "fl": "Set the %s channel's volume to -6.0 dB (hover to read dB in the hint bar; right-click ▸ "
-                  "Type in value if offered)." % PERSIAN,
-            "garageband": "Drag the %s track's volume slider to -6.0 dB (read the help tag)." % PERSIAN,
+                  "Type in value if offered)." % TRACK,
+            "garageband": "Drag the %s track's volume slider to -6.0 dB (read the help tag)." % TRACK,
         },
     },
     {
         "n": 15, "sub": "", "id": "volume-minus-12",
-        "edit": "Set the %s track's volume to -12 dB" % PERSIAN,
+        "edit": "Set the %s track's volume to -12 dB" % TRACK,
         "purpose": "Volume sweep",
         "expected": {"volume_db": -12},
-        "target": {"track": PERSIAN},
+        "target": dict(TRACK_TARGET),
         "daws": {
             "logic": "Fader value -12, as in step 14.",
             "ableton": "Volume -12, as in step 14.",
@@ -303,10 +336,10 @@ STEPS: List[Dict] = [
     },
     {
         "n": 16, "sub": "", "id": "volume-plus-3",
-        "edit": "Set the %s track's volume to +3 dB" % PERSIAN,
+        "edit": "Set the %s track's volume to +3 dB" % TRACK,
         "purpose": "Volume sweep (above unity)",
         "expected": {"volume_db": 3},
-        "target": {"track": PERSIAN},
+        "target": dict(TRACK_TARGET),
         "daws": {
             "logic": "Fader value +3, as in step 14.",
             "ableton": "Volume +3, as in step 14.",
@@ -315,50 +348,64 @@ STEPS: List[Dict] = [
         "not_applicable": {"garageband": "Kept to ~10 GarageBand steps; step 14 already covers the fader."},
     },
     {
-        "n": 17, "sub": "a", "id": "pan-left-50",
-        "edit": "Pan the %s track 50 left" % PERSIAN,
-        "purpose": "Pan encoding",
-        "expected": {"pan": "L50"},
-        "target": {"track": PERSIAN},
+        "n": 17, "sub": "a", "id": "pan-half-left",
+        "edit": "Pan the %s track half-way left (the plan's \"L50\": half of full left, in each DAW's units)" % TRACK,
+        "purpose": "Pan encoding; the same musical position in native units per DAW",
+        "expected": {"pan": {"position": "half left", "fraction": -0.5}},
+        "expected_by_daw": {
+            "logic": {"pan": {"position": "half left", "fraction": -0.5, "native": -32, "scale": "-64..+63"}},
+            "ableton": {"pan": {"position": "half left", "fraction": -0.5, "native": "25L", "scale": "50L..C..50R"}},
+            "fl": {"pan": {"position": "half left", "fraction": -0.5, "native": "50% left",
+                           "scale": "100% left..100% right"}},
+        },
+        "target": dict(TRACK_TARGET),
         "daws": {
-            "logic": "Double-click the Pan knob value and type -50 (Logic's range is -64..+63), Return.",
-            "ableton": "Set the track's Pan to 50L (click the value, type -50).",
-            "fl": "Set the channel's panning to 50% left.",
+            "logic": "Double-click the %s Pan knob value and type -32 (half left on Logic's -64..+63), Return."
+                     % TRACK,
+            "ableton": "Set the %s track's Pan to 25L (half left: Live's scale is 50L..C..50R, so 50L would be "
+                       "HARD left)." % TRACK,
+            "fl": "Set the %s channel's panning to 50%% left (half left on FL's ±100%%)." % TRACK,
         },
         "not_applicable": {"garageband": "Kept to ~10 GarageBand steps."},
     },
     {
-        "n": 17, "sub": "b", "id": "pan-right-50",
-        "edit": "Pan the %s track 50 right" % PERSIAN,
-        "purpose": "Pan encoding",
-        "expected": {"pan": "R50"},
-        "target": {"track": PERSIAN},
+        "n": 17, "sub": "b", "id": "pan-half-right",
+        "edit": "Pan the %s track half-way right (the plan's \"R50\")" % TRACK,
+        "purpose": "Pan encoding; the same musical position in native units per DAW",
+        "expected": {"pan": {"position": "half right", "fraction": 0.5}},
+        "expected_by_daw": {
+            "logic": {"pan": {"position": "half right", "fraction": 0.5, "native": 32, "scale": "-64..+63"}},
+            "ableton": {"pan": {"position": "half right", "fraction": 0.5, "native": "25R", "scale": "50L..C..50R"}},
+            "fl": {"pan": {"position": "half right", "fraction": 0.5, "native": "50% right",
+                           "scale": "100% left..100% right"}},
+        },
+        "target": dict(TRACK_TARGET),
         "daws": {
-            "logic": "Pan value +50.",
-            "ableton": "Pan 50R.",
-            "fl": "Panning 50% right.",
+            "logic": "Pan value +32 (half right on Logic's -64..+63).",
+            "ableton": "Pan 25R (half right on Live's 50L..C..50R).",
+            "fl": "Panning 50% right (half right on FL's ±100%).",
         },
         "not_applicable": {"garageband": "Kept to ~10 GarageBand steps."},
     },
     {
         "n": 18, "sub": "a", "id": "mute",
-        "edit": "Mute the %s track" % PERSIAN,
+        "edit": "Mute the %s track" % TRACK,
         "purpose": "Track state: mute",
         "expected": {"track_muted": True},
-        "target": {"track": PERSIAN},
+        "target": dict(TRACK_TARGET),
         "daws": {
-            "logic": "Click the M button on the %s track header." % PERSIAN,
-            "ableton": "Click the %s track's Track Activator (the numbered button) off." % PERSIAN,
-            "fl": "Mute the %s channel (its green light in the Channel rack)." % PERSIAN,
+            "logic": "Click the M button on the %s track header." % TRACK,
+            "ableton": "Click the %s track's Track Activator (the numbered button) off." % TRACK,
+            "fl": "Mute the %s channel (its green light in the Channel rack)." % TRACK,
         },
         "not_applicable": {"garageband": "Kept to ~10 GarageBand steps."},
     },
     {
         "n": 18, "sub": "b", "id": "solo",
-        "edit": "Solo the instrument track from step 13 (leave %s muted)" % PERSIAN,
+        "edit": "Solo the instrument track from step 13 (leave %s muted)" % TRACK,
         "purpose": "Track state: solo",
         "expected": {"track_soloed": True},
-        "target": {"track": "the instrument track from step 13"},
+        "target": {"holds": MIDI_13},
         "daws": {
             "logic": "Click the S button on the instrument track header.",
             "ableton": "Click the instrument track's Solo (S) button.",
@@ -368,15 +415,15 @@ STEPS: List[Dict] = [
     },
     {
         "n": 19, "sub": "", "id": "insert-eq",
-        "edit": "Insert the stock EQ on the %s track" % PERSIAN,
+        "edit": "Insert the stock EQ on the %s track" % TRACK,
         "purpose": "Plugin added",
         "expected": {"plugin_added": {"kind": "eq", "stock": True}},
-        "target": {"track": PERSIAN},
+        "target": dict(TRACK_TARGET),
         "daws": {
             "logic": "Channel strip ▸ first Audio FX slot ▸ EQ ▸ Channel EQ.",
-            "ableton": "Drag Audio Effects ▸ EQ Eight onto the %s track." % PERSIAN,
+            "ableton": "Drag Audio Effects ▸ EQ Eight onto the %s track." % TRACK,
             "fl": "Route the %s channel to a free Mixer insert if it is not already (note it), then load "
-                  "Fruity Parametric EQ 2 into that insert's first slot." % PERSIAN,
+                  "Fruity Parametric EQ 2 into that insert's first slot." % TRACK,
         },
         "not_applicable": {"garageband": "GarageBand's per-track EQ is built in; plugin steps skipped."},
     },
@@ -394,14 +441,14 @@ STEPS: List[Dict] = [
     },
     {
         "n": 21, "sub": "", "id": "volume-automation",
-        "edit": "Add volume automation on the %s track: 0 dB at bar 1, -12 dB at bar 3 (two points)" % PERSIAN,
+        "edit": "Add volume automation on the %s track: 0 dB at bar 1, -12 dB at bar 3 (two points)" % TRACK,
         "purpose": "Automation",
         "expected": {"automation_added": {"param": "volume", "points": 2}},
-        "target": {"track": PERSIAN},
+        "target": dict(TRACK_TARGET),
         "daws": {
-            "logic": "Press A to show automation, choose Volume on the %s track, click two points." % PERSIAN,
-            "ableton": "Press A (automation mode), pick Mixer ▸ Track Volume on the %s track, add two breakpoints." % PERSIAN,
-            "fl": "Right-click the %s channel's volume ▸ Create automation clip; shape it to two points." % PERSIAN,
+            "logic": "Press A to show automation, choose Volume on the %s track, click two points." % TRACK,
+            "ableton": "Press A (automation mode), pick Mixer ▸ Track Volume on the %s track, add two breakpoints." % TRACK,
+            "fl": "Right-click the %s channel's volume ▸ Create automation clip; shape it to two points." % TRACK,
         },
         "not_applicable": {"garageband": "Kept to ~10 GarageBand steps."},
     },
@@ -419,42 +466,45 @@ STEPS: List[Dict] = [
     },
     {
         "n": 23, "sub": "a", "id": "track-colour",
-        "edit": "Change the %s track's colour (first red swatch)" % PERSIAN,
+        "edit": "Change the %s track's colour (first red swatch)" % TRACK,
         "purpose": "Colours for the heat strip",
         "expected": {"track_color_changed": True},
-        "target": {"track": PERSIAN},
+        "target": dict(TRACK_TARGET),
         "daws": {
-            "logic": "Right-click the %s track header ▸ Assign Track Color ▸ first red." % PERSIAN,
-            "ableton": "Right-click the %s track title ▸ first red swatch." % PERSIAN,
-            "fl": "Right-click the %s channel ▸ Color ▸ first red." % PERSIAN,
+            "logic": "Right-click the %s track header ▸ Assign Track Color ▸ first red." % TRACK,
+            "ableton": "Right-click the %s track title ▸ first red swatch." % TRACK,
+            "fl": "Right-click the %s channel ▸ Color ▸ first red." % TRACK,
         },
         "not_applicable": {"garageband": "GarageBand has no user track colours."},
     },
     {
         "n": 23, "sub": "b", "id": "add-send",
-        "edit": "Add a send from the %s track to a bus / return at -6 dB" % PERSIAN,
+        "edit": "Add a send from the %s track to a bus / return at -6 dB" % TRACK,
         "purpose": "Routing",
         "expected": {"send_added": {"level_db": -6}},
-        "target": {"track": PERSIAN},
+        "target": dict(TRACK_TARGET),
         "daws": {
             "logic": "Channel strip ▸ Send slot ▸ Bus ▸ Bus 1 (Logic creates Aux 1); set the send to -6 dB.",
-            "ableton": "Set the %s track's Send A (Return A exists by default) to -6 dB." % PERSIAN,
+            "ableton": "Set the %s track's Send A (Return A exists by default) to -6 dB." % TRACK,
             "fl": "Mixer: from the %s insert, route to a second free insert as a send and set the send "
-                  "level to -6 dB." % PERSIAN,
+                  "level to -6 dB." % TRACK,
         },
         "not_applicable": {"garageband": "GarageBand has no user sends/buses."},
     },
     {
         "n": 24, "sub": "", "id": "delete-track",
-        "edit": "Delete the audio track made in step 8b (the %s.wav one)" % PERSIAN,
+        "edit": "Delete the audio track made in step 8b — the one holding %s, NOT %s" % (PERSIAN_FILE, TRACK),
+        "deletes_track": PERSIAN_FILE,
+        "target": {"holds": PERSIAN_FILE},
         "purpose": "Removal",
         "expected": {"track_deleted": {"kind": "audio"}},
         "expected_by_daw": {"fl": {"channel_deleted": {"kind": "audio_clip"}}},
         "daws": {
-            "logic": "Select that track header; Track ▸ Delete Track (⌘⌫).",
-            "ableton": "Select that track; Edit ▸ Delete (⌫).",
-            "fl": "Delete its Playlist clip, then its channel (Channel rack: right-click ▸ Delete).",
-            "garageband": "Select that track header; Track ▸ Delete Track (⌘⌫).",
+            "logic": "Select the header of the track holding %s; Track ▸ Delete Track (⌘⌫)." % PERSIAN_FILE,
+            "ableton": "Select the track holding %s; Edit ▸ Delete (⌫)." % PERSIAN_FILE,
+            "fl": "Delete the %s clip from the Playlist, then the %s channel (Channel rack: right-click ▸ "
+                  "Delete)." % (PERSIAN_FILE, PERSIAN_FILE[:-4]),
+            "garageband": "Select the header of the track holding %s; Track ▸ Delete Track (⌘⌫)." % PERSIAN_FILE,
         },
     },
     {
@@ -584,13 +634,65 @@ def _expected_keys(expected: Dict) -> List[str]:
     return list(expected.keys())
 
 
-def validate() -> List[str]:
+def track_names(steps: List[Dict]) -> Dict[str, set]:
+    """
+    For every track the script creates (keyed by what it holds): every name it can
+    carry at some point. A track holding an imported file may be named after that
+    file (FL does this), so the file's stem is always a possible name.
+    """
+    names: Dict[str, set] = {}
+    for s in steps:
+        held = s.get("adds_track")
+        if held:
+            names.setdefault(held, set())
+            if held.lower().endswith(".wav"):
+                names[held].add(unicodedata.normalize("NFC", held[:-4]))
+        rename = s.get("renames_track")
+        if rename and rename["holds"] in names:
+            names[rename["holds"]].add(unicodedata.normalize("NFC", rename["to"]))
+    return names
+
+
+def _track_problems(steps: List[Dict]) -> List[str]:
+    problems = []
+    names = track_names(steps)
+    for s in steps:
+        k = step_key(s)
+        rename = s.get("renames_track")
+        if rename and rename["holds"] not in names:
+            problems.append("%s: renames a track that no step adds (%s)" % (k, rename["holds"]))
+        if s.get("deletes_track") and s["deletes_track"] not in names:
+            problems.append("%s: deletes a track that no step adds (%s)" % (k, s["deletes_track"]))
+        target = s.get("target") or {}
+        if "track" in target:
+            held = target.get("holds")
+            if held is None:
+                problems.append("%s: a track target must also say what the track holds" % k)
+            elif held not in names:
+                problems.append("%s: targets a track holding %s, which no step adds" % (k, held))
+            elif unicodedata.normalize("NFC", target["track"]) not in names[held]:
+                problems.append("%s: the track holding %s is never called %s" % (k, held, target["track"]))
+        elif "holds" in target and target["holds"] not in names:
+            problems.append("%s: targets a track holding %s, which no step adds" % (k, target["holds"]))
+    held = sorted(names)
+    for i, a in enumerate(held):
+        for b in held[i + 1:]:
+            clash = names[a] & names[b]
+            if clash:
+                problems.append("two different tracks (holding %s and %s) could both be called %s — every "
+                                "'the %s track' instruction would be ambiguous"
+                                % (a, b, ", ".join(sorted(clash)), sorted(clash)[0]))
+    return problems
+
+
+def validate(steps: Optional[List[Dict]] = None) -> List[str]:
     """Every structural rule the data must satisfy. Empty list = valid."""
+    steps = STEPS if steps is None else steps
     problems = []
     seen_keys, seen_ids = set(), set()
     numbers = set()
     daws = set(SAVE_HINT)
-    for s in STEPS:
+    for s in steps:
         k = step_key(s)
         if k in seen_keys:
             problems.append("duplicate step key %s" % k)
@@ -624,9 +726,10 @@ def validate() -> List[str]:
                 problems.append("%s: expected_by_daw for non-applicable %s" % (k, daw))
     if numbers != set(range(1, 27)):
         problems.append("plan rows 1-26 not all present: missing %s" % sorted(set(range(1, 27)) - numbers))
-    order = [(s["n"], s.get("sub", "")) for s in STEPS]
+    order = [(s["n"], s.get("sub", "")) for s in steps]
     if order != sorted(order):
         problems.append("steps are not in plan order")
+    problems.extend(_track_problems(steps))
     return problems
 
 

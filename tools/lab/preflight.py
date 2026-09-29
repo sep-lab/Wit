@@ -8,15 +8,20 @@ WHAT THIS DOES
     per DAW, a verdict and the evidence behind it:
 
     Logic / GarageBand  `defaults export <domain> -` (XML on stdout — the same read
-                        path as `defaults read`, but parseable) for com.apple.logic10,
-                        com.apple.mobilelogic (the Creator Studio build's domain) and
-                        com.apple.garageband10:
+                        path as `defaults read`, but parseable), plus the plist files in
+                        the app's SANDBOX CONTAINER (~/Library/Containers/<domain>/Data/
+                        Library/Preferences — GarageBand is sandboxed) and in
+                        ~/Library/Preferences, for com.apple.logic10 (the lab's Logic:
+                        /Applications/Logic Pro.app 12.3.1), com.apple.garageband10 and
+                        com.apple.mobilelogic (Creator Studio; not installed on the lab
+                        Mac, so information only). Where sources disagree the worst wins:
                           startupAction         the Startup Action setting. Its values
                                                 are NOT documented; the meaning table
                                                 below is inferred (see STARTUP_ACTION)
                           unsavedAutosavedURLs  documents the DAW may offer to reopen
-                          NSQuitAlwaysKeepsWindows + a Saved Application State
-                                                folder: macOS window restoration
+                          NSQuitAlwaysKeepsWindows + a savedState folder in
+                                                ~/Library/Saved Application State OR in
+                                                the sandbox container: window restoration
                         and the recent-documents list macOS keeps for the app (usually
                         unreadable: macOS privacy protection; reported as such).
     Ableton Live        ~/Library/Preferences/Ableton/Live <version>/: whether
@@ -67,6 +72,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import plistlib
 import re
 import struct
@@ -75,7 +81,7 @@ import sys
 import urllib.parse
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 if not __package__:
     # Run as a file (python3 tools/lab/preflight.py): import this folder as the package
@@ -265,8 +271,7 @@ def recent_documents(bundle_id: str, home: Path, lab_real: str) -> Dict:
     for suffix in (".sfl3", ".sfl2"):
         path = base / (bundle_id + suffix)
         try:
-            with open(str(path), "rb") as fh:
-                raw = fh.read()
+            raw = labcore.read_regular(path)
         except FileNotFoundError:
             continue
         except PermissionError:
@@ -306,50 +311,134 @@ def startup_action_finding(domain: str, value) -> Dict:
                    % (value, shown), "safe", "inferred")
 
 
+def container_library(home: Path, domain: str) -> Path:
+    """A sandboxed app's ~/Library lives inside its container (GarageBand is sandboxed)."""
+    return home / "Library" / "Containers" / domain / "Data" / "Library"
+
+
+def read_plist_file(path: Path) -> Tuple[Optional[Dict], str]:
+    """(prefs, status) from a plist file, read-only; status is ok / absent / unreadable."""
+    try:
+        raw = labcore.read_regular(path)
+    except FileNotFoundError:
+        return None, "absent"
+    except OSError as exc:
+        return None, "unreadable (%s)" % exc.__class__.__name__
+    if not raw.startswith(b"bplist"):
+        raw = _BAD_XML.sub(b"", raw)
+    try:
+        data = plistlib.loads(raw)
+    except Exception:  # an unparseable plist is "unreadable", never a crash
+        return None, "unreadable (unparseable)"
+    return (data, "ok") if isinstance(data, dict) else (None, "unreadable (not a dictionary)")
+
+
+def pref_sources(domain: str, home: Path, runner: Callable) -> List[Tuple[str, Optional[Dict], str]]:
+    """
+    Every place this domain's preferences can live: `defaults export` (cfprefsd —
+    it resolves a sandboxed app's container itself), the sandbox container's plist
+    and the plain ~/Library/Preferences plist. Where they disagree, the worst wins.
+    """
+    exported = export_domain(domain, runner)
+    out = [("defaults export", exported, "ok" if exported else "absent or unreadable")]
+    for label, path in (
+        ("sandbox container plist", container_library(home, domain) / "Preferences" / (domain + ".plist")),
+        ("~/Library/Preferences plist", home / "Library" / "Preferences" / (domain + ".plist")),
+    ):
+        prefs, status = read_plist_file(path)
+        out.append((label, prefs, status))
+    return out
+
+
+def saved_state_finding(domain: str, home: Path, keeps: bool) -> Dict:
+    """macOS window restoration: look in BOTH places a savedState can live."""
+    name = domain + ".savedState"
+    places = (
+        ("~/Library/Saved Application State", home / "Library" / "Saved Application State" / name),
+        ("the app's sandbox container", container_library(home, domain) / "Saved Application State" / name),
+    )
+    present, unreadable = [], []
+    for label, path in places:
+        try:
+            os.stat(str(path))
+            present.append(label)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            unreadable.append(label)
+    if present and keeps:
+        return finding(domain, "window restoration",
+                       "saved window state in %s and windows are kept on quit — macOS may reopen the last "
+                       "open projects" % " and ".join(present), "would_reopen", "measured")
+    if present:
+        return finding(domain, "window restoration",
+                       "saved window state in %s (restoration is off, but macOS can offer it after a crash)"
+                       % " and ".join(present), "unknown", "measured")
+    if unreadable:
+        return finding(domain, "window restoration",
+                       "could not look in %s (privacy-protected)" % " and ".join(unreadable), "unknown", "measured")
+    return finding(domain, "window restoration",
+                   "no saved window state in ~/Library/Saved Application State or the app's sandbox container",
+                   "safe", "measured")
+
+
 def check_apple(daw: str, home: Path, lab_real: str, runner: Callable,
                 installed_ids: Optional[set] = None) -> List[Dict]:
     """
-    `installed_ids` are the bundle ids of the installed apps for this DAW. An absent
-    domain matters only for an app that is installed (it would start on factory
-    defaults); for an app that is not installed it is information. With no app
-    found at all, every absent domain counts (conservative).
+    `installed_ids` are the bundle ids of the installed apps for this DAW. The
+    verdict rests on the domains of installed apps only: the lab launches
+    /Applications/Logic Pro.app (com.apple.logic10), and a stale domain left by an
+    app that is no longer installed (com.apple.mobilelogic on the lab Mac) is shown
+    as information. With no app found at all, every domain counts (conservative).
     """
     out = []
     global_keep = read_global("NSQuitAlwaysKeepsWindows", runner)
     for domain in APPLE_DOMAINS[daw]:
-        prefs = export_domain(domain, runner)
-        if prefs is None:
-            relevant = not installed_ids or domain in installed_ids
-            out.append(finding(domain, "preferences",
-                               "domain absent or unreadable (never launched?) — factory defaults apply"
-                               if relevant else "domain absent, and no installed app uses it",
-                               "unknown" if relevant else None, "measured"))
+        relevant = not installed_ids or domain in installed_ids
+        found = []
+        sources = pref_sources(domain, home, runner)
+        readable = [(label, prefs) for label, prefs, _status in sources if prefs]
+        found.append(finding(domain, "preference sources", "; ".join(
+            "%s: %s" % (label, status) for label, _prefs, status in sources), None, "measured"))
+        if not readable:
+            found.append(finding(domain, "preferences",
+                                 "absent or unreadable everywhere (never launched?) — factory defaults apply",
+                                 "unknown", "measured"))
         else:
-            out.append(startup_action_finding(domain, prefs.get("startupAction")))
-            urls = [str(u) for u in (prefs.get("unsavedAutosavedURLs") or [])]
-            c = count_places(urls, lab_real)
-            verdict = "would_reopen" if (c["outside"] or c["unknown"]) else "safe"
-            out.append(finding(domain, "unsavedAutosavedURLs", describe_counts(c), verdict, "measured"))
-            keep = prefs.get("NSQuitAlwaysKeepsWindows")
-            keeps = bool(keep) if keep is not None else global_keep in ("1", "true", "YES")
-            state = home / "Library" / "Saved Application State" / (domain + ".savedState")
-            try:
-                has_state = state.is_dir()
-            except OSError:
-                has_state = False
-            if not has_state:
-                out.append(finding(domain, "window restoration", "no saved window state", "safe", "measured"))
-            elif keeps:
-                out.append(finding(domain, "window restoration",
-                                   "saved window state exists and windows are kept on quit — macOS may reopen "
-                                   "the last open projects", "would_reopen", "measured"))
+            values = []
+            for label, prefs in readable:
+                if "startupAction" in prefs and prefs["startupAction"] not in [v for v, _ in values]:
+                    values.append((prefs["startupAction"], label))
+            if not values:
+                found.append(startup_action_finding(domain, None))
             else:
-                out.append(finding(domain, "window restoration",
-                                   "saved window state exists (restoration is off, but macOS can offer it after "
-                                   "a crash)", "unknown", "measured"))
+                worst = max((startup_action_finding(domain, v) for v, _ in values),
+                            key=lambda f: SEVERITY[f["verdict"]])
+                if len(values) > 1:
+                    worst["detail"] += " (sources disagree: %s)" % ", ".join("%r in %s" % vl for vl in values)
+                found.append(worst)
+            urls = []
+            for _label, prefs in readable:
+                urls.extend(str(u) for u in (prefs.get("unsavedAutosavedURLs") or []))
+            c = count_places(sorted(set(urls)), lab_real)
+            found.append(finding(domain, "unsavedAutosavedURLs", describe_counts(c),
+                                 "would_reopen" if (c["outside"] or c["unknown"]) else "safe", "measured"))
+            keep_values = [prefs["NSQuitAlwaysKeepsWindows"] for _l, prefs in readable
+                           if "NSQuitAlwaysKeepsWindows" in prefs]
+            if keep_values:
+                keeps = any(bool(v) for v in keep_values)
+            else:
+                keeps = global_keep in ("1", "true", "YES")
+            found.append(saved_state_finding(domain, home, keeps))
         rd = recent_documents(domain, home, lab_real)
-        detail = describe_counts(rd["counts"]) if rd["readable"] else rd["why"]
-        out.append(finding(domain, "recent documents", detail, None, "measured"))
+        found.append(finding(domain, "recent documents",
+                             describe_counts(rd["counts"]) if rd["readable"] else rd["why"], None, "measured"))
+        if not relevant:
+            out.append(finding(domain, "not the lab's app",
+                               "no installed app uses this domain — shown as information only", None, "measured"))
+            for f in found:
+                f["verdict"] = None
+        out.extend(found)
     return out
 
 
@@ -382,7 +471,7 @@ def check_ableton(home: Path, lab_real: str, app: Optional[Dict]) -> List[Dict]:
     src = "~/Library/Preferences/Ableton/%s" % chosen.name
     cfg = chosen / "Preferences.cfg"
     try:
-        raw = cfg.read_bytes()
+        raw = labcore.read_regular(cfg)
     except OSError:
         out.append(finding(src, "Preferences.cfg", "missing or unreadable", "unknown", "measured"))
         raw = b""
@@ -440,7 +529,7 @@ def check_fl(home: Path, lab_real: str, app: Optional[Dict], runner: Callable) -
     src = "~/Library/Preferences/Image-Line/reg.xml [FL Studio %s]" % major
     reg = home / "Library" / "Preferences" / "Image-Line" / "reg.xml"
     try:
-        root = ET.parse(str(reg)).getroot()
+        root = ET.fromstring(labcore.read_regular(reg))
     except (OSError, ET.ParseError):
         return [*out, finding(src, "registry", "missing or unparseable", "unknown", "measured")]
     key = _fl_key(root, major)

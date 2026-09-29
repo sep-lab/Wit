@@ -11,7 +11,7 @@ the network.** All of them are Python 3.9+, standard library only.
 | Tool | Does |
 |---|---|
 | `preflight.py` | Read-only: will this DAW reopen a real project at launch? Exit 0 safe, 2 unknown, 3 would reopen. |
-| `make_audio.py` | Writes the four synthetic test WAVs (incl. `آواز.wav`) into `~/WitLab/audio/`. Deterministic. |
+| `make_audio.py` | Writes the four synthetic test WAVs (incl. the Persian-named `صدا.wav`) into `~/WitLab/audio/`. Deterministic. |
 | `steps.py` | The edit script as data: 31 saves over the plan's 26 rows, per-DAW instructions and expected changes. |
 | `capture.py` | `init` / `watch` / `next` / `status`: snapshots each save into the corpus with a manifest. |
 | `analyze.py` | Per consecutive step pair: which files changed and which bytes, localised to Logic records (JSONL). |
@@ -52,11 +52,22 @@ For the tooling:
   audio extensions, `Undo Data.nosync`.
 - Nothing in this lane launches a DAW, sends keystrokes, or talks to the network.
 
-Where each rule lives in code: `labcore.py` (lab root / denylist / corpus / realpath
-checks, atomic writes, `O_NOFOLLOW` reads), `capture.py` (`classify`, `collect` — the
-whitelist and symlink refusal — and `copy_snapshot`), `preflight.py` (`is_read_only` —
-the only commands it can run), `make_audio.py` (`generate` — writes only under the lab
-root).
+Where each rule lives in code: `labcore.py` (lab root / denylist / corpus checks by
+realpath **and** by filesystem identity — macOS firmlinks such as
+`/System/Volumes/Data/Users/<you>/Music` are the same folder as `~/Music` but realpath
+does not rewrite them; no lab root or corpus under any folder holding a `.git` entry,
+since agent worktrees live inside the main clone; atomic writes; `O_NOFOLLOW` +
+`O_NONBLOCK` reads of regular files only, so a FIFO named like a project file cannot hang
+a capture), `capture.py` (`classify`, `collect` — the whitelist and symlink refusal — and
+`copy_snapshot`), `preflight.py` (`is_read_only` — the only commands it can run),
+`make_audio.py` (`generate` — writes only under the lab root).
+
+**Track names are unambiguous by construction.** Step 8a renames the click-drums track
+to `آواز`; step 8b imports `صدا.wav` — a *different* Persian name, because FL Studio
+names a new channel after the imported file, and a file called `آواز.wav` would create a
+second `آواز`. Every later instruction says "the `آواز (click-drums)` track", every track
+target records what the track holds (`{"track": "آواز", "holds": "click-drums.wav"}`),
+and `steps.py --check` fails if two tracks could ever share a name.
 
 ## The runbook (what the driver does, in order)
 
@@ -84,7 +95,12 @@ python3 tools/lab/preflight.py --daw logic      # or ableton | fl | garageband
 As measured on 2026-09-29 every DAW is exit 2 until confirmed: Logic's `startupAction`
 is unset (the factory default can't be read without launching Logic), GarageBand's
 value 3 and Live's absence of a reopen option are safe only by inference, and FL's
-`StartupOptionBox` value is not mapped.
+`StartupOptionBox` value is not mapped. GarageBand is **sandboxed**: preflight reads its
+preferences through `defaults` *and* from its container
+(`~/Library/Containers/com.apple.garageband10/Data/Library/Preferences/`), and looks for
+saved window state both in `~/Library/Saved Application State/` and inside the container
+(where a sandboxed app's savedState actually lives). Where sources disagree, the worst
+wins; a container it cannot read is "unknown", never "safe".
 
 **2. Test audio (once per machine).**
 
@@ -110,7 +126,8 @@ python3 tools/lab/capture.py init --daw logic --run r1 --project ~/WitLab/logic/
 ```
 
 `--project` is the `.logicx` / `.band` package, the `.als` (or its `Lab Project` folder)
-or the `.flp`. If the DAW app is ambiguous, pin it with `--app "/Applications/Logic Pro.app"`.
+or the `.flp`. For Logic, `init` records `/Applications/Logic Pro.app` — the lab's Logic;
+pin another bundle only on Sepehr's say-so with `--app`.
 
 **6. The loop.** For every step:
 
@@ -133,6 +150,7 @@ When reality differs from the instructions:
 | The DAW did something the instruction didn't say (e.g. forced a first track) | `watch --note "what really happened"` |
 | This DAW can't do the step | `next --skip "why"` |
 | A save was captured before the edit was made | make the edit, save, `watch --replace` (the old capture is kept, marked superseded) |
+| `watch` says a step folder already exists with no capture (an interrupted run) | nothing was overwritten; `watch --replace` captures again and keeps the old folder as `<label>.orphaned-<time>` |
 | You want to see where you are | `capture.py status` |
 
 **7. Finish.** When `next` says the run is complete: quit the DAW **without** saving
@@ -158,16 +176,19 @@ python3 tools/lab/analyze.py --out ~/Projects/DAW/wit-corpus/logic/r1/analysis.j
 
 ## Per-DAW notes
 
-- **Logic.** On 2026-09-29 only `/Applications/Logic Pro.app` (bundle id
-  `com.apple.logic10`, 12.3.1, build 6682) is installed; `Logic Pro Creator Studio.app`
-  (`com.apple.mobilelogic`) is **not** in `/Applications`, though its preferences domain
-  still exists. The plan says to confirm the Logic build with Sepehr; `init` records
-  whichever it finds and `--app` pins one. preflight checks both preference domains.
-- **GarageBand.** Defaults to saving in `~/Music/GarageBand` — a real library. Save As
-  into the lab. 12 steps (the plan's "about 10").
+- **Logic.** The lab's Logic is **`/Applications/Logic Pro.app` 12.3.1** (bundle id
+  `com.apple.logic10`, build 6682). `Logic Pro Creator Studio.app` is **not installed**
+  (checked 2026-09-29); its old preferences domain `com.apple.mobilelogic` is still on
+  disk, and preflight shows it as information only. `init` records `Logic Pro.app`.
+- **GarageBand.** Sandboxed (its preferences and saved state live in
+  `~/Library/Containers/com.apple.garageband10/`). Defaults to saving in
+  `~/Music/GarageBand` — a real library. Save As into the lab. 12 steps (the plan's
+  "about 10").
 - **Ableton Live.** `Save Live Set As…` creates `Lab Project/Lab.als`; pass that `.als`
   (or the `Lab Project` folder) to `init`. Live's own `Backup/*.als` chain is listed in
-  the manifest (name, size, mtime), not copied.
+  the manifest (name, size, mtime), not copied. Pan in Live runs 50L..C..50R, so the
+  script's "half left" is **25L** there (50L would be hard left); Logic's is -32 on its
+  -64..+63 knob and FL's is 50% left — `steps.py` records each DAW's native value.
 - **FL Studio 20.** Autosaves are captured only from a `Backup/` folder inside the lab
   run folder. If FL writes them to its own user-data `Projects/Backup` folder (a real
   library), capture will not see them — changing FL's backup location is a settings
@@ -196,9 +217,13 @@ folder, and the app location with the home directory redacted.
 ## Tests
 
 `tests/test_lab_tools.py` covers the safety refusals (outside the lab root, symlinks
-escaping it, every denylisted library, a lab root that contains a library, the corpus
-inside the lab root or the repo), stability detection with a fake clock, the no-media
-snapshot filter for all four DAWs, manifest atomicity and schema, `make_audio`
-determinism and valid RIFF headers including the Persian file name, `analyze`
-localisation on a synthetic container, and preflight's read-only command gate and
-redaction. Every test runs in a temporary HOME; none touches `~/WitLab` or the corpus.
+escaping it, every denylisted library, a firmlink-style alias of a library, a lab root
+that contains a library, a lab root or corpus under any git checkout, the corpus inside
+the lab root or the repo), FIFOs named like project files, stability detection with a
+fake clock, the no-media snapshot filter for all four DAWs, manifest atomicity and
+schema, stale step folders, script-order "previous" after a re-capture, `make_audio`
+determinism and valid RIFF headers including the Persian file name, the track-name rule
+and per-DAW pan units, `analyze` localisation on a synthetic container and its refusal of
+manifest paths that leave the run folder, preflight's read-only command gate, sandbox
+containers and redaction, and that every tool runs as a plain file from any folder.
+Every test runs in a temporary HOME; none touches `~/WitLab` or the corpus.

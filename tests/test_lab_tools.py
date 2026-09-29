@@ -16,6 +16,7 @@ audio or project file is committed; every fixture is built in code.
 from __future__ import annotations
 
 import ast
+import copy
 import gzip
 import hashlib
 import importlib
@@ -26,6 +27,7 @@ import random
 import struct
 import subprocess
 import sys
+import threading
 import types
 import unicodedata
 import wave
@@ -36,7 +38,8 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 LAB_DIR = REPO / "tools" / "lab"
 LAB_MODULES = ("labcore", "steps", "make_audio", "capture", "preflight", "analyze")
-PERSIAN = unicodedata.normalize("NFC", "آواز")
+PERSIAN = unicodedata.normalize("NFC", "آواز")  # the track name step 8a sets
+PERSIAN_FILE = unicodedata.normalize("NFC", "صدا.wav")  # the Persian-named file step 8b imports
 MAGIC = b"\x23\x47\xc0\xab"
 
 
@@ -240,6 +243,52 @@ def test_denylist_matching_is_case_insensitive(lab, env):
     assert lab.labcore.denylisted(env.lab / "logic" / "r1" / "Lab.logicx") is None
 
 
+def test_a_firmlink_style_alias_of_a_library_is_caught_by_filesystem_identity(lab, env, monkeypatch, tmp_path):
+    # macOS firmlinks: /System/Volumes/Data/Users/<you>/Music IS ~/Music (same st_dev and
+    # st_ino, measured on the lab Mac), but realpath leaves the long form alone. Simulate
+    # exactly that: an alias that stat() follows and realpath does not rewrite.
+    (env.home / "Music" / "Logic").mkdir(parents=True)
+    alias = tmp_path / "Data" / "Music"
+    alias.parent.mkdir()
+    os.symlink(str(env.home / "Music"), str(alias))
+    monkeypatch.setattr(lab.labcore.os.path, "realpath", os.path.abspath)
+    assert lab.labcore.denylisted(alias / "Logic" / "x.logicx") == "~/Music/Logic"
+    with pytest.raises(lab.labcore.SafetyError):
+        lab.make_audio.generate(alias / "Logic" / "audio", scale=0.05)
+    monkeypatch.setenv("WIT_LAB_ROOT", str(alias))
+    with pytest.raises(lab.labcore.SafetyError, match="contains ~/Music/Logic"):
+        lab.labcore.check_lab_root()
+    with pytest.raises(lab.labcore.SafetyError):
+        lab.make_audio.generate(alias / "Logic" / "audio", scale=0.05)
+    assert list((env.home / "Music" / "Logic").iterdir()) == []
+
+
+@pytest.mark.parametrize("kind", ["dir", "file"])
+def test_a_lab_root_or_corpus_anywhere_under_a_git_checkout_is_refused(lab, env, monkeypatch, kind):
+    # Agent worktrees live INSIDE the main clone, so "not in this checkout" is not enough.
+    clone = env.home / "Code" / "SomeClone"
+    clone.mkdir(parents=True)
+    if kind == "dir":
+        (clone / ".git").mkdir()
+    else:
+        (clone / ".git").write_text("gitdir: /elsewhere\n")  # how a worktree marks itself
+    monkeypatch.setenv("WIT_LAB_ROOT", str(clone / "worktrees" / "x" / "WitLab"))
+    with pytest.raises(lab.labcore.SafetyError, match="git checkout"):
+        lab.labcore.check_lab_root()
+    monkeypatch.setenv("WIT_LAB_ROOT", str(env.lab))
+    monkeypatch.setenv("WIT_CORPUS", str(clone / "worktrees" / "x" / "wit-corpus"))
+    with pytest.raises(lab.labcore.SafetyError, match="git checkout"):
+        lab.labcore.check_corpus_dir()
+
+
+def test_redact_only_replaces_the_home_directory_at_a_path_boundary(lab, env):
+    h = str(env.home)
+    assert lab.labcore.redact(h + "/Music/x") == "~/Music/x"
+    assert lab.labcore.redact(h) == "~"
+    assert lab.labcore.redact("see '%s'." % h) == "see '~'."
+    assert lab.labcore.redact(h + "2/x") == h + "2/x"  # a sibling that merely starts with home's name
+
+
 @pytest.mark.parametrize("where", ["lab", "repo", "home", "library"])
 def test_the_corpus_may_not_live_in_the_lab_root_the_repo_home_or_a_library(lab, env, monkeypatch, where):
     target = {
@@ -263,6 +312,29 @@ def test_capture_never_writes_inside_the_lab(lab, env, capsys):
     assert run_cli(lab.capture, ["status"], capsys)[0] == 0
     assert tree_fingerprint(env.lab) == before
     assert sorted(p.name for p in env.lab.rglob("*") if p.name.startswith(".")) == []
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs os.mkfifo")
+def test_a_fifo_named_like_a_project_file_never_hangs_a_capture(lab, env):
+    run = env.lab / "fl" / "r1"
+    write(run / "Lab.flp", b"FLhd")
+    os.mkfifo(str(run / "Lab copy.flp"))
+    result = {}
+
+    def go():
+        result["entries"] = lab.capture.collect(run, "fl")
+        result["hashes"] = lab.capture.hash_entries(run, result["entries"])
+        try:
+            lab.labcore.open_nofollow(run / "Lab copy.flp")
+        except OSError as exc:
+            result["error"] = str(exc)
+
+    worker = threading.Thread(target=go, daemon=True)
+    worker.start()
+    worker.join(10)
+    assert not worker.is_alive(), "blocked on a FIFO"
+    assert [e["path"] for e in result["entries"]] == ["Lab.flp"]
+    assert "not a regular file" in result["error"]
 
 
 # --------------------------------------------------------------------------- #
@@ -575,6 +647,43 @@ def test_recapturing_needs_replace_and_keeps_the_old_capture(lab, env, capsys):
     assert live[1]["bytes_differ_from_previous"] is True
 
 
+def test_watch_never_reports_success_over_a_stale_step_folder(lab, env, capsys):
+    pkg = make_logic_package(env.lab / "logic" / "r1")
+    assert run_cli(lab.capture, ["init", "--daw", "logic", "--run", "r1", "--project", str(pkg)], capsys)[0] == 0
+    run_corpus = env.corpus / "logic" / "r1"
+    stale = run_corpus / "01-baseline" / "Lab.logicx" / "Alternatives" / "000" / "ProjectData"
+    write(stale, b"bytes left by an interrupted capture")
+    rc, _out, err = run_cli(lab.capture, ["watch", *FAST], capsys)
+    assert rc == lab.capture.EXIT_ERROR and "already exists" in err
+    assert stale.read_bytes() == b"bytes left by an interrupted capture"
+    assert json.loads((run_corpus / "manifest.json").read_text())["captures"] == []
+    rc, _out, err = run_cli(lab.capture, ["watch", "--replace", *FAST], capsys)
+    assert rc == 0, err
+    assert stale.read_bytes() == (pkg / "Alternatives" / "000" / "ProjectData").read_bytes()
+    orphans = [d.name for d in run_corpus.iterdir() if ".orphaned-" in d.name]
+    assert len(orphans) == 1
+    assert json.loads((run_corpus / "manifest.json").read_text())["captures"][0]["replaced_orphan"] == orphans[0]
+
+
+def test_replacing_an_early_step_keeps_script_order_for_previous_and_analyze(lab, env, capsys):
+    pkg = make_logic_package(env.lab / "logic" / "r1")
+    pd = pkg / "Alternatives" / "000" / "ProjectData"
+    assert run_cli(lab.capture, ["init", "--daw", "logic", "--run", "r1", "--project", str(pkg)], capsys)[0] == 0
+    assert run_cli(lab.capture, ["watch", *FAST], capsys)[0] == 0
+    for version in (b"v2", b"v3"):
+        assert run_cli(lab.capture, ["next"], capsys)[0] == 0
+        write(pd, container([*BASE_RECORDS, (b"karT", version)]))
+        assert run_cli(lab.capture, ["watch", *FAST], capsys)[0] == 0
+    write(pd, container([*BASE_RECORDS, (b"karT", b"v4")]))
+    assert run_cli(lab.capture, ["watch", "--step", "02", "--replace", *FAST], capsys)[0] == 0
+    m = json.loads((env.corpus / "logic" / "r1" / "manifest.json").read_text())
+    live = [c for c in m["captures"] if not c["superseded"]]
+    assert [c["key"] for c in live] == ["01", "03", "02"]  # append order...
+    assert next(c for c in live if c["key"] == "02")["previous"] == "01"  # ...but "previous" is by script
+    pairs = sorted({(r["from_key"], r["to_key"]) for r in lab.analyze.analyze_run(env.corpus / "logic" / "r1")})
+    assert pairs == [("01", "02"), ("02", "03")]
+
+
 def test_init_refuses_to_reuse_a_run_name(lab, env, capsys):
     pkg = make_logic_package(env.lab / "logic" / "r1")
     args = ["init", "--daw", "logic", "--run", "r1", "--project", str(pkg)]
@@ -615,7 +724,7 @@ def test_make_audio_writes_valid_riff_files_including_the_persian_name(lab, env)
     out = env.lab / "audio"
     records = lab.make_audio.generate(out, seed=1, scale=0.05)
     names = sorted(unicodedata.normalize("NFC", p.name) for p in out.iterdir())
-    assert names == sorted(["click-drums.wav", "sine-bass.wav", "noise-pad.wav", PERSIAN + ".wav", "make_audio.json"])
+    assert names == sorted(["click-drums.wav", "sine-bass.wav", "noise-pad.wav", PERSIAN_FILE, "make_audio.json"])
     for rec in records:
         data = (out / rec["name"]).read_bytes()
         h = riff_header(data)
@@ -628,7 +737,7 @@ def test_make_audio_writes_valid_riff_files_including_the_persian_name(lab, env)
             assert w.getnframes() * w.getnchannels() * 2 == h["data_len"]
         assert rec["sha256"] == hashlib.sha256(data).hexdigest()
     prov = json.loads((out / "make_audio.json").read_text(encoding="utf-8"))
-    assert PERSIAN + ".wav" in [f["name"] for f in prov["files"]]
+    assert PERSIAN_FILE in [f["name"] for f in prov["files"]]
 
 
 def test_make_audio_rerun_is_a_no_op_and_a_new_seed_needs_force(lab, env):
@@ -653,7 +762,7 @@ def test_make_audio_refuses_to_write_outside_the_lab_root(lab, env, capsys, wher
 
 @pytest.mark.slow
 def test_full_length_files_have_the_documented_durations_and_never_clip(lab):
-    expected = {"click-drums.wav": 8.0, "sine-bass.wav": 8.0, "noise-pad.wav": 8.0, PERSIAN + ".wav": 5.0}
+    expected = {"click-drums.wav": 8.0, "sine-bass.wav": 8.0, "noise-pad.wav": 8.0, PERSIAN_FILE: 5.0}
     for name, seconds in expected.items():
         data = lab.make_audio.render(name, seed=1)
         h = riff_header(data)
@@ -676,8 +785,49 @@ def test_the_edit_script_is_valid_and_covers_plan_rows_1_to_26(lab):
     assert 8 <= counts["garageband"] <= 12  # the plan's "about 10"
     assert lab.steps.find("logic", "8a")["expected"] == {"track_renamed": {"from": "Drums", "to": PERSIAN}}
     assert lab.steps.find("logic", "14")["expected"] == {"volume_db": -6}
-    assert lab.steps.find("ableton", "17a")["expected"] == {"pan": "L50"}
     assert lab.steps.find("fl", "save-no-change")["allow_identical"] is True
+
+
+def test_pan_is_the_same_musical_position_in_each_daws_native_units(lab):
+    native = {"logic": (-32, 32), "ableton": ("25L", "25R"), "fl": ("50% left", "50% right")}
+    for daw, (left, right) in native.items():
+        a = lab.steps.find(daw, "17a")["expected"]["pan"]
+        b = lab.steps.find(daw, "17b")["expected"]["pan"]
+        assert (a["fraction"], a["native"], b["fraction"], b["native"]) == (-0.5, left, 0.5, right), daw
+        assert str(left) in lab.steps.find(daw, "17a")["instructions"], daw
+    # Live's scale is 50L..C..50R: "50L" there would be HARD left, not the plan's half-left.
+    assert lab.steps.find("ableton", "17a")["expected"]["pan"]["native"] == "25L"
+
+
+def test_no_two_tracks_can_ever_share_a_name(lab):
+    names = lab.steps.track_names(lab.steps.STEPS)
+    assert names["click-drums.wav"] == {"click-drums", "Drums", PERSIAN}
+    assert names[PERSIAN_FILE] == {"صدا"}
+    for daw in ("logic", "ableton", "fl"):
+        for s in lab.steps.for_daw(daw):
+            t = s.get("target") or {}
+            if t.get("track") == PERSIAN:
+                assert t["holds"] == "click-drums.wav", s["key"]
+    assert lab.steps.find("logic", "8b")["expected"]["audio_file_added"] == PERSIAN_FILE
+    step24 = next(s for s in lab.steps.STEPS if s["n"] == 24)
+    assert step24["deletes_track"] == PERSIAN_FILE and PERSIAN_FILE in lab.steps.find("fl", "24")["instructions"]
+    # The file make_audio writes is the one the script imports.
+    assert lab.steps.PERSIAN_FILE == lab.make_audio.PERSIAN_NAME
+    added = {s["adds_track"] for s in lab.steps.STEPS if str(s.get("adds_track", "")).endswith(".wav")}
+    assert added <= set(lab.make_audio.FILES)
+
+
+def test_validate_catches_a_file_named_like_a_renamed_track(lab):
+    # The bug this rule exists for: 8a renames the click-drums track to آواز, and a file
+    # called آواز.wav imported in 8b becomes a second "آواز" channel in FL Studio.
+    broken = copy.deepcopy(lab.steps.STEPS)
+    step8b = next(s for s in broken if (s["n"], s["sub"]) == (8, "b"))
+    step8b["adds_track"] = PERSIAN + ".wav"
+    problems = lab.steps.validate(broken)
+    assert any("could both be called " + PERSIAN in p for p in problems), problems
+    broken = copy.deepcopy(lab.steps.STEPS)
+    next(s for s in broken if s["n"] == 14)["target"] = {"track": PERSIAN}  # no "holds": ambiguous
+    assert any("must also say what the track holds" in p for p in lab.steps.validate(broken))
 
 
 def test_every_step_label_is_a_safe_folder_name(lab):
@@ -806,6 +956,24 @@ def test_analyze_refuses_to_read_from_the_lab_root(lab, env, capsys):
     assert rc == 2 and "lab root" in err
 
 
+@pytest.mark.parametrize("evil", ["../../../secret.txt", "/etc/hosts"])
+def test_analyze_refuses_manifest_paths_that_leave_the_run_folder(lab, env, capsys, evil):
+    run_corpus = env.corpus / "logic" / "r1"
+    write(env.home / "secret.txt", b"private")
+    manifest = {
+        "schema": "wit-lab-manifest/1", "daw": "logic", "run": "r1", "steps": [{"key": "01"}, {"key": "02"}],
+        "captures": [
+            {"key": k, "label": k + "-x", "edit": "", "expected": {},
+             "files": [{"path": evil, "role": "project", "sha256": k}]}
+            for k in ("01", "02")
+        ],
+    }
+    write(run_corpus / "manifest.json", json.dumps(manifest).encode("utf-8"))
+    rc, out, err = run_cli(lab.analyze, ["--run-dir", str(run_corpus)], capsys)
+    assert rc == 2 and "leaves the run folder" in err
+    assert "private" not in out
+
+
 # --------------------------------------------------------------------------- #
 # preflight
 # --------------------------------------------------------------------------- #
@@ -887,6 +1055,80 @@ def test_preflight_exit_codes_for_logic(lab, env):
     assert run(["logic"], env.home, kept, accept_inferred=True)["exit"] == 3
     for fake in (safe, unset, autosaved, kept):
         assert all(lab.preflight.is_read_only(c) for c in fake.calls)
+
+
+def gb_prefs(**extra):
+    d = {"unsavedAutosavedURLs": [], "startupAction": 3}
+    d.update(extra)
+    return d
+
+
+def container_lib(home: Path, domain="com.apple.garageband10") -> Path:
+    return home / "Library" / "Containers" / domain / "Data" / "Library"
+
+
+def test_preflight_finds_saved_window_state_inside_a_sandbox_container(lab, env):
+    # GarageBand is sandboxed: its savedState lives in its container, never in
+    # ~/Library/Saved Application State. Only the container copy exists here.
+    fake_app(env.apps, "GarageBand.app", "com.apple.garageband10", "10.4.14", "6648")
+    state = container_lib(env.home) / "Saved Application State" / "com.apple.garageband10.savedState"
+    state.mkdir(parents=True)
+    assert not (env.home / "Library" / "Saved Application State").exists()
+    run = lab.preflight.run_checks
+    kept = FakeDefaults({"com.apple.garageband10": gb_prefs(NSQuitAlwaysKeepsWindows=True)})
+    report = run(["garageband"], env.home, kept, accept_inferred=True)
+    assert report["exit"] == 3
+    assert "sandbox container" in json.dumps(report)
+    not_kept = FakeDefaults({"com.apple.garageband10": gb_prefs(NSQuitAlwaysKeepsWindows=False)})
+    assert run(["garageband"], env.home, not_kept, accept_inferred=True)["exit"] == 2
+    state.rmdir()
+    assert run(["garageband"], env.home, kept, accept_inferred=True)["exit"] == 0
+
+
+def test_preflight_reads_sandbox_container_prefs_and_the_worst_source_wins(lab, env):
+    fake_app(env.apps, "GarageBand.app", "com.apple.garageband10", "10.4.14", "6648")
+    write(container_lib(env.home) / "Preferences" / "com.apple.garageband10.plist",
+          plistlib.dumps(gb_prefs(startupAction=2), fmt=plistlib.FMT_BINARY))
+    run = lab.preflight.run_checks
+    # `defaults` knows nothing: the container plist alone decides — and 2 may mean "Open Most Recent".
+    assert run(["garageband"], env.home, FakeDefaults({}), accept_inferred=True)["exit"] == 3
+    # `defaults` says 3 (safe by inference), the container says 2: the worst wins.
+    report = run(["garageband"], env.home, FakeDefaults({"com.apple.garageband10": gb_prefs()}),
+                 accept_inferred=True)
+    assert report["exit"] == 3 and "sources disagree" in json.dumps(report)
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="root ignores file modes")
+def test_an_unreadable_sandbox_container_is_unknown_never_safe(lab, env):
+    fake_app(env.apps, "GarageBand.app", "com.apple.garageband10", "10.4.14", "6648")
+    lib = container_lib(env.home)
+    lib.mkdir(parents=True)
+    lib.chmod(0)
+    try:
+        report = lab.preflight.run_checks(["garageband"], env.home,
+                                          FakeDefaults({"com.apple.garageband10": gb_prefs()}), accept_inferred=True)
+    finally:
+        lib.chmod(0o755)
+    assert report["exit"] == 2 and "privacy-protected" in json.dumps(report)
+
+
+def test_the_lab_uses_logic_pro_app_and_a_stale_domain_is_information_only(lab, env):
+    fake_app(env.apps, "Logic Pro.app", "com.apple.logic10", "12.3.1", "6682")
+    assert lab.labcore.find_app("logic")["chosen"]["bundle"] == "Logic Pro.app"
+    fake_app(env.apps, "Logic Pro Creator Studio.app", "com.apple.mobilelogic", "12.3.1", "1")
+    assert lab.labcore.find_app("logic")["chosen"]["bundle"] == "Logic Pro.app"  # still first
+    (env.apps / "Logic Pro Creator Studio.app" / "Contents" / "Info.plist").unlink()
+    (env.apps / "Logic Pro Creator Studio.app" / "Contents").rmdir()
+    (env.apps / "Logic Pro Creator Studio.app").rmdir()
+    fake = FakeDefaults({"com.apple.logic10": logic_prefs(startupAction=3),
+                         "com.apple.mobilelogic": logic_prefs(startupAction=2)})
+    run = lab.preflight.run_checks
+    assert run(["logic"], env.home, fake, accept_inferred=True)["exit"] == 0
+    for f in (env.apps / "Logic Pro.app" / "Contents").iterdir():
+        f.unlink()
+    (env.apps / "Logic Pro.app" / "Contents").rmdir()
+    (env.apps / "Logic Pro.app").rmdir()
+    assert run(["logic"], env.home, fake, accept_inferred=True)["exit"] == 3  # no app found: all domains count
 
 
 def test_preflight_survives_raw_control_characters_in_exported_prefs(lab, env):
@@ -989,3 +1231,31 @@ def test_bookmark_paths_are_read_and_recent_documents_are_only_counted(lab, env)
         finally:
             sfl.chmod(0o600)
         assert rd["readable"] is False and "privacy" in rd["why"]
+
+
+# --------------------------------------------------------------------------- #
+# the runbook's interface: each tool runs as a plain file, from any folder
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("script, args", [
+    ("capture.py", ["--help"]),
+    ("capture.py", ["watch", "--help"]),
+    ("make_audio.py", ["--help"]),
+    ("make_audio.py", ["--list"]),
+    ("preflight.py", ["--help"]),
+    ("analyze.py", ["--help"]),
+    ("steps.py", ["--help"]),
+    ("steps.py", ["--check"]),
+])
+def test_each_tool_runs_as_a_plain_file_from_any_folder(env, tmp_path, script, args):
+    proc = subprocess.run([sys.executable, str(LAB_DIR / script), *args], cwd=str(tmp_path),
+                          env=dict(os.environ), capture_output=True, text=True, timeout=120)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip()
+
+
+def test_the_tools_also_run_as_modules_from_the_repo_root(env):
+    proc = subprocess.run([sys.executable, "-m", "tools.lab.steps", "--check"], cwd=str(REPO),
+                          env=dict(os.environ), capture_output=True, text=True, timeout=120)
+    assert proc.returncode == 0 and proc.stdout.startswith("ok:"), proc.stderr
