@@ -22,7 +22,7 @@ pub mod types;
 pub mod vocab;
 
 pub use build::{ableton_story, build_library, logic_stories, SESSION_GAP_SECS};
-pub use clock::Clock;
+pub use clock::{Clock, Offset};
 pub use types::*;
 
 /// The JSON schema of [`Library`], pretty-printed with a trailing newline —

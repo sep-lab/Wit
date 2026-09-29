@@ -150,15 +150,12 @@ fn story(path: &std::path::Path, json: bool, utc_offset_minutes: Option<i32>) ->
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    let clock = wit_story::Clock {
-        now: wit_story::Timestamp(now),
-        utc_offset_minutes: offset.unwrap_or(0),
-    };
+    let clock = wit_story::Clock::fixed(wit_story::Timestamp(now), offset.unwrap_or(0));
     let label = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "this folder".to_string());
-    let library = wit_story::build_library(path, &label, clock);
+    let library = wit_story::build_library(path, &label, &clock);
     if json {
         print!("{}", wit_story::to_json(&library));
         return ExitCode::SUCCESS;
@@ -181,6 +178,9 @@ fn story(path: &std::path::Path, json: bool, utc_offset_minutes: Option<i32>) ->
             println!("\n  {}", session.label);
             for m in &session.moments {
                 println!("    {}  ({})", m.label, m.source_label);
+                if let Some(summary) = &m.summary {
+                    println!("        {summary}");
+                }
                 for s in &m.sentences {
                     match &s.place_label {
                         Some(p) => println!("        {}  — {p}", s.text),

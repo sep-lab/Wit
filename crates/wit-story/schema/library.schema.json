@@ -33,6 +33,29 @@
     "trust"
   ],
   "$defs": {
+    "Actions": {
+      "description": "The change card's three actions. `false` means \"show it disabled\", not\n\"hide it\": each one turns on as the feature behind it lands.",
+      "type": "object",
+      "properties": {
+        "listen": {
+          "description": "\"Listen to the new parts\": there is source audio to play.",
+          "type": "boolean"
+        },
+        "open_as_copy": {
+          "description": "\"Open this moment as a copy\": restore is enabled for this DAW\n(ADR-0007: only after the restored copy is shown to open in it).",
+          "type": "boolean"
+        },
+        "send": {
+          "description": "\"Send to a friend\": the share page can be made.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "listen",
+        "open_as_copy",
+        "send"
+      ]
+    },
     "Artwork": {
       "oneOf": [
         {
@@ -123,6 +146,13 @@
           "description": "\"compared with the save before\" / \"oldest kept moment to newest\".",
           "type": "string"
         },
+        "summary": {
+          "description": "As [`Moment::summary`].",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "to": {
           "$ref": "#/$defs/MomentId"
         },
@@ -164,6 +194,29 @@
           "type": "string",
           "const": "inferred"
         }
+      ]
+    },
+    "CounterEvent": {
+      "type": "object",
+      "properties": {
+        "at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "kind": {
+          "$ref": "#/$defs/CounterKind"
+        }
+      },
+      "required": [
+        "kind",
+        "at"
+      ]
+    },
+    "CounterKind": {
+      "type": "string",
+      "enum": [
+        "compare_opened",
+        "share_created",
+        "restore_made"
       ]
     },
     "Daw": {
@@ -376,8 +429,14 @@
           "format": "uint32",
           "minimum": 0
         },
+        "kept_by_wit": {
+          "description": "How many of `moments` exist only because Wit kept a copy (the DAW\nhas since recycled them).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
         "label": {
-          "description": "\"41 moments kept · Logic keeps 10\".",
+          "description": "Credits whoever actually kept the saves: \"41 moments kept · Logic\nkeeps 10\" once Wit has kept some, \"10 moments from Logic's own\nbackups\" while every moment is still the DAW's.",
           "type": "string"
         },
         "moments": {
@@ -388,6 +447,7 @@
       },
       "required": [
         "moments",
+        "kept_by_wit",
         "label"
       ]
     },
@@ -427,10 +487,30 @@
       "description": "One kept save.",
       "type": "object",
       "properties": {
+        "actions": {
+          "description": "Which of the change card's actions work for this moment today.",
+          "$ref": "#/$defs/Actions"
+        },
         "at": {
           "$ref": "#/$defs/Timestamp"
         },
+        "compared_with": {
+          "description": "The moment this one was compared with — usually the one before, but\nafter an unreadable save it is the last one Wit could read.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MomentId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "heading": {
+          "description": "The change card's title: \"What changed at Thu 23:05\", \"Routine\nsave\", \"The oldest moment\", \"Wit couldn't read this save\".",
+          "type": "string"
+        },
         "id": {
+          "description": "Stable across new saves: derived from the save's own time, never its\nposition (Logic's backups are a ring, so positions shift).",
           "$ref": "#/$defs/MomentId"
         },
         "label": {
@@ -452,7 +532,7 @@
           ]
         },
         "sentences": {
-          "description": "Compared with the moment before it in this Story.",
+          "description": "Compared with [`Moment::compared_with`].",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Sentence"
@@ -464,6 +544,17 @@
         "source_label": {
           "description": "\"Logic backup 04\", \"current save\", \"kept by Wit\".",
           "type": "string"
+        },
+        "subheading": {
+          "description": "\"compared with the save at Thu 22:41\".",
+          "type": "string"
+        },
+        "summary": {
+          "description": "A one-line digest when there are many sentences (\"14 changes Wit can\nsee: 9 added, 3 removed, 2 renamed\"), so the card and timeline stay\nreadable on a busy save. `None` for three sentences or fewer.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "track_heat": {
           "description": "Sparse heat-strip column for this moment.",
@@ -486,13 +577,16 @@
         "id",
         "at",
         "label",
+        "heading",
+        "subheading",
         "source",
         "source_label",
         "verdict",
         "weight",
         "sentences",
         "track_heat",
-        "listen"
+        "listen",
+        "actions"
       ]
     },
     "MomentId": {
@@ -647,6 +741,13 @@
           "format": "uint32",
           "minimum": 0
         },
+        "events": {
+          "description": "Every counted event with its time, so the success metric (\"two\ncompares in any 7-day window\") can be checked, not just totalled.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CounterEvent"
+          }
+        },
         "restores_made": {
           "type": "integer",
           "format": "uint32",
@@ -671,7 +772,8 @@
       "required": [
         "compares_opened",
         "shares_created",
-        "restores_made"
+        "restores_made",
+        "events"
       ]
     },
     "Place": {
@@ -689,7 +791,7 @@
           ]
         },
         {
-          "description": "1-based bars. `end` is inclusive.",
+          "description": "1-based bars; `end` is inclusive. A fractional value is a fraction\nof a bar (17.5 = halfway through bar 17), not bar.beat; labels show\nthe bar it falls in.",
           "type": "object",
           "properties": {
             "approximate": {
@@ -853,6 +955,15 @@
         "icon": {
           "$ref": "#/$defs/Icon"
         },
+        "lane": {
+          "description": "Index into [`Story::tracks`] — the heat-strip row — when Wit knows\nexactly which row. Two tracks with the same name get `None`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
         "place": {
           "anyOf": [
             {
@@ -885,7 +996,7 @@
           "$ref": "#/$defs/Tier"
         },
         "track": {
-          "description": "The track this sentence is about, when known.",
+          "description": "The track this sentence is about, when known (its display name).",
           "type": [
             "string",
             "null"
@@ -1035,6 +1146,13 @@
           "description": "\"Logic\", \"GarageBand\", \"Live\", \"FL Studio\".",
           "type": "string"
         },
+        "family_label": {
+          "description": "The family pill: \"2 alternatives of this song\", \"3 copies of this\nsong\". `None` when the song has no family.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "kept": {
           "$ref": "#/$defs/KeptSummary"
         },
@@ -1133,7 +1251,12 @@
           "const": "track"
         },
         {
-          "description": "A number with its unit (\"124 BPM\", \"−6.0 dB\").",
+          "description": "A name the musician chose, where Wit can't tell what it names yet\n(Logic's track list mixes track and MIDI region names).",
+          "type": "string",
+          "const": "name"
+        },
+        {
+          "description": "A number with its unit (\"124 BPM\", \"−6.0 dB\", \"2 bars later\").",
           "type": "string",
           "const": "value"
         }

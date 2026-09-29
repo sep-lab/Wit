@@ -1,13 +1,14 @@
-//! Kept saves on disk → [`Story`]. Read-only: this module opens project
-//! files for reading and never writes anywhere.
+//! Saves on disk → [`Story`]. Read-only: this module opens project files
+//! for reading and never writes anywhere.
 //!
-//! v1 builds straight from what the DAW keeps on disk (Logic's backups, Live's
-//! `Backup/` autosaves), timed by each file's modification time. The app's
-//! watcher adds "kept by Wit" moments from the store later; the Story shape
-//! doesn't change when it does.
+//! v1 builds straight from what the DAW itself keeps on disk (Logic's
+//! backups, Live's `Backup/` autosaves), timed by each file's modification
+//! time. Nothing here has been kept by Wit, and the wording says so: the
+//! app's watcher adds "kept by Wit" moments from the store later, and the
+//! Story shape doesn't change when it does.
 
 use crate::clock::{about_duration, Clock};
-use crate::sentence::{sentence, SentenceContext};
+use crate::sentence::{record_is_finite, sentence, SentenceContext};
 use crate::types::*;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -18,13 +19,16 @@ use wit_model::{ChangeRecord, Model};
 /// "The Story": sessions are clustered by gaps of more than 45 minutes).
 pub const SESSION_GAP_SECS: i64 = 45 * 60;
 
+/// More sentences than this and a moment also gets a one-line summary.
+const SUMMARY_THRESHOLD: usize = 3;
+
 const NEVER_CHANGED: &str = "Your project is never changed.";
 
 /// Build the whole library under `root`: every Logic/GarageBand project and
 /// Ableton lineage Wit can discover, the Shelf, and the trust panel.
 /// `root_label` is how the owner sees the folder ("~/Music/Logic"); it goes
 /// into the trust panel instead of the real path.
-pub fn build_library(root: &Path, root_label: &str, clock: Clock) -> Library {
+pub fn build_library(root: &Path, root_label: &str, clock: &Clock) -> Library {
     let mut songs: Vec<(ShelfCard, Vec<Story>)> = Vec::new();
 
     for project in wit_index::discover_logic_projects(root) {
@@ -58,7 +62,14 @@ pub fn build_library(root: &Path, root_label: &str, clock: Clock) -> Library {
 
     let mut shelf = Vec::new();
     let mut stories = Vec::new();
-    for (card, song_stories) in songs {
+    for (card, mut song_stories) in songs {
+        // Stories in the same order as the card lists them.
+        song_stories.sort_by_key(|s| {
+            card.story_ids
+                .iter()
+                .position(|id| *id == s.id)
+                .unwrap_or(usize::MAX)
+        });
         shelf.push(card);
         stories.extend(song_stories);
     }
@@ -82,6 +93,7 @@ pub fn build_library(root: &Path, root_label: &str, clock: Clock) -> Library {
 // Readings: one parsed save
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
 enum Reading {
     Logic {
         extracted: wit_logic::Extracted,
@@ -100,6 +112,15 @@ impl Reading {
             Reading::Logic { bytes, .. } | Reading::Ableton { bytes, .. } => Some(bytes),
             Reading::Unreadable => None,
         }
+    }
+
+    fn tempo(&self) -> Option<f64> {
+        let t = match self {
+            Reading::Logic { extracted, .. } => extracted.tempo_bpm,
+            Reading::Ableton { model, .. } => model.tempo_bpm,
+            Reading::Unreadable => None,
+        };
+        t.filter(|x| x.is_finite())
     }
 }
 
@@ -142,99 +163,108 @@ fn mtime(path: &Path) -> Timestamp {
     Timestamp(secs)
 }
 
-/// Path relative to the library root with `/` separators — the basis of
-/// ids. Never absolute, so ids never carry a home directory.
-fn relative_id(path: &Path, root: &Path) -> String {
+/// Path relative to the library root with `/` separators. Only ever hashed
+/// into an id, never put in a Story.
+fn relative_key(path: &Path, root: &Path) -> String {
     let rel = path.strip_prefix(root).unwrap_or(path);
-    let parts: Vec<String> = rel
-        .components()
+    rel.components()
         .filter_map(|c| match c {
             std::path::Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
             _ => None,
         })
-        .collect();
-    if parts.is_empty() {
-        path.file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default()
-    } else {
-        parts.join("/")
-    }
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
-fn fnv1a(s: &str) -> u32 {
-    let mut h: u32 = 0x811c_9dc5;
+fn fnv1a64(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in s.bytes() {
-        h ^= u32::from(b);
-        h = h.wrapping_mul(0x0100_0193);
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
     }
     h
+}
+
+/// An opaque song id: a DAW prefix plus a hash of where the project is,
+/// so an id never carries a path or a folder name.
+fn song_id(prefix: &str, location: &str) -> SongId {
+    SongId(format!("{prefix}:{:016x}", fnv1a64(location)))
 }
 
 // ---------------------------------------------------------------------------
 // Track lanes (heat-strip rows)
 // ---------------------------------------------------------------------------
 
+/// Heat-strip rows. Only DAWs whose parser knows real track identities get
+/// rows (Ableton track ids). Logic gets none until the Logic lane pairs
+/// names with tracks: a name list that mixes tracks, MIDI regions and the
+/// project's own title is not a track list (wit-logic `extract.rs`).
 #[derive(Clone, Default)]
 struct Lanes {
     lanes: Vec<TrackLane>,
-    by_name: BTreeMap<String, usize>,
     by_key: BTreeMap<String, usize>,
+    /// Name → row, or `None` when two tracks share the name (ambiguous).
+    by_name: BTreeMap<String, Option<usize>>,
 }
 
 impl Lanes {
     fn ensure(&mut self, key: &str, name: &str) -> usize {
-        if let Some(&i) = self.by_key.get(key) {
-            if self.lanes[i].name != name {
+        let i = match self.by_key.get(key) {
+            Some(&i) => {
                 self.lanes[i].name = name.to_string();
+                i
             }
-            self.by_name.insert(name.to_string(), i);
-            return i;
+            None => {
+                let i = self.lanes.len();
+                self.lanes.push(TrackLane {
+                    key: key.to_string(),
+                    name: name.to_string(),
+                    color: None,
+                });
+                self.by_key.insert(key.to_string(), i);
+                i
+            }
+        };
+        match self.by_name.get(name) {
+            Some(Some(j)) if *j != i => {
+                self.by_name.insert(name.to_string(), None);
+            }
+            Some(_) => {}
+            None => {
+                self.by_name.insert(name.to_string(), Some(i));
+            }
         }
-        let i = self.lanes.len();
-        self.lanes.push(TrackLane {
-            key: key.to_string(),
-            name: name.to_string(),
-            color: None,
-        });
-        self.by_key.insert(key.to_string(), i);
-        self.by_name.insert(name.to_string(), i);
         i
     }
 
-    /// A rename: the new name joins the old name's lane.
-    fn alias(&mut self, old: &str, new: &str) {
-        match self.by_name.get(old).copied() {
-            Some(i) => {
-                self.lanes[i].name = new.to_string();
-                self.by_name.insert(new.to_string(), i);
-            }
-            None => {
-                self.ensure(new, new);
-            }
-        }
+    fn index(&self, name: &str) -> Option<usize> {
+        self.by_name.get(name).copied().flatten()
     }
 
-    fn index(&self, name: &str) -> Option<usize> {
-        self.by_name.get(name).copied()
+    /// Point each sentence at its row, when that row is unambiguous.
+    fn assign(&self, sentences: &mut [Sentence]) {
+        for s in sentences {
+            s.lane = s
+                .track
+                .as_deref()
+                .and_then(|t| self.index(t))
+                .map(|i| i as u32);
+        }
     }
 }
 
-/// Heat for one set of sentences: how many sentences touch each track,
+/// Heat for one set of sentences: how many sentences touch each row,
 /// capped at 3; a track added or removed is always 3.
-fn heat(sentences: &[Sentence], lanes: &Lanes) -> Vec<TrackHeat> {
-    let mut levels: BTreeMap<usize, u8> = BTreeMap::new();
+fn heat(sentences: &[Sentence]) -> Vec<TrackHeat> {
+    let mut levels: BTreeMap<u32, u8> = BTreeMap::new();
     for s in sentences {
-        let Some(track) = &s.track else { continue };
-        let Some(i) = lanes.index(track) else {
-            continue;
-        };
+        let Some(lane) = s.lane else { continue };
         let whole_track = matches!(s.icon, Icon::Add | Icon::Remove)
             && s.spans
                 .iter()
                 .find(|sp| sp.kind != SpanKind::Plain)
                 .is_some_and(|sp| sp.kind == SpanKind::Track);
-        let entry = levels.entry(i).or_insert(0);
+        let entry = levels.entry(lane).or_insert(0);
         *entry = if whole_track {
             3
         } else {
@@ -243,11 +273,53 @@ fn heat(sentences: &[Sentence], lanes: &Lanes) -> Vec<TrackHeat> {
     }
     levels
         .into_iter()
-        .map(|(track, level)| TrackHeat {
-            track: track as u32,
-            level,
-        })
+        .map(|(track, level)| TrackHeat { track, level })
         .collect()
+}
+
+/// "14 changes Wit can see: 9 added, 3 removed, 2 renamed" — for busy
+/// saves only. Counts extracted, named changes (sentences), never container
+/// records.
+fn summary(sentences: &[Sentence]) -> Option<String> {
+    if sentences.len() <= SUMMARY_THRESHOLD {
+        return None;
+    }
+    // (singular, plural) per kind of change, in first-seen order.
+    let mut groups: Vec<((&str, &str), usize)> = Vec::new();
+    for s in sentences {
+        let noun = match s.icon {
+            Icon::Add => ("added", "added"),
+            Icon::Remove => ("removed", "removed"),
+            Icon::Move => ("moved", "moved"),
+            Icon::Trim => ("resized", "resized"),
+            Icon::Duplicate => ("duplicated", "duplicated"),
+            Icon::Rename => ("renamed", "renamed"),
+            Icon::Record => ("sample swap", "sample swaps"),
+            Icon::Mix | Icon::Mute => ("mix change", "mix changes"),
+            Icon::Plugin => ("plugin change", "plugin changes"),
+            Icon::AudioFile => ("audio file change", "audio file changes"),
+            Icon::Midi | Icon::Automation => {
+                ("MIDI or automation change", "MIDI or automation changes")
+            }
+            Icon::Marker => ("marker change", "marker changes"),
+            Icon::Tempo | Icon::Key | Icon::Meter | Icon::Tracks => {
+                ("song setting", "song settings")
+            }
+        };
+        match groups.iter_mut().find(|(n, _)| *n == noun) {
+            Some((_, c)) => *c += 1,
+            None => groups.push((noun, 1)),
+        }
+    }
+    let parts: Vec<String> = groups
+        .iter()
+        .map(|((one, many), n)| format!("{n} {}", if *n == 1 { one } else { many }))
+        .collect();
+    Some(format!(
+        "{} changes Wit can see: {}",
+        sentences.len(),
+        parts.join(", ")
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -294,35 +366,43 @@ impl DawFacts {
     }
 
     fn capability(&self) -> Vec<CapabilityNote> {
-        let first = match self.daw {
-            Daw::Logic | Daw::GarageBand => {
-                format!("Wit can't see knob and fader moves in {} yet.", self.label)
-            }
-            Daw::Ableton => "Wit can say a plugin's settings changed, but not how.".to_string(),
-            Daw::FlStudio | Daw::Other => {
-                "Wit keeps every save, but can't read inside this project yet.".to_string()
-            }
-        };
-        vec![
-            CapabilityNote {
+        let mut notes = Vec::new();
+        match self.daw {
+            Daw::Logic | Daw::GarageBand => notes.push(CapabilityNote {
                 tier: Some(self.tier),
-                text: first,
-            },
-            CapabilityNote {
-                tier: None,
-                text: NEVER_CHANGED.to_string(),
-            },
-        ]
+                text: format!("Wit can't see knob and fader moves in {} yet.", self.label),
+            }),
+            Daw::Ableton => {
+                notes.push(CapabilityNote {
+                    tier: Some(self.tier),
+                    text: "Wit can say a plugin's settings changed, but not how.".to_string(),
+                });
+                notes.push(CapabilityNote {
+                    tier: Some(self.tier),
+                    text: "Wit can't yet see edits inside MIDI clips or automation lanes — only \
+                           how many notes or lanes there are."
+                        .to_string(),
+                });
+            }
+            Daw::FlStudio | Daw::Other => notes.push(CapabilityNote {
+                tier: Some(Tier::History),
+                text: "Wit can't read inside this project yet.".to_string(),
+            }),
+        }
+        notes.push(CapabilityNote {
+            tier: None,
+            text: NEVER_CHANGED.to_string(),
+        });
+        notes
     }
 
-    fn nothing_visible_note(&self) -> String {
+    fn nothing_visible_note(&self) -> &'static str {
         match self.daw {
-            Daw::Ableton => "No musical change Wit can see — maybe a view change, or you just \
-                             hit save. Wit kept it anyway."
-                .to_string(),
-            _ => "No change Wit can see — maybe a knob or fader move, or you just hit save. \
-                  Wit kept it anyway."
-                .to_string(),
+            Daw::Ableton => {
+                "No musical change Wit can see — maybe a note or automation edit, a view \
+                 change, or you just hit save."
+            }
+            _ => "No change Wit can see — maybe a knob or fader move, or you just hit save.",
         }
     }
 
@@ -332,6 +412,14 @@ impl DawFacts {
              compare two bounces instead.",
             self.label
         )
+    }
+}
+
+/// Only a moment Wit itself kept may say so.
+fn with_kept_clause(note: &str, source: &MomentSource) -> String {
+    match source {
+        MomentSource::KeptByWit => format!("{note} Wit kept a copy."),
+        _ => note.to_string(),
     }
 }
 
@@ -355,23 +443,45 @@ fn source_label(source: &MomentSource) -> String {
 struct PairResult {
     verdict: Verdict,
     sentences: Vec<Sentence>,
-    note: Option<String>,
 }
 
-fn compare(a: &Reading, b: &Reading, facts: &DawFacts, lanes: &mut Lanes) -> PairResult {
-    let sentences = match (a, b) {
+/// Logic names Wit has read as renames, so the oldest-to-newest overview can
+/// pair a name that was renamed partway through the range.
+#[derive(Clone, Default)]
+struct NameRoots {
+    root: BTreeMap<String, String>,
+}
+
+impl NameRoots {
+    fn of<'a>(&'a self, name: &'a str) -> &'a str {
+        self.root.get(name).map(String::as_str).unwrap_or(name)
+    }
+
+    fn rename(&mut self, old: &str, new: &str) {
+        let r = self.of(old).to_string();
+        self.root.insert(new.to_string(), r);
+    }
+}
+
+fn compare(
+    a: &Reading,
+    b: &Reading,
+    facts: &DawFacts,
+    lanes: &mut Lanes,
+    roots: &mut NameRoots,
+) -> PairResult {
+    let mut sentences = match (a, b) {
         (_, Reading::Unreadable) => {
             return PairResult {
                 verdict: Verdict::Unreadable,
                 sentences: vec![],
-                note: Some(facts.unreadable_note()),
             }
         }
         // wit-logic's own verdict also counts census changes; a census-only
         // change has no sentence Wit may show (ADR-0006's census-noun ban),
         // so here it reads as "nothing visible", which is the honest wording.
         (Reading::Logic { extracted: ea, .. }, Reading::Logic { extracted: eb, .. }) => {
-            logic_sentences(ea, eb, facts, lanes)
+            logic_sentences(ea, eb, facts, roots)
         }
         (Reading::Ableton { model: ma, .. }, Reading::Ableton { model: mb, .. }) => {
             for (id, t) in &mb.tracks {
@@ -383,31 +493,21 @@ fn compare(a: &Reading, b: &Reading, facts: &DawFacts, lanes: &mut Lanes) -> Pai
             };
             wit_diff::diff(ma, mb)
                 .iter()
+                .filter(|r| record_is_finite(r))
                 .map(|r| sentence(r, &ctx))
                 .collect()
         }
         _ => vec![],
     };
-    if !sentences.is_empty() {
-        return PairResult {
-            verdict: Verdict::Changed,
-            sentences,
-            note: None,
-        };
-    }
-    if a.bytes().is_some() && a.bytes() == b.bytes() {
-        PairResult {
-            verdict: Verdict::Identical,
-            sentences,
-            note: Some("Saved again with nothing changed. Wit kept it anyway.".to_string()),
-        }
+    lanes.assign(&mut sentences);
+    let verdict = if !sentences.is_empty() {
+        Verdict::Changed
+    } else if a.bytes().is_some() && a.bytes() == b.bytes() {
+        Verdict::Identical
     } else {
-        PairResult {
-            verdict: Verdict::NothingVisible,
-            sentences,
-            note: Some(facts.nothing_visible_note()),
-        }
-    }
+        Verdict::NothingVisible
+    };
+    PairResult { verdict, sentences }
 }
 
 fn ordered_unique(names: &[String]) -> Vec<&String> {
@@ -429,7 +529,7 @@ fn logic_sentences(
     a: &wit_logic::Extracted,
     b: &wit_logic::Extracted,
     facts: &DawFacts,
-    lanes: &mut Lanes,
+    roots: &mut NameRoots,
 ) -> Vec<Sentence> {
     let ctx = SentenceContext {
         tier: facts.tier,
@@ -438,11 +538,9 @@ fn logic_sentences(
     let mut out = Vec::new();
 
     if let (Some(from_bpm), Some(to_bpm)) = (a.tempo_bpm, b.tempo_bpm) {
-        if from_bpm != to_bpm {
-            out.push(sentence(
-                &ChangeRecord::TempoChanged { from_bpm, to_bpm },
-                &ctx,
-            ));
+        let r = ChangeRecord::TempoChanged { from_bpm, to_bpm };
+        if from_bpm != to_bpm && record_is_finite(&r) {
+            out.push(sentence(&r, &ctx));
         }
     }
 
@@ -459,15 +557,12 @@ fn logic_sentences(
         .into_iter()
         .filter(|n| !names_a.contains(n.as_str()))
         .collect();
-    // Names already known to share a heat-strip row (a rename inferred
-    // between two saves in the middle of this range) are that same rename.
+    // Names already read as one rename chain (a rename inferred between two
+    // saves in the middle of this range) pair up again.
     let mut paired = Vec::new();
     removed.retain(|old| {
-        let lane = lanes.index(old);
-        match added
-            .iter()
-            .position(|new| lane.is_some() && lanes.index(new) == lane)
-        {
+        let root = roots.of(old).to_string();
+        match added.iter().position(|new| roots.of(new) == root) {
             Some(j) => {
                 paired.push((*old, added.remove(j)));
                 false
@@ -480,11 +575,10 @@ fn logic_sentences(
     }
     if removed.len() == 1 && added.len() == 1 {
         let (old, new) = (removed[0], added[0]);
-        lanes.alias(old, new);
+        roots.rename(old, new);
         out.push(crate::sentence::logic_name_renamed(old, new, facts.tier));
     } else {
         for name in added {
-            lanes.ensure(name, name);
             out.push(crate::sentence::logic_name_added(name, facts.tier));
         }
         for name in removed {
@@ -555,111 +649,164 @@ struct StoryMeta {
     family: Option<Family>,
 }
 
-fn assemble(meta: StoryMeta, saves: Vec<Save>, read: fn(&Path) -> Reading, clock: Clock) -> Story {
+/// Moment ids come from the save's own time, so they don't shift when the
+/// DAW recycles an old backup. Two saves in the same second get `~1`, `~2`.
+fn moment_ids(story_id: &StoryId, saves: &[Save]) -> Vec<MomentId> {
+    let mut seen: BTreeMap<i64, usize> = BTreeMap::new();
+    saves
+        .iter()
+        .map(|s| {
+            let n = seen.entry(s.at.0).or_insert(0);
+            let id = if *n == 0 {
+                format!("{story_id}@{}", s.at.0)
+            } else {
+                format!("{story_id}@{}~{n}", s.at.0)
+            };
+            *n += 1;
+            MomentId(id)
+        })
+        .collect()
+}
+
+fn assemble(meta: StoryMeta, saves: Vec<Save>, read: fn(&Path) -> Reading, clock: &Clock) -> Story {
     let facts = meta.facts;
+    let ids = moment_ids(&meta.story_id, &saves);
     let mut lanes = Lanes::default();
+    let mut roots = NameRoots::default();
     let mut moments: Vec<Moment> = Vec::new();
-    let mut prev: Option<Reading> = None;
-    let mut first_readable: Option<Reading> = None;
-    let mut last_readable_idx: Option<usize> = None;
-    let mut first_readable_idx: Option<usize> = None;
+    // The last reading Wit could read, and the moment it belongs to.
+    let mut prev: Option<(Reading, usize)> = None;
+    let mut first: Option<(Reading, usize)> = None;
     let mut last_tempo = None;
 
     for (i, save) in saves.iter().enumerate() {
         let reading = read(&save.path);
-        if let Reading::Logic { extracted, .. } = &reading {
-            if first_readable.is_none() {
-                for n in ordered_unique(&extracted.possible_track_names) {
-                    lanes.ensure(n, n);
-                }
-            }
-            last_tempo = extracted.tempo_bpm.or(last_tempo);
-        }
-        if let Reading::Ableton { model, .. } = &reading {
-            if first_readable.is_none() {
+        if first.is_none() {
+            if let Reading::Ableton { model, .. } = &reading {
                 for (id, t) in &model.tracks {
                     lanes.ensure(&id.0, &t.name);
                 }
             }
-            last_tempo = model.tempo_bpm.or(last_tempo);
         }
+        last_tempo = reading.tempo().or(last_tempo);
+        let label = clock.moment_label(save.at);
 
-        let result = match (&prev, &reading) {
-            (_, Reading::Unreadable) => PairResult {
-                verdict: Verdict::Unreadable,
-                sentences: vec![],
-                note: Some(facts.unreadable_note()),
-            },
-            (None, _) => PairResult {
-                verdict: Verdict::First,
-                sentences: vec![],
-                note: Some(if i == 0 {
+        let (verdict, sentences, compared_with) = match (&prev, &reading) {
+            (_, Reading::Unreadable) => (Verdict::Unreadable, vec![], None),
+            (None, _) => (Verdict::First, vec![], None),
+            (Some((p, pi)), r) => {
+                let res = compare(p, r, &facts, &mut lanes, &mut roots);
+                (res.verdict, res.sentences, Some(*pi))
+            }
+        };
+
+        let prev_label = compared_with.map(|pi| moments[pi].label.clone());
+        let (heading, subheading, note) = match verdict {
+            Verdict::First => (
+                "The oldest moment".to_string(),
+                format!("{label} · nothing earlier to compare with"),
+                Some(if i == 0 {
                     "The oldest save Wit has for this song.".to_string()
                 } else {
                     "The oldest save Wit can read for this song.".to_string()
                 }),
-            },
-            (Some(p), r) => compare(p, r, &facts, &mut lanes),
+            ),
+            Verdict::Changed => (
+                format!("What changed at {label}"),
+                format!(
+                    "compared with the save at {}",
+                    prev_label.clone().unwrap_or_default()
+                ),
+                None,
+            ),
+            Verdict::NothingVisible => (
+                "Routine save".to_string(),
+                format!(
+                    "{label} · compared with the save at {}",
+                    prev_label.clone().unwrap_or_default()
+                ),
+                Some(with_kept_clause(facts.nothing_visible_note(), &save.source)),
+            ),
+            Verdict::Identical => (
+                "Saved again, nothing changed".to_string(),
+                format!(
+                    "{label} · compared with the save at {}",
+                    prev_label.clone().unwrap_or_default()
+                ),
+                Some(with_kept_clause(
+                    "Saved again with nothing changed.",
+                    &save.source,
+                )),
+            ),
+            Verdict::Unreadable => (
+                "Wit couldn't read this save".to_string(),
+                label.clone(),
+                Some(facts.unreadable_note()),
+            ),
         };
 
-        let track_heat = heat(&result.sentences, &lanes);
+        let listen: Vec<ListenRef> = vec![];
         moments.push(Moment {
-            id: MomentId(format!("{}@{i}", meta.story_id)),
+            id: ids[i].clone(),
             at: save.at,
-            label: clock.moment_label(save.at),
+            label,
+            heading,
+            subheading,
+            compared_with: compared_with.map(|pi| ids[pi].clone()),
             source_label: source_label(&save.source),
             source: save.source.clone(),
-            verdict: result.verdict,
-            weight: result.sentences.len() as u32,
-            sentences: result.sentences,
-            note: result.note,
-            track_heat,
-            listen: vec![],
+            verdict,
+            weight: sentences.len() as u32,
+            summary: summary(&sentences),
+            track_heat: heat(&sentences),
+            sentences,
+            note,
+            actions: Actions {
+                listen: !listen.is_empty(),
+                // ADR-0007: off until a restored copy is shown to open in
+                // this DAW.
+                open_as_copy: false,
+                // The share page (M6) doesn't exist yet.
+                send: false,
+            },
+            listen,
         });
 
         if !matches!(reading, Reading::Unreadable) {
-            if first_readable_idx.is_none() {
-                first_readable_idx = Some(i);
+            if first.is_none() {
+                first = Some((reading.clone(), i));
             }
-            last_readable_idx = Some(i);
-            if first_readable.is_none() {
-                first_readable = Some(match &reading {
-                    Reading::Logic { extracted, bytes } => Reading::Logic {
-                        extracted: extracted.clone(),
-                        bytes: bytes.clone(),
-                    },
-                    Reading::Ableton { model, bytes } => Reading::Ableton {
-                        model: model.clone(),
-                        bytes: bytes.clone(),
-                    },
-                    Reading::Unreadable => Reading::Unreadable,
-                });
-            }
-            prev = Some(reading);
+            prev = Some((reading, i));
         }
     }
 
     // The overview: oldest readable moment → newest readable moment.
-    let overview = match (
-        first_readable_idx,
-        last_readable_idx,
-        &first_readable,
-        &prev,
-    ) {
-        (Some(f), Some(l), Some(a), Some(b)) if f < l => {
-            let mut scratch = lanes.clone();
-            let r = compare(a, b, &facts, &mut scratch);
-            let from = &moments[f];
-            let to = &moments[l];
+    let overview = match (&first, &prev) {
+        (Some((a, fi)), Some((b, li))) if fi < li => {
+            let mut scratch_lanes = lanes.clone();
+            let mut scratch_roots = roots.clone();
+            let r = compare(a, b, &facts, &mut scratch_lanes, &mut scratch_roots);
+            let from = &moments[*fi];
+            let to = &moments[*li];
+            let note = match r.verdict {
+                Verdict::Identical => {
+                    Some("Nothing changed between the oldest and newest moment.".to_string())
+                }
+                Verdict::NothingVisible => {
+                    Some("No changes Wit can see between the oldest and newest moment.".to_string())
+                }
+                _ => None,
+            };
             Some(Comparison {
                 from: from.id.clone(),
                 to: to.id.clone(),
                 heading: format!("Since {}", clock.day_label(from.at)),
                 subheading: "from the oldest moment Wit has to the newest".to_string(),
                 verdict: r.verdict,
-                track_heat: heat(&r.sentences, &scratch),
+                summary: summary(&r.sentences),
+                track_heat: heat(&r.sentences),
                 sentences: r.sentences,
-                note: r.note,
+                note,
                 listen: vec![],
             })
         }
@@ -668,7 +815,12 @@ fn assemble(meta: StoryMeta, saves: Vec<Save>, read: fn(&Path) -> Reading, clock
 
     let sessions = group_sessions(moments, clock);
     let last_worked = sessions.last().map(|s| s.ended);
-    let n_moments: u32 = sessions.iter().map(|s| s.moments.len() as u32).sum();
+    let all: Vec<&Moment> = sessions.iter().flat_map(|s| s.moments.iter()).collect();
+    let n_moments = all.len() as u32;
+    let kept_by_wit = all
+        .iter()
+        .filter(|m| m.source == MomentSource::KeptByWit)
+        .count() as u32;
 
     let mut subtitle = vec![facts.label.to_string()];
     if let Some(bpm) = last_tempo {
@@ -679,13 +831,33 @@ fn assemble(meta: StoryMeta, saves: Vec<Save>, read: fn(&Path) -> Reading, clock
     }
 
     let moments_word = if n_moments == 1 { "moment" } else { "moments" };
-    let kept_label = match facts.keeps {
-        Some(k) => format!(
-            "{n_moments} {moments_word} kept · {} keeps {k}",
+    let kept_label = match (kept_by_wit, facts.keeps) {
+        (k, Some(keeps)) if k > 0 => format!(
+            "{n_moments} {moments_word} kept · {} keeps {keeps}",
             facts.label
         ),
-        None => format!("{n_moments} {moments_word} kept"),
+        (_, Some(keeps)) => format!(
+            "{n_moments} {moments_word} on disk · {} keeps {keeps}",
+            facts.label
+        ),
+        (k, None) if k > 0 => format!("{n_moments} {moments_word} kept"),
+        (_, None) => format!(
+            "{n_moments} {moments_word} on disk · {} keeps no backups",
+            facts.label
+        ),
     };
+
+    let family_label = meta.family.as_ref().map(|f| {
+        let all_alternatives = f
+            .members
+            .iter()
+            .all(|m| matches!(m.relation, Relation::Alternative));
+        if all_alternatives {
+            format!("{} alternatives of this song", f.members.len())
+        } else {
+            format!("{} copies of this song", f.members.len())
+        }
+    });
 
     Story {
         id: meta.story_id,
@@ -703,8 +875,10 @@ fn assemble(meta: StoryMeta, saves: Vec<Save>, read: fn(&Path) -> Reading, clock
             kept: KeptSummary {
                 moments: n_moments,
                 daw_keeps: facts.keeps,
+                kept_by_wit,
                 label: kept_label,
             },
+            family_label,
         },
         tracks: lanes.lanes,
         sessions,
@@ -715,7 +889,7 @@ fn assemble(meta: StoryMeta, saves: Vec<Save>, read: fn(&Path) -> Reading, clock
     }
 }
 
-fn group_sessions(moments: Vec<Moment>, clock: Clock) -> Vec<Session> {
+fn group_sessions(moments: Vec<Moment>, clock: &Clock) -> Vec<Session> {
     let mut groups: Vec<Vec<Moment>> = Vec::new();
     for m in moments {
         let new_session = match groups.last().and_then(|g| g.last()) {
@@ -728,7 +902,7 @@ fn group_sessions(moments: Vec<Moment>, clock: Clock) -> Vec<Session> {
             g.push(m);
         }
     }
-    groups
+    let mut sessions: Vec<Session> = groups
         .into_iter()
         .enumerate()
         .map(|(i, moments)| {
@@ -758,22 +932,40 @@ fn group_sessions(moments: Vec<Moment>, clock: Clock) -> Vec<Session> {
                 moments,
             }
         })
-        .collect()
+        .collect();
+    // Two sessions on the same day and part of day both get their start
+    // times, so the timeline never shows two sessions it can't tell apart.
+    let day_part = |s: &Session| {
+        format!(
+            "{} · {}",
+            clock.day_label(s.started),
+            clock.part_of_day(s.started)
+        )
+    };
+    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+    for s in &sessions {
+        *seen.entry(day_part(s)).or_insert(0) += 1;
+    }
+    for s in &mut sessions {
+        if seen[&day_part(s)] > 1 {
+            s.label = format!("{} · from {}", s.label, clock.time_label(s.started));
+        }
+    }
+    sessions
 }
 
 /// One Story per Logic alternative.
-pub fn logic_stories(project: &LogicProject, root: &Path, clock: Clock) -> Vec<Story> {
+pub fn logic_stories(project: &LogicProject, root: &Path, clock: &Clock) -> Vec<Story> {
     let facts = DawFacts::logic(project.kind);
     let prefix = match project.kind {
         LogicKind::Logic => "logic",
         LogicKind::GarageBand => "garageband",
     };
-    let song_id = SongId(format!(
-        "{prefix}:{}",
-        relative_id(&project.bundle_path, root)
-    ));
+    let song_id = song_id(prefix, &relative_key(&project.bundle_path, root));
     let many = project.alternatives.len() > 1;
 
+    // Logic doesn't record which alternative another was made from, so
+    // they are siblings, not a tree.
     let family = many.then(|| Family {
         members: project
             .alternatives
@@ -783,12 +975,8 @@ pub fn logic_stories(project: &LogicProject, root: &Path, clock: Clock) -> Vec<S
                 song_id: song_id.clone(),
                 story_id: Some(StoryId(format!("{song_id}#{}", alt.name))),
                 title: format!("{} · Alternative {}", project.name, i + 1),
-                relation: if i == 0 {
-                    Relation::Original
-                } else {
-                    Relation::Alternative
-                },
-                parent: if i == 0 { None } else { Some(0) },
+                relation: Relation::Alternative,
+                parent: None,
                 last_worked: Some(mtime(&alt.current)),
                 is_current: false,
             })
@@ -825,7 +1013,8 @@ pub fn logic_stories(project: &LogicProject, root: &Path, clock: Clock) -> Vec<S
                 },
                 path: alt.current.clone(),
             });
-            // Real save order is by time; slot names are only a tiebreak.
+            // Logic's backup slots are a ring: slot order is not save order
+            // once it wraps. Time is.
             saves.sort_by_key(|s| s.at);
 
             let family = family.clone().map(|mut f| {
@@ -852,14 +1041,14 @@ pub fn logic_stories(project: &LogicProject, root: &Path, clock: Clock) -> Vec<S
 }
 
 /// One Story for an Ableton lineage (a set and its `Backup/` autosaves).
-pub fn ableton_story(lineage: &AbletonLineage, root: &Path, clock: Clock) -> Story {
+pub fn ableton_story(lineage: &AbletonLineage, root: &Path, clock: &Clock) -> Story {
     let dir = lineage
         .saves
         .first()
         .and_then(|p| p.parent())
-        .map(|p| relative_id(p, root))
+        .map(|p| relative_key(p, root))
         .unwrap_or_default();
-    let song_id = SongId(format!("ableton:{dir}/{}", lineage.name));
+    let song_id = song_id("ableton", &format!("{dir}/{}", lineage.name));
     let mut saves: Vec<Save> = lineage
         .saves
         .iter()
@@ -912,13 +1101,14 @@ fn shelf_card(stories: &[Story]) -> Option<ShelfCard> {
                 n => format!("{n} changes Wit can see in your last session"),
             }
         }
-        _ => "1 moment kept so far".to_string(),
+        _ => "1 moment so far".to_string(),
     };
     let mut story_ids: Vec<(Option<Timestamp>, StoryId)> = stories
         .iter()
         .map(|s| (s.header.last_worked, s.id.clone()))
         .collect();
     story_ids.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    let seed = u32::try_from(fnv1a64(&newest.song_id.0) & 0xffff_ffff).unwrap_or(0);
     Some(ShelfCard {
         song_id: newest.song_id.clone(),
         title: newest.header.title.clone(),
@@ -931,9 +1121,7 @@ fn shelf_card(stories: &[Story]) -> Option<ShelfCard> {
             .map(|m| m.label.clone()),
         moments_kept,
         copies,
-        artwork: Artwork::Generated {
-            seed: fnv1a(&newest.song_id.0),
-        },
+        artwork: Artwork::Generated { seed },
         digest,
         story_ids: story_ids.into_iter().map(|(_, id)| id).collect(),
     })

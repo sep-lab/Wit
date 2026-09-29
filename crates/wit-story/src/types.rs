@@ -6,8 +6,11 @@
 //! Three rules shape these types:
 //!
 //! - **No paths.** A Story may be pasted into a share page or a pilot
-//!   report, so it carries file *names* only. The app resolves a
-//!   [`SongId`] to a location through its own IPC, never through a Story.
+//!   report, so it carries file *names* only, and ids are opaque (a DAW
+//!   prefix plus a hash of the location, never the location itself). The
+//!   app resolves a [`SongId`] to a location through its own IPC. The one
+//!   exception is [`TrustPanel::watched_folders`], which is shown only on the
+//!   owner's own screen and never copied into a share page or report.
 //! - **Text is rendered here, once.** Every musician-facing string (session
 //!   labels, sentences, capability notes) is produced by this crate, so the
 //!   vocabulary rules are enforced in one place. Structured fields sit next
@@ -19,6 +22,12 @@
 //!
 //! Timestamps are Unix seconds (UTC). Labels are rendered with the viewer's
 //! UTC offset, which the caller passes in.
+//!
+//! **Compatibility.** Clients must ignore fields they don't know and treat
+//! an enum variant they don't know as "other" (render the text, skip the
+//! styling). Adding a field or a variant is therefore not a breaking
+//! change; removing or renaming one, or changing what a field means, is,
+//! and bumps [`SCHEMA_VERSION`].
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -153,6 +162,9 @@ pub struct SongHeader {
     /// "Logic · 98 BPM · C minor · last worked Thu 23:05".
     pub subtitle: String,
     pub kept: KeptSummary,
+    /// The family pill: "2 alternatives of this song", "3 copies of this
+    /// song". `None` when the song has no family.
+    pub family_label: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -161,7 +173,12 @@ pub struct KeptSummary {
     /// How many saves the DAW itself keeps (Logic keeps 10 backups, Live 10
     /// autosaves per set). `None` when unknown.
     pub daw_keeps: Option<u32>,
-    /// "41 moments kept · Logic keeps 10".
+    /// How many of `moments` exist only because Wit kept a copy (the DAW
+    /// has since recycled them).
+    pub kept_by_wit: u32,
+    /// Credits whoever actually kept the saves: "41 moments kept · Logic
+    /// keeps 10" once Wit has kept some, "10 moments from Logic's own
+    /// backups" while every moment is still the DAW's.
     pub label: String,
 }
 
@@ -206,10 +223,20 @@ pub enum DurationSource {
 /// One kept save.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Moment {
+    /// Stable across new saves: derived from the save's own time, never its
+    /// position (Logic's backups are a ring, so positions shift).
     pub id: MomentId,
     pub at: Timestamp,
     /// "Thu 23:05".
     pub label: String,
+    /// The change card's title: "What changed at Thu 23:05", "Routine
+    /// save", "The oldest moment", "Wit couldn't read this save".
+    pub heading: String,
+    /// "compared with the save at Thu 22:41".
+    pub subheading: String,
+    /// The moment this one was compared with — usually the one before, but
+    /// after an unreadable save it is the last one Wit could read.
+    pub compared_with: Option<MomentId>,
     pub source: MomentSource,
     /// "Logic backup 04", "current save", "kept by Wit".
     pub source_label: String,
@@ -217,8 +244,12 @@ pub struct Moment {
     /// How much changed, for the timeline tick's height: the number of
     /// sentences. 0 for a routine save.
     pub weight: u32,
-    /// Compared with the moment before it in this Story.
+    /// Compared with [`Moment::compared_with`].
     pub sentences: Vec<Sentence>,
+    /// A one-line digest when there are many sentences ("14 changes Wit can
+    /// see: 9 added, 3 removed, 2 renamed"), so the card and timeline stay
+    /// readable on a busy save. `None` for three sentences or fewer.
+    pub summary: Option<String>,
     /// The line shown when there are no sentences ("No change Wit can see.
     /// Probably a mix move, or you just hit save. Wit kept it anyway.").
     pub note: Option<String>,
@@ -226,6 +257,21 @@ pub struct Moment {
     pub track_heat: Vec<TrackHeat>,
     /// Source audio behind the new parts, for "Listen to the new parts".
     pub listen: Vec<ListenRef>,
+    /// Which of the change card's actions work for this moment today.
+    pub actions: Actions,
+}
+
+/// The change card's three actions. `false` means "show it disabled", not
+/// "hide it": each one turns on as the feature behind it lands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Actions {
+    /// "Listen to the new parts": there is source audio to play.
+    pub listen: bool,
+    /// "Open this moment as a copy": restore is enabled for this DAW
+    /// (ADR-0007: only after the restored copy is shown to open in it).
+    pub open_as_copy: bool,
+    /// "Send to a friend": the share page can be made.
+    pub send: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -288,8 +334,11 @@ pub struct Sentence {
     pub text: String,
     /// The same text, split so a UI can style names without parsing.
     pub spans: Vec<Span>,
-    /// The track this sentence is about, when known.
+    /// The track this sentence is about, when known (its display name).
     pub track: Option<String>,
+    /// Index into [`Story::tracks`] — the heat-strip row — when Wit knows
+    /// exactly which row. Two tracks with the same name get `None`.
+    pub lane: Option<u32>,
     pub place: Option<Place>,
     /// "bars 17–32 · Verse 2", "whole song", "about bar 9".
     pub place_label: Option<String>,
@@ -315,7 +364,10 @@ pub enum SpanKind {
     File,
     Plugin,
     Marker,
-    /// A number with its unit ("124 BPM", "−6.0 dB").
+    /// A name the musician chose, where Wit can't tell what it names yet
+    /// (Logic's track list mixes track and MIDI region names).
+    Name,
+    /// A number with its unit ("124 BPM", "−6.0 dB", "2 bars later").
     Value,
 }
 
@@ -346,7 +398,9 @@ pub enum Icon {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Place {
     WholeSong,
-    /// 1-based bars. `end` is inclusive.
+    /// 1-based bars; `end` is inclusive. A fractional value is a fraction
+    /// of a bar (17.5 = halfway through bar 17), not bar.beat; labels show
+    /// the bar it falls in.
     Bars {
         start: f64,
         end: Option<f64>,
@@ -395,6 +449,8 @@ pub struct Comparison {
     pub subheading: String,
     pub verdict: Verdict,
     pub sentences: Vec<Sentence>,
+    /// As [`Moment::summary`].
+    pub summary: Option<String>,
     pub note: Option<String>,
     pub track_heat: Vec<TrackHeat>,
     pub listen: Vec<ListenRef>,
@@ -511,4 +567,21 @@ pub struct PilotCounters {
     pub shares_created: u32,
     pub restores_made: u32,
     pub since: Option<Timestamp>,
+    /// Every counted event with its time, so the success metric ("two
+    /// compares in any 7-day window") can be checked, not just totalled.
+    pub events: Vec<CounterEvent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct CounterEvent {
+    pub kind: CounterKind,
+    pub at: Timestamp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CounterKind {
+    CompareOpened,
+    ShareCreated,
+    RestoreMade,
 }

@@ -29,8 +29,9 @@ Linux; every build is unsigned; there is no updater.**
    write-stability debounce, DAW-running detection, reveal in Finder / Explorer / the file
    manager, open with the DAW, clone-on-write copies, and path handling (NFC Unicode,
    Windows long paths, case-insensitive volumes). The app (`app/`, Tauri 2 + Svelte 5)
-   is its own Cargo workspace and talks to the engine only through the Story contract
-   (`crates/wit-story`).
+   is its own Cargo workspace. It reads what to show through the Story contract
+   (`crates/wit-story`) and acts through a small set of typed commands (compare two
+   moments, restore as a copy, count a compare).
 2. **What each OS gets at pilot:**
 
    | OS | "What changed" in words | Every save kept + restore as copy | Bounce compare |

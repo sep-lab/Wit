@@ -5,6 +5,14 @@
 //! Every sentence is built from spans, so a name the musician typed is
 //! always its own span and never mixed into Wit's wording — the UI can
 //! bold it, and the vocabulary lint (`vocab.rs`) checks only Wit's words.
+//! Names other than track and plugin names are quoted in the plain text
+//! ("Added clip 'verse rhodes' on Rhodes") so copy-as-text reads
+//! unambiguously.
+//!
+//! Honesty rules enforced here: an [`Confidence::Inferred`] sentence always
+//! says "Probably"; a position Wit had to assume something to compute says
+//! "about"; a number that isn't finite (a malformed file) never becomes a
+//! place or a value.
 
 use crate::types::{Confidence, Icon, Place, Sentence, Span, SpanKind, Tier};
 use wit_model::{BarPos, ChangeRecord, MixField, MixValue, TrackKind};
@@ -13,8 +21,9 @@ use wit_model::{BarPos, ChangeRecord, MixField, MixValue, TrackKind};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SentenceContext {
     pub tier: Tier,
-    /// Beats per bar, for converting Ableton's beat positions to bars.
-    /// `None` = the time signature wasn't read: assume 4 and say "about".
+    /// Quarter-note beats per bar (numerator × 4 / denominator), for
+    /// converting Ableton's beat positions to bars. `None` = the time
+    /// signature wasn't read: assume 4 and say "about".
     pub beats_per_bar: Option<f64>,
 }
 
@@ -32,8 +41,22 @@ impl Builder {
         self
     }
 
+    fn value(mut self, text: &str) -> Self {
+        self.push(SpanKind::Value, text);
+        self
+    }
+
+    /// A name the musician chose. Track and plugin names stand alone (the
+    /// UI styles them); every other kind is quoted in the plain text.
     fn name(mut self, kind: SpanKind, text: &str) -> Self {
+        let quoted = !matches!(kind, SpanKind::Track | SpanKind::Plugin | SpanKind::Value);
+        if quoted {
+            self.push(SpanKind::Plain, "'");
+        }
         self.push(kind, text);
+        if quoted {
+            self.push(SpanKind::Plain, "'");
+        }
         self
     }
 
@@ -60,6 +83,7 @@ impl Builder {
             text,
             spans: self.spans,
             track: None,
+            lane: None,
             place: None,
             place_label: None,
             confidence: Confidence::Exact,
@@ -97,16 +121,19 @@ impl Sentence {
         self.place_label = Some(label);
         self
     }
+}
 
-    pub(crate) fn inferred(mut self) -> Self {
-        self.confidence = Confidence::Inferred;
-        self
-    }
+/// `Some(x)` only for a finite number.
+fn finite(x: f64) -> Option<f64> {
+    x.is_finite().then_some(x)
 }
 
 /// A number the way a musician writes it: `124`, not `124.0`; at most two
 /// decimals.
 pub fn friendly_num(x: f64) -> String {
+    if !x.is_finite() {
+        return "?".to_string();
+    }
     if x.fract() == 0.0 && x.abs() < 1e15 {
         return format!("{}", x as i64);
     }
@@ -117,6 +144,9 @@ pub fn friendly_num(x: f64) -> String {
 /// Linear gain (Live's volume: 1.0 = 0 dB) to a dB string with a real
 /// minus sign.
 pub fn gain_to_db(linear: f64) -> String {
+    if !linear.is_finite() {
+        return "? dB".to_string();
+    }
     if linear <= 0.0 {
         return "−∞ dB".to_string();
     }
@@ -132,13 +162,17 @@ pub fn gain_to_db(linear: f64) -> String {
     }
 }
 
-/// Live's pan (−1 … 1) as L/C/R.
+/// Live's pan (−1 … 1) the way Live's pan knob shows it: "50L" … "C" …
+/// "50R".
 pub fn pan_label(pan: f64) -> String {
-    let pct = (pan * 100.0).round() as i64;
-    match pct {
+    if !pan.is_finite() {
+        return "?".to_string();
+    }
+    let v = (pan * 50.0).round() as i64;
+    match v {
         0 => "C".to_string(),
-        p if p < 0 => format!("L{}", -p),
-        p => format!("R{p}"),
+        v if v < 0 => format!("{}L", -v),
+        v => format!("{v}R"),
     }
 }
 
@@ -152,11 +186,16 @@ fn place_label(place: &Place) -> String {
             section,
         } => {
             let about = if *approximate { "about " } else { "" };
+            let first = start.floor();
             let bars = match end {
-                Some(e) if (e - start).abs() >= 1.0 => {
-                    format!("{about}bars {}–{}", friendly_num(*start), friendly_num(*e))
+                Some(e) if e.floor() > first => {
+                    format!(
+                        "{about}bars {}–{}",
+                        friendly_num(first),
+                        friendly_num(e.floor())
+                    )
                 }
-                _ => format!("{about}bar {}", friendly_num(*start)),
+                _ => format!("{about}bar {}", friendly_num(first)),
             };
             match section {
                 Some(s) => format!("{bars} · {s}"),
@@ -166,13 +205,13 @@ fn place_label(place: &Place) -> String {
     }
 }
 
-fn bars_from_pos(pos: &BarPos) -> Place {
-    Place::Bars {
-        start: pos.bar,
+fn bars_from_pos(pos: &BarPos) -> Option<Place> {
+    Some(Place::Bars {
+        start: finite(pos.bar)?,
         end: None,
         approximate: pos.approximate,
         section: None,
-    }
+    })
 }
 
 fn track_kind_word(kind: TrackKind) -> &'static str {
@@ -192,38 +231,75 @@ fn plural(n: usize, one: &str, many: &str) -> String {
     }
 }
 
-/// Ableton's `CurrentStart`/`CurrentEnd` are beats. Converted to 1-based
-/// bars; approximate when the meter wasn't read.
-fn beats_to_place(ctx: &SentenceContext, start_beats: f64, end_beats: Option<f64>) -> Place {
+/// Ableton's `CurrentStart`/`CurrentEnd` are quarter-note beats. Converted
+/// to 1-based bars; approximate when the meter wasn't read. `None` for a
+/// non-finite position.
+fn beats_to_place(
+    ctx: &SentenceContext,
+    start_beats: f64,
+    end_beats: Option<f64>,
+) -> Option<Place> {
+    let start_beats = finite(start_beats)?;
     let (bpb, approximate) = match ctx.beats_per_bar {
-        Some(b) if b > 0.0 => (b, false),
+        Some(b) if b.is_finite() && b > 0.0 => (b, false),
         _ => (4.0, true),
     };
     let start = (start_beats / bpb).floor() + 1.0;
     // `end` is exclusive in beats; the last bar touched is inclusive.
-    let end = end_beats.map(|e| ((e / bpb).ceil()).max(start));
-    Place::Bars {
+    let end = end_beats
+        .and_then(finite)
+        .map(|e| (e / bpb).ceil().max(start));
+    Some(Place::Bars {
         start,
         end,
         approximate,
         section: None,
-    }
+    })
 }
 
-/// The sentence for one change record.
+/// True when every number in the record is finite. A record carrying NaN
+/// or infinity (a malformed file) is dropped rather than rendered.
+pub fn record_is_finite(record: &ChangeRecord) -> bool {
+    let nums: Vec<f64> = match record {
+        ChangeRecord::TempoChanged { from_bpm, to_bpm } => vec![*from_bpm, *to_bpm],
+        ChangeRecord::MixChanged { from, to, .. } => [from, to]
+            .iter()
+            .filter_map(|v| match v {
+                MixValue::Num(x) => Some(*x),
+                MixValue::Text(_) => None,
+            })
+            .collect(),
+        ChangeRecord::ClipAdded { start_bar, .. } | ChangeRecord::ClipRemoved { start_bar, .. } => {
+            vec![*start_bar]
+        }
+        ChangeRecord::ClipRangeChanged {
+            from_start,
+            from_end,
+            to_start,
+            to_end,
+            ..
+        } => vec![*from_start, *from_end, *to_start, *to_end],
+        ChangeRecord::RegionMoved { from, to, .. } => vec![from.bar, to.bar],
+        ChangeRecord::RegionTrimmed {
+            from_bars, to_bars, ..
+        } => vec![*from_bars, *to_bars],
+        _ => vec![],
+    };
+    nums.iter().all(|x| x.is_finite())
+}
+
+/// The sentence for one change record. Callers drop records that fail
+/// [`record_is_finite`] first.
 pub fn sentence(record: &ChangeRecord, ctx: &SentenceContext) -> Sentence {
     let tier = ctx.tier;
     match record {
         ChangeRecord::TempoChanged { from_bpm, to_bpm } => Builder::new()
             .plain("Tempo ")
-            .name(
-                SpanKind::Value,
-                &format!(
-                    "{} → {} BPM",
-                    friendly_num(*from_bpm),
-                    friendly_num(*to_bpm)
-                ),
-            )
+            .value(&format!(
+                "{} → {} BPM",
+                friendly_num(*from_bpm),
+                friendly_num(*to_bpm)
+            ))
             .finish(Icon::Tempo, tier),
         ChangeRecord::SampleRenamed { old, new, count } => {
             let s = Builder::new()
@@ -232,7 +308,9 @@ pub fn sentence(record: &ChangeRecord, ctx: &SentenceContext) -> Sentence {
                 .plain(" renamed to ")
                 .name(SpanKind::File, new);
             let s = if *count > 1 {
-                s.plain(&format!(" ({})", plural(*count, "clip", "clips")))
+                s.plain(" (")
+                    .value(&plural(*count, "clip", "clips"))
+                    .plain(")")
             } else {
                 s
             };
@@ -296,7 +374,7 @@ pub fn sentence(record: &ChangeRecord, ctx: &SentenceContext) -> Sentence {
             };
             Builder::new()
                 .plain(verb)
-                .plain(&plural(n, "automation lane", "automation lanes"))
+                .value(&plural(n, "automation lane", "automation lanes"))
                 .plain(if to > from { " on " } else { " from " })
                 .name(SpanKind::Track, track)
                 .finish(Icon::Automation, tier)
@@ -310,7 +388,7 @@ pub fn sentence(record: &ChangeRecord, ctx: &SentenceContext) -> Sentence {
             };
             Builder::new()
                 .plain(verb)
-                .plain(&plural(n, "note", "notes"))
+                .value(&plural(n, "note", "notes"))
                 .plain(if to > from { " on " } else { " from " })
                 .name(SpanKind::Track, track)
                 .finish(Icon::Midi, tier)
@@ -327,7 +405,7 @@ pub fn sentence(record: &ChangeRecord, ctx: &SentenceContext) -> Sentence {
             .name(SpanKind::Track, track)
             .finish(Icon::Add, tier)
             .on(track)
-            .at(Some(beats_to_place(ctx, *start_bar, None))),
+            .at(beats_to_place(ctx, *start_bar, None)),
         ChangeRecord::ClipRemoved {
             track,
             label,
@@ -339,7 +417,7 @@ pub fn sentence(record: &ChangeRecord, ctx: &SentenceContext) -> Sentence {
             .name(SpanKind::Track, track)
             .finish(Icon::Remove, tier)
             .on(track)
-            .at(Some(beats_to_place(ctx, *start_bar, None))),
+            .at(beats_to_place(ctx, *start_bar, None)),
         ChangeRecord::ClipRangeChanged {
             track,
             label,
@@ -388,40 +466,37 @@ pub fn sentence(record: &ChangeRecord, ctx: &SentenceContext) -> Sentence {
         ChangeRecord::KeyChanged { from, to } => match (from, to) {
             (None, Some(t)) => Builder::new()
                 .plain("Set the key to ")
-                .name(SpanKind::Value, t)
+                .value(t)
                 .finish(Icon::Key, tier),
             (Some(f), None) => Builder::new()
                 .plain("Cleared the key (was ")
-                .name(SpanKind::Value, f)
+                .value(f)
                 .plain(")")
                 .finish(Icon::Key, tier),
             (f, t) => Builder::new()
                 .plain("Key ")
-                .name(
-                    SpanKind::Value,
-                    &format!(
-                        "{} → {}",
-                        f.as_deref().unwrap_or("none"),
-                        t.as_deref().unwrap_or("none")
-                    ),
-                )
+                .value(&format!(
+                    "{} → {}",
+                    f.as_deref().unwrap_or("none"),
+                    t.as_deref().unwrap_or("none")
+                ))
                 .finish(Icon::Key, tier),
         },
         ChangeRecord::TimeSignatureChanged { from, to } => Builder::new()
             .plain("Time signature ")
-            .name(SpanKind::Value, &format!("{from} → {to}"))
+            .value(&format!("{from} → {to}"))
             .finish(Icon::Meter, tier),
         ChangeRecord::TrackCountChanged { from, to } => Builder::new()
             .plain("Track count ")
-            .name(SpanKind::Value, &format!("{from} → {to}"))
+            .value(&format!("{from} → {to}"))
             .finish(Icon::Tracks, tier),
         ChangeRecord::RegionAdded { track, name, at } => {
             region_with_track("Added region ", name, track, " on ", Icon::Add, tier)
-                .at(at.as_ref().map(bars_from_pos))
+                .at(at.as_ref().and_then(bars_from_pos))
         }
         ChangeRecord::RegionRemoved { track, name, at } => {
             region_with_track("Removed region ", name, track, " from ", Icon::Remove, tier)
-                .at(at.as_ref().map(bars_from_pos))
+                .at(at.as_ref().and_then(bars_from_pos))
         }
         ChangeRecord::RegionMoved {
             track,
@@ -437,15 +512,21 @@ pub fn sentence(record: &ChangeRecord, ctx: &SentenceContext) -> Sentence {
             } else {
                 "bars"
             };
-            let s = region_with_track("Moved ", name, track, " on ", Icon::Move, tier)
-                .push_value(&format!(" {} {unit} {direction}", friendly_num(amount)));
             let about = if to.approximate || from.approximate {
                 "about "
             } else {
                 ""
             };
-            let label = format!("now {about}bar {}", friendly_num(to.bar));
-            s.at(Some(bars_from_pos(to))).with_label(label)
+            let s = region_builder("Moved ", name, track, " on ")
+                .plain(" ")
+                .value(&format!(
+                    "{about}{} {unit} {direction}",
+                    friendly_num(amount)
+                ))
+                .finish(Icon::Move, tier)
+                .on_opt(track);
+            let label = format!("now {about}bar {}", friendly_num(to.bar.floor()));
+            s.at(bars_from_pos(to)).with_label(label)
         }
         ChangeRecord::RegionTrimmed {
             track,
@@ -458,15 +539,18 @@ pub fn sentence(record: &ChangeRecord, ctx: &SentenceContext) -> Sentence {
             } else {
                 "Lengthened "
             };
-            region_with_track(verb, name, track, " on ", Icon::Trim, tier).push_value(&format!(
-                " to {} bars (was {})",
-                friendly_num(*to_bars),
-                friendly_num(*from_bars)
-            ))
+            region_builder(verb, name, track, " on ")
+                .plain(" to ")
+                .value(&format!("{} bars", friendly_num(*to_bars)))
+                .plain(" (was ")
+                .value(&friendly_num(*from_bars))
+                .plain(")")
+                .finish(Icon::Trim, tier)
+                .on_opt(track)
         }
         ChangeRecord::RegionDuplicated { track, name, at } => {
             region_with_track("Duplicated ", name, track, " on ", Icon::Duplicate, tier)
-                .at(at.as_ref().map(bars_from_pos))
+                .at(at.as_ref().and_then(bars_from_pos))
         }
         ChangeRecord::AudioFileAdded { name } => Builder::new()
             .plain("New audio file ")
@@ -481,7 +565,7 @@ pub fn sentence(record: &ChangeRecord, ctx: &SentenceContext) -> Sentence {
             .plain("Added marker ")
             .name(SpanKind::Marker, name)
             .finish(Icon::Marker, tier)
-            .at(at.as_ref().map(bars_from_pos)),
+            .at(at.as_ref().and_then(bars_from_pos)),
         ChangeRecord::MarkerRemoved { name } => Builder::new()
             .plain("Removed marker ")
             .name(SpanKind::Marker, name)
@@ -517,44 +601,40 @@ pub fn sentence(record: &ChangeRecord, ctx: &SentenceContext) -> Sentence {
 
 /// Logic's track list mixes track names with MIDI region names until the
 /// Logic lane pairs them (`karT` ↔ `qeSM`), so these say "track or MIDI
-/// region" rather than claim which.
+/// region", use the neutral [`SpanKind::Name`], and claim no track.
 pub fn logic_name_added(name: &str, tier: Tier) -> Sentence {
     Builder::new()
         .plain("New track or MIDI region ")
-        .name(SpanKind::Track, name)
+        .name(SpanKind::Name, name)
         .finish(Icon::Add, tier)
-        .on(name)
 }
 
 pub fn logic_name_removed(name: &str, tier: Tier) -> Sentence {
     Builder::new()
         .plain("Removed track or MIDI region ")
-        .name(SpanKind::Track, name)
+        .name(SpanKind::Name, name)
         .finish(Icon::Remove, tier)
-        .on(name)
 }
 
-/// One name gone and one new name in the same save, read as a rename.
-/// That reading is Wit's inference, and the sentence is marked so.
+/// One name gone and one new name in the same save, read as a rename. That
+/// reading is Wit's inference, so the words say "Probably" and the
+/// confidence says `Inferred`.
 pub fn logic_name_renamed(old: &str, new: &str, tier: Tier) -> Sentence {
-    Builder::new()
-        .plain("Renamed ")
-        .name(SpanKind::Track, old)
+    let mut s = Builder::new()
+        .plain("Probably renamed ")
+        .name(SpanKind::Name, old)
         .plain(" to ")
-        .name(SpanKind::Track, new)
-        .finish(Icon::Rename, tier)
-        .on(new)
-        .inferred()
+        .name(SpanKind::Name, new)
+        .finish(Icon::Rename, tier);
+    s.confidence = Confidence::Inferred;
+    s
 }
 
-impl Sentence {
-    fn push_value(mut self, text: &str) -> Self {
-        self.spans.push(Span {
-            kind: SpanKind::Plain,
-            text: text.to_string(),
-        });
-        self.text.push_str(text);
-        self
+fn region_builder(verb: &str, name: &str, track: &Option<String>, preposition: &str) -> Builder {
+    let b = Builder::new().plain(verb).name(SpanKind::Region, name);
+    match track {
+        Some(t) => b.plain(preposition).name(SpanKind::Track, t),
+        None => b,
     }
 }
 
@@ -566,12 +646,9 @@ fn region_with_track(
     icon: Icon,
     tier: Tier,
 ) -> Sentence {
-    let s = Builder::new().plain(verb).name(SpanKind::Region, name);
-    let s = match track {
-        Some(t) => s.plain(preposition).name(SpanKind::Track, t),
-        None => s,
-    };
-    s.finish(icon, tier).on_opt(track)
+    region_builder(verb, name, track, preposition)
+        .finish(icon, tier)
+        .on_opt(track)
 }
 
 fn mix_sentence(
@@ -586,24 +663,18 @@ fn mix_sentence(
             .plain("Volume on ")
             .name(SpanKind::Track, track)
             .plain(": ")
-            .name(
-                SpanKind::Value,
-                &format!(
-                    "{} → {}",
-                    gain_to_db(*a).trim_end_matches(" dB"),
-                    gain_to_db(*b)
-                ),
-            )
+            .value(&format!(
+                "{} → {}",
+                gain_to_db(*a).trim_end_matches(" dB"),
+                gain_to_db(*b)
+            ))
             .finish(Icon::Mix, tier)
             .on(track),
         (MixField::Pan, MixValue::Num(a), MixValue::Num(b)) => Builder::new()
             .plain("Pan on ")
             .name(SpanKind::Track, track)
             .plain(": ")
-            .name(
-                SpanKind::Value,
-                &format!("{} → {}", pan_label(*a), pan_label(*b)),
-            )
+            .value(&format!("{} → {}", pan_label(*a), pan_label(*b)))
             .finish(Icon::Mix, tier)
             .on(track),
         (MixField::OutputEnabled, _, MixValue::Text(t)) => {
@@ -668,7 +739,7 @@ fn clip_range_sentence(
         .name(SpanKind::Track, track)
         .finish(icon, tier)
         .on(track)
-        .at(Some(place))
+        .at(place)
 }
 
 #[cfg(test)]
@@ -697,8 +768,12 @@ mod tests {
         );
         let joined: String = s.spans.iter().map(|x| x.text.as_str()).collect();
         assert_eq!(joined, s.text);
-        assert_eq!(s.text, "Moved havoc bass on Bass 2 bars later");
+        assert_eq!(s.text, "Moved 'havoc bass' on Bass 2 bars later");
         assert_eq!(s.place_label.as_deref(), Some("now bar 9"));
+        assert!(s
+            .spans
+            .iter()
+            .any(|x| x.kind == SpanKind::Value && x.text == "2 bars later"));
     }
 
     #[test]
@@ -713,13 +788,14 @@ mod tests {
     }
 
     #[test]
-    fn volume_is_in_db_and_pan_in_l_c_r() {
+    fn volume_is_in_db_and_pan_as_live_shows_it() {
         assert_eq!(gain_to_db(1.0), "0.0 dB");
         assert_eq!(gain_to_db(0.7943282127), "−2.0 dB");
         assert_eq!(gain_to_db(0.0), "−∞ dB");
-        assert_eq!(pan_label(-0.15), "L15");
+        assert_eq!(pan_label(-1.0), "50L");
+        assert_eq!(pan_label(-0.15), "8L");
         assert_eq!(pan_label(0.0), "C");
-        assert_eq!(pan_label(0.5), "R50");
+        assert_eq!(pan_label(1.0), "50R");
         assert_eq!(
             text(ChangeRecord::MixChanged {
                 track: "Rhodes".into(),
@@ -741,6 +817,7 @@ mod tests {
             },
             &LIVE,
         );
+        assert_eq!(s.text, "Added clip 'verse' on Rhodes");
         assert_eq!(s.place_label.as_deref(), Some("bar 5"));
         assert_eq!(s.confidence, Confidence::Exact);
 
@@ -758,6 +835,45 @@ mod tests {
         );
         assert_eq!(s.place_label.as_deref(), Some("about bar 5"));
         assert_eq!(s.confidence, Confidence::Approximate);
+    }
+
+    #[test]
+    fn fractional_bars_label_the_bar_they_fall_in() {
+        let s = sentence(
+            &ChangeRecord::MarkerAdded {
+                name: "Chorus".into(),
+                at: Some(BarPos::exact(17.5)),
+            },
+            &LIVE,
+        );
+        assert_eq!(s.place_label.as_deref(), Some("bar 17"));
+    }
+
+    #[test]
+    fn non_finite_numbers_never_become_places() {
+        let r = ChangeRecord::ClipAdded {
+            track: "Rhodes".into(),
+            label: "verse".into(),
+            start_bar: f64::NAN,
+        };
+        assert!(!record_is_finite(&r));
+        let s = sentence(&r, &LIVE);
+        assert_eq!(s.place, None);
+        assert!(!record_is_finite(&ChangeRecord::TempoChanged {
+            from_bpm: 120.0,
+            to_bpm: f64::INFINITY
+        }));
+    }
+
+    #[test]
+    fn inferred_sentences_say_probably() {
+        let s = logic_name_renamed("Audio 7", "Synth arp", Tier::Structure);
+        assert_eq!(s.confidence, Confidence::Inferred);
+        assert_eq!(s.text, "Probably renamed 'Audio 7' to 'Synth arp'");
+        assert_eq!(
+            s.track, None,
+            "a Logic list name is not known to be a track"
+        );
     }
 
     #[test]

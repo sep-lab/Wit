@@ -72,41 +72,60 @@ fn sentence_violations(s: &Sentence, out: &mut Vec<String>) {
 }
 
 /// Every banned word in Wit's own wording anywhere in a Story. Names the
-/// musician chose are skipped (only [`SpanKind::Plain`] spans and the
-/// labels Wit renders are checked).
+/// musician chose are skipped: only [`SpanKind::Plain`] spans and the
+/// labels Wit renders are checked. (Titles like the song name are the
+/// musician's and are not checked.)
 pub fn story_violations(story: &Story) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut check = |text: &str| {
-        for w in banned_words(text) {
-            out.push(format!("'{w}' in \"{text}\""));
-        }
-    };
-    check(&story.header.daw_label);
-    check(&story.header.kept.label);
+    let mut texts: Vec<&str> = vec![
+        &story.header.daw_label,
+        &story.header.kept.label,
+        &story.header.subtitle,
+    ];
+    if let Some(l) = &story.header.lineage {
+        texts.push(l);
+    }
+    if let Some(l) = &story.header.family_label {
+        texts.push(l);
+    }
     for note in &story.capability {
-        check(&note.text);
+        texts.push(&note.text);
     }
     for session in &story.sessions {
-        check(&session.label);
+        texts.push(&session.label);
         for m in &session.moments {
-            check(&m.label);
-            check(&m.source_label);
+            texts.extend([
+                m.label.as_str(),
+                m.heading.as_str(),
+                m.subheading.as_str(),
+                m.source_label.as_str(),
+            ]);
             if let Some(n) = &m.note {
-                check(n);
+                texts.push(n);
+            }
+            if let Some(n) = &m.summary {
+                texts.push(n);
             }
         }
     }
     if let Some(o) = &story.overview {
-        check(&o.heading);
-        check(&o.subheading);
+        texts.extend([o.heading.as_str(), o.subheading.as_str()]);
         if let Some(n) = &o.note {
-            check(n);
+            texts.push(n);
+        }
+        if let Some(n) = &o.summary {
+            texts.push(n);
         }
     }
     if let Some(sr) = &story.send_ready {
-        check(&sr.headline);
+        texts.push(&sr.headline);
         for f in &sr.outside_files {
-            check(&f.reason);
+            texts.push(&f.reason);
+        }
+    }
+    let mut out = Vec::new();
+    for text in texts {
+        for w in banned_words(text) {
+            out.push(format!("'{w}' in \"{text}\""));
         }
     }
     for session in &story.sessions {
@@ -129,8 +148,14 @@ pub fn story_violations(story: &Story) -> Vec<String> {
 pub fn library_violations(library: &Library) -> Vec<String> {
     let mut out: Vec<String> = library.stories.iter().flat_map(story_violations).collect();
     for card in &library.shelf {
-        for w in banned_words(&card.digest) {
-            out.push(format!("'{w}' in shelf digest \"{}\"", card.digest));
+        let mut texts = vec![card.digest.as_str()];
+        if let Some(l) = &card.last_worked_label {
+            texts.push(l);
+        }
+        for text in texts {
+            for w in banned_words(text) {
+                out.push(format!("'{w}' in shelf text \"{text}\""));
+            }
         }
     }
     for s in &library.trust.statements {

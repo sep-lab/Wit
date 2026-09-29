@@ -12,7 +12,10 @@
 //! `WIT_UPDATE_SNAPSHOTS=1 cargo test -p wit-story --test contract`
 
 use std::path::PathBuf;
-use wit_story::{build_library, library_schema_json, to_json, Clock, Library, Timestamp, Verdict};
+use wit_story::{
+    build_library, library_schema_json, to_json, Clock, Confidence, Library, MomentSource,
+    Timestamp, Verdict,
+};
 
 /// "Now" for the fixture: Sat 2026-09-26 12:00 UTC, two days after
 /// Coastline's last session, so labels read as weekdays.
@@ -22,15 +25,15 @@ fn crate_file(rel: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(rel)
 }
 
+fn fixture_clock() -> Clock {
+    Clock::fixed(Timestamp(FIXTURE_NOW), 0)
+}
+
 fn demo_library() -> (tempfile::TempDir, Library) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("demo");
     wit_demo::build_demo_library(&root).unwrap();
-    let clock = Clock {
-        now: Timestamp(FIXTURE_NOW),
-        utc_offset_minutes: 0,
-    };
-    let lib = build_library(&root, "demo library", clock);
+    let lib = build_library(&root, "demo library", &fixture_clock());
     (dir, lib)
 }
 
@@ -45,12 +48,19 @@ fn check_snapshot(rel: &str, actual: &str) {
     let expected = std::fs::read_to_string(&path)
         .unwrap_or_default()
         .replace("\r\n", "\n");
-    assert!(
-        expected == actual,
-        "{rel} is out of date with the code. If the change is intended, run \
-         `WIT_UPDATE_SNAPSHOTS=1 cargo test -p wit-story --test contract` and \
-         review the file in your PR."
-    );
+    if expected != actual {
+        let first_diff = expected
+            .lines()
+            .zip(actual.lines())
+            .position(|(e, a)| e != a)
+            .unwrap_or_else(|| expected.lines().count().min(actual.lines().count()));
+        panic!(
+            "{rel} is out of date with the code (first difference at line {}). If the \
+             change is intended, run `WIT_UPDATE_SNAPSHOTS=1 cargo test -p wit-story \
+             --test contract` and review the file in your PR.",
+            first_diff + 1
+        );
+    }
 }
 
 #[test]
@@ -130,7 +140,7 @@ fn coastline_shows_three_saves_with_nothing_visible() {
     let story = lib
         .stories
         .iter()
-        .find(|s| s.id.0 == "logic:Logic/Coastline.logicx#000")
+        .find(|s| s.header.title == "Coastline" && s.header.daw_label == "Logic")
         .unwrap();
     let verdicts: Vec<Verdict> = story
         .sessions
@@ -147,4 +157,85 @@ fn coastline_shows_three_saves_with_nothing_visible() {
     );
     assert_eq!(story.sessions.len(), 3, "three evenings");
     assert!(story.overview.is_some(), "oldest-to-newest compare exists");
+}
+
+/// An inferred sentence always hedges in its words, not only in a field a
+/// screen reader or copy-as-text would never show.
+#[test]
+fn every_inferred_sentence_says_probably() {
+    let (_dir, lib) = demo_library();
+    let mut seen = 0;
+    for story in &lib.stories {
+        let sentences = story
+            .sessions
+            .iter()
+            .flat_map(|s| s.moments.iter().flat_map(|m| m.sentences.iter()))
+            .chain(story.overview.iter().flat_map(|o| o.sentences.iter()));
+        for s in sentences {
+            if s.confidence == Confidence::Inferred {
+                seen += 1;
+                assert!(s.text.starts_with("Probably"), "{}", s.text);
+            }
+        }
+    }
+    assert!(
+        seen > 0,
+        "the demo has an inferred rename; the check must run"
+    );
+}
+
+/// Nothing in v1 is kept by Wit, so nothing may say Wit kept it.
+#[test]
+fn only_moments_wit_kept_say_wit_kept_them() {
+    let (_dir, lib) = demo_library();
+    for story in &lib.stories {
+        assert!(
+            !story.header.kept.label.contains("kept") || story.header.kept.kept_by_wit > 0,
+            "{}",
+            story.header.kept.label
+        );
+        for m in story.sessions.iter().flat_map(|s| s.moments.iter()) {
+            if m.source != MomentSource::KeptByWit {
+                let note = m.note.as_deref().unwrap_or("");
+                assert!(!note.contains("Wit kept"), "{note}");
+            }
+        }
+    }
+}
+
+/// Logic recycles its oldest backup on every save. Moment ids must not
+/// shift when that happens, or every share pin and compare would point at
+/// a different save after the next save.
+#[test]
+fn moment_ids_survive_the_oldest_save_disappearing() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("demo");
+    wit_demo::build_demo_library(&root).unwrap();
+    let ids = |lib: &Library| -> Vec<String> {
+        lib.stories
+            .iter()
+            .find(|s| s.header.title == "Coastline" && s.header.daw_label == "Logic")
+            .unwrap()
+            .sessions
+            .iter()
+            .flat_map(|s| s.moments.iter().map(|m| m.id.0.clone()))
+            .collect()
+    };
+    let before = ids(&build_library(&root, "demo", &fixture_clock()));
+    let oldest = root.join("Logic/Coastline.logicx/Alternatives/000/Project File Backups/00");
+    std::fs::remove_dir_all(&oldest).unwrap();
+    let after = ids(&build_library(&root, "demo", &fixture_clock()));
+    assert_eq!(after.len(), before.len() - 1);
+    assert_eq!(after, before[1..].to_vec());
+}
+
+/// Ids are opaque: no folder or file name inside them.
+#[test]
+fn ids_carry_no_names() {
+    let (_dir, lib) = demo_library();
+    for story in &lib.stories {
+        for id in [&story.id.0, &story.song_id.0] {
+            assert!(!id.contains("Coastline") && !id.contains('/'), "{id}");
+        }
+    }
 }
