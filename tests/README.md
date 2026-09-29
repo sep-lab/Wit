@@ -108,12 +108,18 @@ they pass.
    them to delete the marker. Do not fix a prototype and a test in the same commit
    without saying so — `AGENTS.md` treats a moving number as a finding.
 
-## Known failures, on purpose
+## Known failures, on purpose — now fixed, kept as the doctrine's paper trail
 
-The suite has strict xfails, each pinning a real defect found while writing these tests.
-They are documented in full in the `reason=` string next to each one. In short:
+The suite used to carry **21 strict `xfail`s pinning 13 real defects** found while writing
+these tests, each documented in full in its `reason=` string.
+[PR #28](https://github.com/sep-lab/Wit/pull/28) fixed all 13, closing
+[issue #10](https://github.com/sep-lab/Wit/issues/10) — run
+`python3 -m pytest tests/ -q -rx` yourself and there are **0 `xfail`s today** (293 passed,
+13 skipped, all real-fixture/timing opt-ins). The strict-xfail rule in "Adding a test"
+above stays in force for whichever bug is found next; this table is kept as the record of
+what it caught last time, not as a list of open bugs:
 
-| Where | Defect |
+| Where | Defect (fixed by PR #28) |
 |---|---|
 | `als_semantic_diff.build_model` | Looks for `LiveSet/MasterTrack`; Live 12.3 writes `MainTrack`, so tempo is `None` on current Ableton and a tempo change is invisible |
 | `als_semantic_diff.diff_models` | Rename detection never checks that the old sample disappeared, so swapped or partially-replaced samples are reported as file renames |
@@ -157,15 +163,11 @@ same machine, used to detect quadratic behaviour, not a throughput figure.
 
 ## CI
 
-CI currently does `py_compile`, `--help`, shellcheck, an audio-file grep, a repo-size
-check and a docs link check. It does not run this suite. Wiring it up is two steps:
-
-```yaml
-- name: Tests
-  run: |
-    python3 -m pip install -r tests/requirements-dev.txt
-    pytest tests/ --cov=experiments --cov-report=term-missing
-```
+This is now wired up: `.github/workflows/ci.yml`'s `test` job runs
+`pytest tests/ --cov=experiments --cov-report=term-missing` on Python 3.9/3.11/3.13 across
+ubuntu and macOS, with the coverage floor described in that workflow's own comments, on
+top of `py_compile`, `--help`, shellcheck, an audio-file grep, a repo-size check and a
+docs link check in the other jobs.
 
 Note that CI pins Python 3.9, which `test_repo_hygiene.py` also asserts the prototypes
 still parse as. Real-fixture tests will skip there — that is expected, and the banner

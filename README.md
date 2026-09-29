@@ -207,18 +207,55 @@ Storage matches the content, because the two behave in opposite ways:
 | Source audio | written once, never changes, repeats across projects | **content-addressed**, FLAC, chunked |
 | Renders / freezes | derived (52% of one real project's audio!) | **cache namespace**, prunable |
 
-A diff you can actually read:
+A diff you can actually read. `wit diff v3 v4` below used to be a made-up example command;
+this is the real `wit-cli`, run against `wit demo-library`'s synthetic fixture library
+(Logic and Live cannot open these files — they exist only for Wit's own readers):
 
 ```
-$ wit diff v3 v4
-  MIX~    [Stem-mixing] volume: 0.794 -> 0.525
-  CLIP~   [Corpus metal] 'Wood hits' bar 480.0-495.5 -> 480.0-496.0
-  FX+     [Round] added: AutoFilter
-  SAMPLE~ 'kick_old.wav' -> 'kick_final.wav'  (418 clip references)
+$ cargo run --release -p wit-cli -- demo-library /tmp/wit-demo
+  wrote 2 Logic project(s), 1 GarageBand project(s), 1 Ableton lineage(s) — 21 version(s) total
+  these are synthetic fixtures for Wit's own readers — Logic and Live cannot open them
+  point the app at: /tmp/wit-demo
+
+$ cargo run --release -p wit-cli -- diff-als '/tmp/wit-demo/Ableton/Coastline Project/Backup/Coastline [2026-01-04 103012].als' '/tmp/wit-demo/Ableton/Coastline Project/Backup/Coastline [2026-01-04 111845].als'
+  2 semantic change(s)
+    FX+     [Rhodes] added: AutoFilter
+    CLIP~   [Rhodes] 'verse rhodes' muted
+
+$ cargo run --release -p wit-cli -- diff-als '/tmp/wit-demo/Ableton/Coastline Project/Backup/Coastline [2026-01-05 200133].als' '/tmp/wit-demo/Ableton/Coastline Project/Backup/Coastline [2026-01-05 204417].als'
+  2 semantic change(s)
+    TEMPO   120.0 -> 124.0 BPM
+    SAMPLE~ 'rhodes take 3.wav' -> 'rhodes FINAL.wav'  (1 clip reference(s))
+
+$ cargo run --release -p wit-cli -- logic-probe '/tmp/wit-demo/Logic/Coastline.logicx/Alternatives/000/Project File Backups/04/ProjectData' '/tmp/wit-demo/Logic/Coastline.logicx/Alternatives/000/Project File Backups/05/ProjectData'
+  structural change detected:
+    tempo: 120.0 -> 124.0 BPM
+  (bytes identical: false — diagnostic only, not part of the verdict above)
+
+$ cargo run --release -p wit-cli -- scan /tmp/wit-demo --data-dir /tmp/wit-demo-index
+  found 3 Logic/GarageBand project(s), 1 Ableton lineage(s) — 21 new version(s) archived
+    Coastline (logic): 10 version(s)
+    Coastline (ableton): 5 version(s)
+    Kitchen Jam (garageband): 1 version(s)
+    Night Bus (logic): 5 version(s)
+
+$ cargo run --release -p wit-cli -- dupes /tmp/wit-demo   # the demo library has no real audio; point this at your own
+  no duplicate audio found (0 file(s) scanned)
+
+$ cargo run --release -p wit-cli -- logic-report /tmp/wit-demo
+  scanned 3 project(s), 4 alternative(s), 12 consecutive save pair(s)
+  75.0% of save pairs show a structural change Wit can see (9 of 12)
+  distribution of change counts per save pair (0 = no visible structural change):
+    0 change(s): 3 pair(s)
+    1 change(s): 1 pair(s)
+    2 change(s): 7 pair(s)
+    4 change(s): 1 pair(s)
+  3 pair(s) (25.0%) are byte-different but structurally identical
 ```
 
-That last line matters: one sample rename fans out to 418 clip changes in the raw file.
-Coalescing it turned a 425-line diff into 3 readable lines.
+The `SAMPLE~` line does far more work on a real session than it does here: EXPERIMENTS.md
+§4 measured one sample rename fanning out to 418 clip changes in the raw diff, coalesced
+to a single readable line — a 425-line diff cut to 3.
 
 **And a second diff that needs no parser at all.** Align two renders, invert one, sum
 them, and measure what is left — that tells you what you can *hear* changed, for any DAW,
@@ -283,9 +320,15 @@ experiments/
   null_diff.py          audible diff between two renders (any DAW)
   flp_parse.py          FL Studio event-stream survey
   storage_bench.sh      naive vs git vs delta chain
-crates/                 the Rust core (ADR-0004) — no musician-facing behavior yet
-  wit-model/            the session model (M0 skeleton: tempo, track add/remove)
-  wit-diff/             semantic diff over two models (M0 skeleton)
+crates/                 the Rust core (ADR-0004) — the `wit` CLI, no GUI/app yet
+  wit-model/            shared session model + number formatting (byte-for-byte Python parity)
+  wit-als/              Ableton `.als` parser + semantic differ
+  wit-diff/             semantic diff types, golden-output tests
+  wit-logic/            Logic/GarageBand `ProjectData` container walker (Structure tier)
+  wit-audio/            decode, waveform peaks, null-diff — the "Ears" tier, any DAW
+  wit-index/            content-addressed store, discovery, dupes/privacy report
+  wit-demo/             synthetic demo library generator (`wit demo-library`)
+  wit-cli/              the `wit` binary: diff-als, logic-probe, scan, dupes, logic-report, demo-library
 Cargo.toml              workspace root — crates/* only, forever
 justfile                 dev/build/release recipes
 ```
@@ -296,10 +339,12 @@ justfile                 dev/build/release recipes
 set the first *shipped product*: a Logic/GarageBand-first, **read-only** macOS app —
 passive auto-history over the backups Logic already keeps on disk, plus a readable "what
 changed" comparison. No project-file write-path in this slice, so it never risks a DAW
-project. There is no installable app or `wit` binary yet — do not point this at work you
-care about. What exists today is the research below, the architecture decisions it
-justifies, the Python prototypes that produced every number, and an early Rust workspace
-(`crates/`) that does not yet do anything a musician could use.
+project. There is a `wit` CLI today (`cargo run -p wit-cli -- --help`: `diff-als`,
+`logic-probe`, `scan`, `dupes`, `logic-report`, `demo-library` — see the reproducible
+examples above) — but no packaged app, no watcher, and no GUI, so do not point it at work
+you care about. What exists today is the research below, the architecture decisions it
+justifies, the Python prototypes that produced every number, and the 8-crate Rust
+workspace (`crates/`) implementing that CLI.
 
 Production core is Rust ([ADR-0004](docs/decisions/0004-implementation-stack.md));
 `experiments/` stays dependency-free Python on purpose, so musicians and engineers can
@@ -372,31 +417,37 @@ No. Wit is the version control layer — local-first, no account, no server.
 Genuinely open problems, roughly by size. Full guide in
 **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
-**The fastest way in: [issue #10](https://github.com/sep-lab/Wit/issues/10).** The test
-suite carries **21 `xfail` cases documenting 13 real bugs** — each with the root cause
-located, the damage measured, and the fix named. For example:
-
-> *DoS in `flp_parse.parse`'s varint loop: 50 KB of `0xFF` takes 0.24 s, 100 KB takes
-> 0.91 s, 200 KB takes 3.6 s — 4× the input for 15× the time. Fix: refuse a varint longer
-> than 5 bytes.*
-
-The hard half is done and the easy half is deliberately left on the table. The markers are
-`strict`, so fixing a bug turns its test from `XPASS` into a failure until you flip the
-marker — the suite walks you through the contribution protocol on its own.
-
-```bash
-python3 -m pytest tests/ -q -rx     # read the 21 bug reports
-```
+**The fastest way in: [issue #12](https://github.com/sep-lab/Wit/issues/12).** The most
+important open question here is not technical. Logic Pro ships free, one-click,
+media-sharing branching ("Alternatives"), and on a real 30-project, 26 GB library,
+**every project has exactly one alternative — used zero times** — while the same producer
+branched instead by `Save As` into 500–700 MB full copies. Replicating that measurement on
+your own machine takes about thirty seconds (the shell loop is in the issue) and needs no
+Rust and no reverse engineering.
 
 | | Task | Why it matters |
 |---|---|---|
-| 🟢 | **Fix one of the 13 documented bugs** ([#10](https://github.com/sep-lab/Wit/issues/10)) | Reproduction and fix already written. Some are two-line changes. |
-| 🟢 | **Run the experiments on your own sessions** and report numbers | Everything so far is measured on a handful of projects. Breadth is the gap. |
+| 🟢 | **Replicate the branching-adoption finding** ([#12](https://github.com/sep-lab/Wit/issues/12)) | Not a parser question — the roadmap's whole premise rests on this |
+| 🟢 | **Run the experiments on your own sessions** and report numbers ([#4](https://github.com/sep-lab/Wit/issues/4)) | Everything so far is measured on a handful of projects. Breadth is the gap. |
 | 🟢 | **Write up how your studio actually collaborates** | Shapes the roadmap more than feature requests do |
-| 🟡 | **Model device *parameters* in the Ableton extractor** | Biggest known gap — the differ currently misses knob-only changes |
-| 🟡 | **Map more Logic `ProjectData` chunk payloads** | Container is decoded; payload schemas are not |
-| 🔴 | **Verify a Wit-merged `.als` opens in Live** | Untested, and a release gate |
-| 🔴 | **Solve the FL Studio v25 scalar keystream** | Blocks modern FL support |
+| 🟡 | **Model device *parameters* in the Ableton extractor** ([#2](https://github.com/sep-lab/Wit/issues/2)) | Biggest known gap — the differ currently misses knob-only changes |
+| 🟡 | **Map more Logic `ProjectData` chunk payloads** ([#3](https://github.com/sep-lab/Wit/issues/3)) | Container is decoded; payload schemas are not |
+| 🔴 | **Verify a Wit-merged `.als` opens in Live** ([#1](https://github.com/sep-lab/Wit/issues/1)) | Untested, and a release gate |
+| 🔴 | **Solve the FL Studio v25 scalar keystream** ([#7](https://github.com/sep-lab/Wit/issues/7)) | Blocks modern FL support |
+
+**The test suite's `xfail` doctrine, and its history.** `tests/` documents a real
+prototype bug the strict way: an `xfail` with the root cause, the measured damage, and the
+fix named in the `reason` string, so fixing it turns `XPASS` into a failure until the
+marker is removed in the same commit — see `tests/README.md`. It once carried 21 such
+markers, documenting 13 real bugs (billion-laughs XML expansion, a quadratic varint DoS in
+`flp_parse`, Live 12.3's tempo track being invisible to the differ, non-deterministic diff
+ordering, and more). [PR #28](https://github.com/sep-lab/Wit/pull/28) fixed all 13, closing
+[issue #10](https://github.com/sep-lab/Wit/issues/10) — the doctrine stays in force for
+whichever bug is found next:
+
+```bash
+python3 -m pytest tests/ -q -rx     # 293 passed, 13 skipped (real-fixture opt-ins), 0 xfail
+```
 
 You do not need to be a systems programmer. If you have shipped a session to a
 collaborator and it went badly, you have information this project needs.
