@@ -40,7 +40,11 @@ fn check_snapshot(rel: &str, actual: &str) {
         std::fs::write(&path, actual).unwrap();
         return;
     }
-    let expected = std::fs::read_to_string(&path).unwrap_or_default();
+    // A Windows checkout may convert the pinned file to CRLF; the contract
+    // is the content, not the line endings.
+    let expected = std::fs::read_to_string(&path)
+        .unwrap_or_default()
+        .replace("\r\n", "\n");
     assert!(
         expected == actual,
         "{rel} is out of date with the code. If the change is intended, run \
