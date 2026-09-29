@@ -1618,7 +1618,7 @@ dependencies = [
  "rusqlite",
  "tempfile",
  "wit-logic",
- "wit-platform",
+ "wit-privacy",
  "zstd",
 ]
 
@@ -1647,7 +1647,12 @@ dependencies = [
  "sysinfo",
  "tempfile",
  "unicode-normalization",
+ "wit-privacy",
 ]
+
+[[package]]
+name = "wit-privacy"
+version = "0.0.0"
 
 [[package]]
 name = "wit-story"

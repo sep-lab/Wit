@@ -16,6 +16,7 @@ notify = { version = "8.2", default-features = false, features = ["macos_fsevent
 reflink-copy = "0.1.30"
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 unicode-normalization = "0.1.25"
+wit-privacy = { path = "../wit-privacy" }
 
 [dev-dependencies]
 proptest = "1"

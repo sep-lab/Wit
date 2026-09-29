@@ -121,10 +121,11 @@ fn walk_audio_files(dir: &Path, visit: &mut impl FnMut(&Path)) {
 /// no `/Users/` ever in output"). Returns the offending substring on
 /// failure so a test failure is actionable, not just "false".
 ///
-/// This is `wit-platform`'s cross-platform check (macOS `/Users/…`, Linux
-/// `/home/…`, Windows `C:\Users\…` in every separator/escaping/verbatim
-/// spelling), re-exported so existing callers keep working.
-pub use wit_platform::paths::assert_no_home_paths;
+/// This is the cross-platform check from the zero-dependency `wit-privacy`
+/// crate (macOS `/Users/…`, Linux `/home/…`, Windows `C:\Users\…` in every
+/// separator/escaping/verbatim spelling), re-exported so existing callers
+/// keep working.
+pub use wit_privacy::assert_no_home_paths;
 
 #[cfg(test)]
 mod tests {
