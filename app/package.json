@@ -11,7 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint:vocab": "node scripts/lint-vocab.mjs",
-    "gen:types": "json2ts -i ../crates/wit-story/schema/library.schema.json -o src/lib/story.ts --bannerComment \"$(cat scripts/story-ts-banner.txt)\"",
+    "gen:types": "node scripts/gen-types.mjs",
     "tauri": "tauri"
   },
   "dependencies": {
