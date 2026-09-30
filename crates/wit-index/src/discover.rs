@@ -200,27 +200,35 @@ fn autosave_lineage_name(filename: &str) -> Option<String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlpProject {
     pub name: String,
-    /// The project's own current save, wherever it lives. `None` for a
-    /// **backup-only lineage** — FL's default autosave layout is one
-    /// shared `Backup/` folder per "Projects" root (probe-verified this
-    /// session: a real autosave chain lived at `<Projects
-    /// root>/Backup/<name> (autosaved at <time>).flp`, a sibling of the
-    /// project's *own* subfolder, not of the `.flp` file itself), and a
-    /// project renamed via Save As leaves its old-named autosaves with no
-    /// current file to match. Never dropped — archive-before-recycle
-    /// applies here the same way it does to every other DAW this crate
-    /// discovers.
+    /// The project's own current save, wherever it lives. Every current
+    /// `.flp` file discovery finds becomes its own [`FlpProject`] — never
+    /// merged with another one just because it shares a name, and never
+    /// dropped (see [`discover_flp_projects`]'s doc for the bug this
+    /// closed). `None` only for a **backup-only lineage**: a `Backup/`
+    /// autosave chain with no unambiguous current file under its Projects
+    /// root (the project was renamed via Save As, moved out of the Projects
+    /// root, or never saved — FL's `"untitled"`). Never dropped either —
+    /// archive-before-recycle applies here the same way it does to every
+    /// other DAW this crate discovers.
     pub current: Option<PathBuf>,
+    /// The `Backup/` folder [`FlpProject::backups`] came from, if any. An
+    /// autosave chain is one lineage name *in one `Backup/` folder* —
+    /// never merged across folders — so this is a stable identity for a
+    /// backup-only lineage however many of its autosaves FL has rotated
+    /// away.
+    pub backup_folder: Option<PathBuf>,
     /// `Backup/<name> (autosaved at <time>).flp`, oldest first **by
-    /// filesystem modification time — not by filename.** This is a
-    /// deliberate divergence from [`discover_ableton_lineages`]: Ableton's
-    /// autosave names embed a full date (`[YYYY-MM-DD HHMMSS]`), so
-    /// lexicographic order is chronological order. FL's autosave names
-    /// carry only a time of day (`"... (autosaved at 5h56)"`), no date —
-    /// measured this session on 4 real autosaves of one project: two were
-    /// named with hours that sort "later" (`"16h34"`) than a file that was
-    /// actually written a full day *earlier* than a `"5h36"`/`"7h59"`
-    /// pair. Sorting these by name would silently misorder the lineage.
+    /// filesystem modification time, not by filename, with the path as a
+    /// tie-break** when two backups report the same (or an unreadable)
+    /// modification time. This is a deliberate divergence from
+    /// [`discover_ableton_lineages`]: Ableton's autosave names embed a
+    /// full date (`[YYYY-MM-DD HHMMSS]`), so lexicographic order is
+    /// chronological order. FL's autosave names carry only a time of day
+    /// (`"... (autosaved at 5h56)"`), no date — measured this session on 4
+    /// real autosaves of one project: two were named with hours that sort
+    /// "later" (`"16h34"`) than a file that was actually written a full
+    /// day *earlier* than a `"5h36"`/`"7h59"` pair. Sorting these by name
+    /// would silently misorder the lineage.
     pub backups: Vec<PathBuf>,
 }
 
@@ -235,26 +243,42 @@ impl FlpProject {
 }
 
 /// Walk `root` for `.flp` files and FL Studio's own `Backup/<name>
-/// (autosaved at <time>).flp` autosave chain, grouped into one lineage
-/// per project name — the same grouping strategy
-/// [`discover_ableton_lineages`] uses, adapted to FL's current-file-plus-
-/// shared-Backup-folder shape rather than Ableton's flat lineage-of-equals
-/// one (see [`FlpProject`]'s doc for why).
+/// (autosaved at <time>).flp` autosave chains.
 ///
-/// **Known limitation, inherited from the same design
-/// [`discover_ableton_lineages`] already accepts:** grouping is by name
-/// alone, globally across `root`, so two unrelated projects that happen to
-/// share a filename in different folders would incorrectly merge into one
-/// lineage. Scoping backups to a per-project directory instead would avoid
-/// that, but would also miss the real, measured shape above (one shared
-/// `Backup/` folder per Projects root) — this crate matches what FL
-/// Studio actually does on disk over what would be safest in the
-/// abstract, and says so here rather than silently.
+/// **One project per current file, always — never dropped, never merged
+/// with another current file just because they share a name.** (An
+/// earlier version kept only one of several same-named current files.)
+///
+/// **One autosave chain per (`Backup/` folder, lineage name)** — FL
+/// shares one `Backup/` folder across a whole Projects root, so a folder
+/// holds many chains, but two folders' `"untitled (autosaved at …)"` files
+/// are two different projects and are never merged. A chain is *attached*
+/// to a current file only when that is unambiguous, with the Projects
+/// root being the `Backup/` folder's parent:
+///
+/// 1. Exactly one same-named current file under the Projects root ->
+///    attach to it.
+/// 2. Several -> attach to the one at FL's own save location for that
+///    name (`<root>/<name>/<name>.flp` or `<root>/<name>.flp`) if exactly
+///    one of those exists. So copying a project folder inside the
+///    Projects root (`<root>/Song copy/Song.flp`) leaves the original's
+///    chain where it was, instead of detaching it and re-archiving it as
+///    a new backup-only project.
+///
+/// A same-named file *outside* the Projects root never receives the chain:
+/// `"untitled"` is FL's own name for every unsaved project, so an
+/// unrelated `untitled.flp` in, say, Downloads would otherwise collect a
+/// Projects root's untitled autosaves. The accepted cost: a project moved
+/// out of its Projects root keeps its autosaves as a separate backup-only
+/// project. When nested Projects roots both claim one file, the nearest
+/// (deepest) root's chain wins. Every chain left unattached becomes its
+/// own backup-only [`FlpProject`] (`current: None`) — never dropped.
 pub fn discover_flp_projects(root: &Path) -> Vec<FlpProject> {
-    let mut current_by_name: std::collections::BTreeMap<String, Vec<PathBuf>> =
-        std::collections::BTreeMap::new();
-    let mut backups_by_name: std::collections::BTreeMap<String, Vec<PathBuf>> =
-        std::collections::BTreeMap::new();
+    use std::collections::BTreeMap;
+
+    let mut currents: Vec<PathBuf> = Vec::new();
+    // (Backup folder, lineage name) -> that chain's autosaves.
+    let mut chains: BTreeMap<ChainKey, Vec<PathBuf>> = BTreeMap::new();
 
     walk(root, 0, &mut |path| {
         if path.extension().and_then(|e| e.to_str()) != Some("flp") {
@@ -268,9 +292,10 @@ pub fn discover_flp_projects(root: &Path) -> Vec<FlpProject> {
             .and_then(|p| p.file_name())
             .is_some_and(|n| n == "Backup");
         if in_backup_dir {
-            if let Some(name) = flp_autosave_lineage_name(filename) {
-                backups_by_name
-                    .entry(name)
+            if let (Some(name), Some(folder)) = (flp_autosave_lineage_name(filename), path.parent())
+            {
+                chains
+                    .entry((folder.to_path_buf(), name))
                     .or_default()
                     .push(path.to_path_buf());
                 return true;
@@ -280,39 +305,132 @@ pub fn discover_flp_projects(root: &Path) -> Vec<FlpProject> {
             // through to the ordinary-current-file branch below instead
             // of being silently ignored.
         }
-        let name = filename
-            .strip_suffix(".flp")
-            .unwrap_or(filename)
-            .to_string();
-        current_by_name
-            .entry(name)
-            .or_default()
-            .push(path.to_path_buf());
+        currents.push(path.to_path_buf());
         true
     });
 
-    let mut names: std::collections::BTreeSet<String> = current_by_name.keys().cloned().collect();
-    names.extend(backups_by_name.keys().cloned());
+    let mut currents_by_name: BTreeMap<String, Vec<&PathBuf>> = BTreeMap::new();
+    for current in &currents {
+        currents_by_name
+            .entry(flp_lineage_name(current))
+            .or_default()
+            .push(current);
+    }
 
-    names
-        .into_iter()
-        .map(|name| {
-            let mut backups = backups_by_name.remove(&name).unwrap_or_default();
-            backups.sort_by_key(|p| {
-                std::fs::metadata(p)
-                    .and_then(|m| m.modified())
-                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
-            });
-            let mut currents = current_by_name.remove(&name).unwrap_or_default();
-            currents.sort(); // deterministic pick if the same name somehow occurs twice
-            let current = currents.into_iter().next();
-            FlpProject {
-                name,
-                current,
-                backups,
+    // Each chain's candidate current file (rules 1–2 in the doc above),
+    // with how deep the chain's Projects root is (nearest root wins).
+    let mut claims: BTreeMap<&PathBuf, Vec<(&ChainKey, usize)>> = BTreeMap::new();
+    for key in chains.keys() {
+        let (folder, name) = key;
+        let Some(projects_root) = folder.parent() else {
+            continue;
+        };
+        let near: Vec<&PathBuf> = currents_by_name
+            .get(name)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+            .iter()
+            .copied()
+            .filter(|c| c.starts_with(projects_root))
+            .collect();
+        let claim = match near.as_slice() {
+            [] => None,
+            [only] => Some(*only),
+            several => {
+                let r = projects_root;
+                let own = [
+                    r.join(name).join(format!("{name}.flp")),
+                    r.join(format!("{name}.flp")),
+                ];
+                let at_own: Vec<&PathBuf> = several
+                    .iter()
+                    .copied()
+                    .filter(|c| own.iter().any(|o| o == *c))
+                    .collect();
+                match at_own.as_slice() {
+                    [only] => Some(*only),
+                    _ => None,
+                }
             }
-        })
-        .collect()
+        };
+        if let Some(current) = claim {
+            let depth = projects_root.components().count();
+            claims.entry(current).or_default().push((key, depth));
+        }
+    }
+    // A current file claimed by several (nested) Projects roots' chains
+    // keeps the nearest root's, if exactly one is nearest.
+    let mut attached: BTreeMap<&PathBuf, &ChainKey> = BTreeMap::new();
+    for (current, chain_keys) in claims {
+        let deepest = chain_keys.iter().map(|(_, depth)| *depth).max();
+        let nearest: Vec<&ChainKey> = chain_keys
+            .iter()
+            .filter(|(_, depth)| Some(*depth) == deepest)
+            .map(|(key, _)| *key)
+            .collect();
+        if let [key] = nearest.as_slice() {
+            attached.insert(current, *key);
+        }
+    }
+
+    let mut projects = Vec::new();
+    let mut used: std::collections::BTreeSet<&ChainKey> = Default::default();
+    for current in &currents {
+        let chain = attached.get(current).copied();
+        if let Some(key) = chain {
+            used.insert(key);
+        }
+        projects.push(FlpProject {
+            name: flp_lineage_name(current),
+            current: Some(current.clone()),
+            backup_folder: chain.map(|(folder, _)| folder.clone()),
+            backups: chain
+                .map(|key| sort_backups(chains[key].clone()))
+                .unwrap_or_default(),
+        });
+    }
+    // Every chain not attached to a current file becomes its own
+    // backup-only project. Archive-before-recycle: never dropped.
+    for (key, paths) in &chains {
+        if used.contains(key) {
+            continue;
+        }
+        let (folder, name) = key;
+        projects.push(FlpProject {
+            name: name.clone(),
+            current: None,
+            backup_folder: Some(folder.clone()),
+            backups: sort_backups(paths.clone()),
+        });
+    }
+
+    projects
+}
+
+/// One autosave chain: its `Backup/` folder and lineage name.
+type ChainKey = (PathBuf, String);
+
+fn flp_lineage_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|f| f.to_str())
+        .and_then(|f| f.strip_suffix(".flp"))
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Oldest first by filesystem modification time, with the path itself as
+/// a deterministic tie-break when two backups report the same (or an
+/// unreadable) modification time — see [`FlpProject::backups`].
+fn sort_backups(mut backups: Vec<PathBuf>) -> Vec<PathBuf> {
+    backups.sort_by(|a, b| {
+        let mtime = |p: &Path| {
+            std::fs::metadata(p)
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+        };
+        mtime(a).cmp(&mtime(b)).then_with(|| a.cmp(b))
+    });
+    backups
 }
 
 /// If `filename` matches FL Studio's own autosave naming,
@@ -504,6 +622,157 @@ mod tests {
     }
 
     #[test]
+    fn backups_with_the_same_modification_time_are_ordered_by_path() {
+        // The sort's tie-break: equal mtimes (or unreadable ones, which
+        // read as the epoch) fall back to path order, so the chain's order
+        // never depends on directory-listing order.
+        let dir = tempfile::tempdir().unwrap();
+        let written_first = dir.path().join("Backup/Song (autosaved at 9h00).flp");
+        let written_second = dir.path().join("Backup/Song (autosaved at 10h00).flp");
+        let written_third = dir.path().join("Backup/Song (autosaved at 1h00).flp");
+        for p in [&written_first, &written_second, &written_third] {
+            touch_at(p, 1000);
+        }
+        let sorted = sort_backups(vec![
+            written_first.clone(),
+            written_second.clone(),
+            written_third.clone(),
+        ]);
+        // Byte-wise path order: "10h00" < "1h00" ('0' < 'h') < "9h00" —
+        // deterministic, not chronological (see FlpProject::backups).
+        assert_eq!(sorted, vec![written_second, written_third, written_first]);
+        // And the tie-break is total: shuffled input, same output.
+        let again = sort_backups(sorted.iter().rev().cloned().collect());
+        assert_eq!(again, sorted);
+    }
+
+    #[test]
+    fn same_named_chains_in_different_backup_folders_stay_separate() {
+        // Two Projects roots, each with FL's default "untitled" autosaves:
+        // two different projects, never one merged chain.
+        let dir = tempfile::tempdir().unwrap();
+        touch(&dir.path().join("A/Backup/untitled (autosaved at 1h00).flp"));
+        touch(&dir.path().join("A/Backup/untitled (autosaved at 2h00).flp"));
+        touch(&dir.path().join("B/Backup/untitled (autosaved at 1h00).flp"));
+
+        let mut projects = discover_flp_projects(dir.path());
+        projects.sort_by(|a, b| a.backup_folder.cmp(&b.backup_folder));
+        assert_eq!(projects.len(), 2, "{projects:?}");
+        assert_eq!(projects[0].backup_folder, Some(dir.path().join("A/Backup")));
+        assert_eq!(projects[0].backups.len(), 2);
+        assert_eq!(projects[1].backup_folder, Some(dir.path().join("B/Backup")));
+        assert_eq!(projects[1].backups.len(), 1);
+        assert!(projects.iter().all(|p| p.current.is_none()));
+    }
+
+    #[test]
+    fn each_chain_attaches_to_the_project_under_its_own_projects_root() {
+        let dir = tempfile::tempdir().unwrap();
+        touch(&dir.path().join("A/Song/Song.flp"));
+        touch(&dir.path().join("A/Backup/Song (autosaved at 1h00).flp"));
+        touch(&dir.path().join("B/Song.flp"));
+        touch(&dir.path().join("B/Backup/Song (autosaved at 1h00).flp"));
+        touch(&dir.path().join("B/Backup/Song (autosaved at 2h00).flp"));
+
+        let projects = discover_flp_projects(dir.path());
+        assert_eq!(projects.len(), 2, "{projects:?}");
+        let a = projects
+            .iter()
+            .find(|p| p.current == Some(dir.path().join("A/Song/Song.flp")))
+            .unwrap();
+        assert_eq!(a.backup_folder, Some(dir.path().join("A/Backup")));
+        assert_eq!(a.backups.len(), 1);
+        let b = projects
+            .iter()
+            .find(|p| p.current == Some(dir.path().join("B/Song.flp")))
+            .unwrap();
+        assert_eq!(b.backup_folder, Some(dir.path().join("B/Backup")));
+        assert_eq!(b.backups.len(), 2);
+    }
+
+    #[test]
+    fn copying_a_project_does_not_detach_its_backups() {
+        // FL's own layout: Projects/Song/Song.flp with the chain in
+        // Projects/Backup. A copy of the project folder inside the same
+        // Projects root, and another copy elsewhere, must leave the chain
+        // on the original — detaching it would re-archive every autosave
+        // as a new backup-only project.
+        let dir = tempfile::tempdir().unwrap();
+        let original = dir.path().join("Projects/Song/Song.flp");
+        touch(&original);
+        touch(
+            &dir.path()
+                .join("Projects/Backup/Song (autosaved at 1h00).flp"),
+        );
+        touch(&dir.path().join("Projects/Song copy/Song.flp"));
+        touch(&dir.path().join("Desktop/Song.flp"));
+
+        let projects = discover_flp_projects(dir.path());
+        assert_eq!(projects.len(), 3, "{projects:?}");
+        let with_backups: Vec<&FlpProject> =
+            projects.iter().filter(|p| !p.backups.is_empty()).collect();
+        assert_eq!(with_backups.len(), 1, "{projects:?}");
+        assert_eq!(with_backups[0].current, Some(original));
+        assert!(projects.iter().all(|p| p.current.is_some()));
+    }
+
+    #[test]
+    fn two_copies_at_neither_fl_location_leave_the_chain_on_its_own() {
+        // Nothing marks either copy as the original: attach to neither.
+        let dir = tempfile::tempdir().unwrap();
+        touch(&dir.path().join("Projects/Old/Song.flp"));
+        touch(&dir.path().join("Projects/New/Song.flp"));
+        touch(
+            &dir.path()
+                .join("Projects/Backup/Song (autosaved at 1h00).flp"),
+        );
+        let projects = discover_flp_projects(dir.path());
+        let backup_only: Vec<&FlpProject> =
+            projects.iter().filter(|p| p.current.is_none()).collect();
+        assert_eq!(backup_only.len(), 1, "{projects:?}");
+        assert_eq!(backup_only[0].backups.len(), 1);
+    }
+
+    #[test]
+    fn an_untitled_file_elsewhere_never_receives_a_projects_roots_autosaves() {
+        // "untitled" is FL's own name for any unsaved project: a stray
+        // untitled.flp outside the Projects root is not that chain's save.
+        let dir = tempfile::tempdir().unwrap();
+        touch(
+            &dir.path()
+                .join("Projects/Backup/untitled (autosaved at 1h00).flp"),
+        );
+        touch(&dir.path().join("Downloads/untitled.flp"));
+
+        let projects = discover_flp_projects(dir.path());
+        assert_eq!(projects.len(), 2, "{projects:?}");
+        let downloaded = projects
+            .iter()
+            .find(|p| p.current == Some(dir.path().join("Downloads/untitled.flp")))
+            .unwrap();
+        assert!(downloaded.backups.is_empty(), "{projects:?}");
+        let chain = projects.iter().find(|p| p.current.is_none()).unwrap();
+        assert_eq!(chain.backups.len(), 1);
+    }
+
+    #[test]
+    fn nested_projects_roots_give_a_file_the_nearest_roots_chain() {
+        let dir = tempfile::tempdir().unwrap();
+        touch(&dir.path().join("A/B/Song/Song.flp"));
+        touch(&dir.path().join("A/Backup/Song (autosaved at 1h00).flp"));
+        touch(&dir.path().join("A/B/Backup/Song (autosaved at 2h00).flp"));
+
+        let projects = discover_flp_projects(dir.path());
+        let song = projects.iter().find(|p| p.current.is_some()).unwrap();
+        assert_eq!(song.backup_folder, Some(dir.path().join("A/B/Backup")));
+        assert_eq!(
+            projects.len(),
+            2,
+            "the outer chain stays its own: {projects:?}"
+        );
+    }
+
+    #[test]
     fn a_backup_only_lineage_is_never_dropped() {
         // The project was renamed via Save As, so its old-named autosaves
         // have no current file to match — archive-before-recycle: still
@@ -532,5 +801,73 @@ mod tests {
         touch(&dir.path().join("nested/deeper/B.flp"));
         let projects = discover_flp_projects(dir.path());
         assert_eq!(projects.len(), 2);
+    }
+
+    #[test]
+    fn same_named_current_files_in_different_folders_are_never_dropped() {
+        // Reproduces the bug this fix closes: two unrelated projects that
+        // happen to share a filename used to be bucketed into one lineage
+        // and only one of them ever got archived. SongA/beat.flp and
+        // SongB/beat.flp are unrelated projects; Backup/beat.flp is a
+        // third, unrelated file that happens to live in the Backup/
+        // folder without matching FL's autosave naming (so it is an
+        // ordinary current file, not an autosave); Backup/beat (autosaved
+        // at 1h00).flp is a real autosave. All four must be discovered
+        // and none silently merged away.
+        let dir = tempfile::tempdir().unwrap();
+        touch(&dir.path().join("SongA/beat.flp"));
+        touch(&dir.path().join("SongB/beat.flp"));
+        touch(&dir.path().join("Backup/beat.flp"));
+        touch(&dir.path().join("Backup/beat (autosaved at 1h00).flp"));
+
+        let projects = discover_flp_projects(dir.path());
+
+        let all_currents: Vec<&PathBuf> =
+            projects.iter().filter_map(|p| p.current.as_ref()).collect();
+        assert_eq!(
+            all_currents.len(),
+            3,
+            "all three current files sharing the name 'beat' must be discovered: {projects:?}"
+        );
+        assert!(all_currents.contains(&&dir.path().join("SongA/beat.flp")));
+        assert!(all_currents.contains(&&dir.path().join("SongB/beat.flp")));
+        assert!(all_currents.contains(&&dir.path().join("Backup/beat.flp")));
+
+        // The name is ambiguous (three current files share it), so the
+        // one real autosave must not be silently guessed onto any of
+        // them -- it survives as its own backup-only lineage instead.
+        let total_backups: usize = projects.iter().map(|p| p.backups.len()).sum();
+        assert_eq!(
+            total_backups, 1,
+            "the one real autosave must not be dropped: {projects:?}"
+        );
+        let backup_only: Vec<&FlpProject> =
+            projects.iter().filter(|p| p.current.is_none()).collect();
+        assert_eq!(backup_only.len(), 1);
+        assert_eq!(backup_only[0].backups.len(), 1);
+    }
+
+    #[test]
+    fn an_unambiguous_current_far_from_the_backup_dir_is_still_preferred_over_a_nearer_ambiguity() {
+        // Two current files share the name "Song": one lives under the
+        // same Projects root as the Backup/ folder, the other lives
+        // entirely elsewhere in the tree. The nearby one is the
+        // unambiguous preferred match.
+        let dir = tempfile::tempdir().unwrap();
+        touch(&dir.path().join("Projects/MySong/Song.flp"));
+        touch(
+            &dir.path()
+                .join("Projects/Backup/Song (autosaved at 1h00).flp"),
+        );
+        touch(&dir.path().join("Elsewhere/Song.flp"));
+
+        let projects = discover_flp_projects(dir.path());
+        let with_backups: Vec<&FlpProject> =
+            projects.iter().filter(|p| !p.backups.is_empty()).collect();
+        assert_eq!(with_backups.len(), 1, "{projects:?}");
+        assert_eq!(
+            with_backups[0].current,
+            Some(dir.path().join("Projects/MySong/Song.flp"))
+        );
     }
 }

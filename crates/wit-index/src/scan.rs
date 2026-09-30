@@ -120,21 +120,29 @@ pub fn scan(root: &Path, store: &Store, registry: &Registry, now: i64) -> ScanRe
     for project in &flp_projects {
         // A current file's own path is already a stable, unique key (the
         // same reasoning Logic's bundle_path uses). A backup-only lineage
-        // (no current file — see FlpProject::current's doc) has no such
-        // path, so it falls back to the same synthesized-key trick the
-        // Ableton lineage loop above uses: the first backup's parent
-        // directory plus the lineage name.
-        let bundle_key = match &project.current {
-            Some(current) => current.to_string_lossy().into_owned(),
-            None => {
-                let parent = project
-                    .backups
-                    .first()
-                    .and_then(|p| p.parent())
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                format!("{parent}::{}", project.name)
-            }
+        // (no current file — see FlpProject::current's doc) is keyed by
+        // its own `Backup/` folder plus its lineage name: discovery never
+        // merges chains across folders, so that pair names one chain for
+        // as long as it exists, however many of its autosaves FL rotates
+        // away (keying by, say, the oldest backup's folder would re-key
+        // the chain — a duplicate row and a re-archive — the moment FL
+        // deleted that file). Both branches carry a `flp::` namespace and
+        // their own sub-tag so they can never collide with the Ableton
+        // lineage key just above (`{parent}::{name}`), even in a shared
+        // folder. One accepted limitation: a backup-only lineage that later
+        // gains a matching current file moves to that file's key, so its
+        // old row stops growing (nothing in it is lost, the rows are just
+        // not merged — FL exposes no durable per-project id to key on).
+        let bundle_key = match (&project.current, &project.backup_folder) {
+            (Some(current), _) => format!("flp::current::{}", current.to_string_lossy()),
+            (None, folder) => format!(
+                "flp::backup-only::{}::{}",
+                folder
+                    .as_deref()
+                    .map(|f| f.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                project.name
+            ),
         };
         let Ok(project_id) = registry.upsert_project(&project.name, &bundle_key, "flstudio") else {
             result.read_errors += 1;
@@ -368,6 +376,157 @@ mod tests {
 
         let projects = registry.list_projects().unwrap();
         assert_eq!(projects[0].version_count, 1);
+    }
+
+    #[test]
+    fn rescanning_a_backup_only_flp_lineage_is_idempotent() {
+        let (library, store_dir, db_dir) = setup();
+        touch(
+            &library
+                .path()
+                .join("Backup/untitled (autosaved at 5h56).flp"),
+            b"orphaned backup bytes",
+        );
+
+        let store = Store::open(store_dir.path()).unwrap();
+        let registry = Registry::open(db_dir.path().join("wit.db")).unwrap();
+        let first = scan(library.path(), &store, &registry, 1000);
+        assert_eq!(first.new_versions_ingested, 1);
+
+        let second = scan(library.path(), &store, &registry, 2000);
+        assert_eq!(
+            second.new_versions_ingested, 0,
+            "the backup-only project's key must stay stable across an unchanged rescan"
+        );
+        assert_eq!(registry.list_projects().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn same_named_chains_in_two_backup_folders_are_two_projects() {
+        let (library, store_dir, db_dir) = setup();
+        touch(
+            &library
+                .path()
+                .join("A/Backup/untitled (autosaved at 1h00).flp"),
+            b"project A autosave",
+        );
+        touch(
+            &library
+                .path()
+                .join("B/Backup/untitled (autosaved at 1h00).flp"),
+            b"project B autosave",
+        );
+
+        let store = Store::open(store_dir.path()).unwrap();
+        let registry = Registry::open(db_dir.path().join("wit.db")).unwrap();
+        let result = scan(library.path(), &store, &registry, 1000);
+        assert_eq!(result.flp_projects_found, 2);
+        let projects = registry.list_projects().unwrap();
+        assert_eq!(projects.len(), 2, "{projects:?}");
+        assert!(projects.iter().all(|p| p.version_count == 1));
+    }
+
+    #[test]
+    fn fl_rotating_away_old_autosaves_never_re_keys_a_backup_only_lineage() {
+        // FL keeps only its most recent autosaves and deletes the oldest.
+        // Neither that, nor the older of two same-named chains in another
+        // folder disappearing, may move a surviving chain to a new row
+        // (which would re-archive every autosave it still has).
+        let (library, store_dir, db_dir) = setup();
+        let a_old = library
+            .path()
+            .join("A/Backup/untitled (autosaved at 1h00).flp");
+        let b_old = library
+            .path()
+            .join("B/Backup/untitled (autosaved at 1h00).flp");
+        let b_new = library
+            .path()
+            .join("B/Backup/untitled (autosaved at 2h00).flp");
+        touch(&a_old, b"A 1");
+        touch(&b_old, b"B 1");
+        touch(&b_new, b"B 2");
+
+        let store = Store::open(store_dir.path()).unwrap();
+        let registry = Registry::open(db_dir.path().join("wit.db")).unwrap();
+        assert_eq!(
+            scan(library.path(), &store, &registry, 1000).new_versions_ingested,
+            3
+        );
+
+        std::fs::remove_file(&a_old).unwrap();
+        std::fs::remove_file(&b_old).unwrap();
+        let rescan = scan(library.path(), &store, &registry, 2000);
+        assert_eq!(rescan.new_versions_ingested, 0);
+        let projects = registry.list_projects().unwrap();
+        assert_eq!(projects.len(), 2, "no duplicate row: {projects:?}");
+        let counts: Vec<usize> = projects.iter().map(|p| p.version_count).collect();
+        assert!(counts.contains(&1) && counts.contains(&2), "{projects:?}");
+    }
+
+    #[test]
+    fn copying_a_project_never_re_archives_its_backups() {
+        let (library, store_dir, db_dir) = setup();
+        let original = library.path().join("Projects/Song/Song.flp");
+        touch(&original, b"current save");
+        touch(
+            &library
+                .path()
+                .join("Projects/Backup/Song (autosaved at 1h00).flp"),
+            b"autosave",
+        );
+
+        let store = Store::open(store_dir.path()).unwrap();
+        let registry = Registry::open(db_dir.path().join("wit.db")).unwrap();
+        assert_eq!(
+            scan(library.path(), &store, &registry, 1000).new_versions_ingested,
+            2
+        );
+
+        // The musician duplicates the project folder inside Projects.
+        touch(
+            &library.path().join("Projects/Song copy/Song.flp"),
+            b"current save",
+        );
+        let rescan = scan(library.path(), &store, &registry, 2000);
+        assert_eq!(
+            rescan.new_versions_ingested, 1,
+            "only the copy is new; the autosave must stay on the original's row"
+        );
+        let projects = registry.list_projects().unwrap();
+        assert_eq!(projects.len(), 2, "{projects:?}");
+        let mut counts: Vec<usize> = projects.iter().map(|p| p.version_count).collect();
+        counts.sort();
+        assert_eq!(counts, vec![1, 2], "{projects:?}");
+    }
+
+    #[test]
+    fn flp_and_ableton_synthesized_keys_never_collide_in_the_same_backup_folder() {
+        // Both a backup-only FL lineage and an Ableton lineage can, in
+        // principle, synthesize a key of the same textual shape
+        // ({parent}::{name}) if they share a Backup/ folder and a name --
+        // the flp:: namespace prefix on the FL side must keep them apart.
+        let (library, store_dir, db_dir) = setup();
+        touch(
+            &library.path().join("Backup/shared (autosaved at 1h00).flp"),
+            b"flp backup bytes",
+        );
+        touch(
+            &library.path().join("Backup/shared [2026-05-05 095412].als"),
+            b"als save bytes",
+        );
+
+        let store = Store::open(store_dir.path()).unwrap();
+        let registry = Registry::open(db_dir.path().join("wit.db")).unwrap();
+        let result = scan(library.path(), &store, &registry, 1000);
+
+        assert_eq!(result.flp_projects_found, 1);
+        assert_eq!(result.ableton_lineages_found, 1);
+        let projects = registry.list_projects().unwrap();
+        assert_eq!(
+            projects.len(),
+            2,
+            "the FL and Ableton lineages named 'shared' must be two distinct projects: {projects:?}"
+        );
     }
 
     #[test]

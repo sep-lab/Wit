@@ -481,44 +481,125 @@ v10 through v24 parse cleanly; v25 needs either the keystream solved or diffing
 restricted to variable-length events. **Wit should target ≤ v24 first and treat v25 as an
 open problem.**
 
-### New this session — `wit-flp` (Rust reader), [verified] on real FL 10/20/25 files
+### `wit-flp` (Rust reader), [verified] on 178 real files, FL 8.5–25.2
 
-Measured while porting `experiments/flp_parse.py` to `crates/wit-flp`, against a real FL
-10.0.0 file (`Aston Martin Music Remake.flp`, this section's named fixture) plus a second
-real FL 20.8.3 project and a real FL 25.2.5 project's own `Backup/` autosave chain (5
-files total, not named here — personal material, per AGENTS.md):
+Measured while porting `experiments/flp_parse.py` to `crates/wit-flp`, on read-only copies
+(never committed) of: all 172 `.flp` files FL Studio 20 ships inside its app bundle (demo
+songs, templates and system files, saved by FL 8.5.0 through 20.8.1 — Image-Line's own
+material), the real FL 10.0.0 project measured above, and a real FL 25.2.5 project's
+current save plus 4 of its `Backup/` autosaves (not named here — personal material, per
+AGENTS.md). All 178 walk to a clean end of stream. Every number in this section is printed
+by `WIT_FIXTURES=<folder holding those files> cargo test -p wit-flp --test real_fixtures --
+--ignored --nocapture` (the two same-song checks and the pinned name lists need FL Studio
+20's bundled files under that folder).
 
-- **v25's framing quirk, not just its keystream, breaks the naive event walk — [verified].**
-  Event id 172 (`0xAC`) carries a **3-byte** payload on v25 files, not the general dword
-  rule's 4 — [issue #7](https://github.com/sep-lab/Wit/issues/7) names this exactly.
-  Walking all 5 real v25 files under the standard 4-byte assumption either fails outright
-  (2 of 5, a declared payload running past EOF) or reaches a clean EOF only by
-  coincidence, with mutually inconsistent event counts (1540–1652) for consecutive saves
-  of one project. Treating id 172 as 3 bytes gives a clean EOF on all 5, with
-  self-consistent counts (1616–1710). Id 172 does not appear at all (count zero) in
-  either pre-v25 file checked, so this fix is inert for ≤ v24.
-- **Tempo is event id 156** (dword, `round(BPM * 1000)`) — not named in
-  `flp_parse.py`'s `EVENT_NAMES` table. Identified by scanning every dword-class id that
-  occurs exactly once per file for a value that divides evenly by 1000; on the real FL
-  20.8.3 file it decoded to exactly `130000` → `130.0` BPM. **Unreadable on v25**: the
-  same field on the real v25 files decoded to values like `252566.982` BPM — obvious
-  garbage, consistent with the keystream, not a framing bug. `wit-flp` returns a typed
-  "partial: v25 scalars unreadable" marker for tempo on v25+ rather than surface it.
-- **Mixer insert names are event id 204** (`InsertName`) — inside `flp_parse.py`'s own
-  `TEXT_EVENTS` range but never named there as a semantic field. Verified decoding real
-  insert names (`"Dream bell"`, `"REC"`) across the FL 10 and FL 20 fixtures.
-- **A literal `"Arrangement"` text decoded from event id 241** on the FL 20 and FL 25
-  fixtures (absent on the pre-arrangement-feature FL 10 one) — a plausible but
-  **unverified beyond this session** candidate for a playlist/arrangement name, kept
-  separate from the better-evidenced ids above in `wit-flp`'s extraction.
-- **Text events (channel/plugin/insert names) decode cleanly on v25 files** — only the
-  scalar keystream is a problem; `wit-flp` restricts extraction to variable-length events
-  on v25+ rather than refusing the whole file.
+- **Where a name sits decides what it names — [verified].** FL's text events carry no
+  owner, so `wit-flp` walks the stream as three regions: **channel blocks** (each starts
+  at a `NewChan`, id 64), the **arrangement/playlist section** after them, and the
+  **mixer** (one id-236 event per mixer position; the first one starts the mixer). A
+  channel block ends at the next `NewChan` *or* at the first arrangement/playlist/mixer
+  event (ids 98, 99, 100, 147, 149, 154, 204, 233, 235, 236, 238, 239, 241 — none of which
+  occurs inside any channel block in any of the 178 files). An earlier version never
+  closed the last channel's block, so a last channel with no name of its own took the first
+  `PluginName` anywhere after it: on FL 20.7's bundled `Surround mix.flp` template it
+  reported the channel as `"Mix"`, which is the Master insert's "Control Surface" plugin,
+  554 events later. Of the 178 files, that template is the only one whose channel names
+  change with the fix; the other 177 read exactly the same names as before.
+- **Which id holds a channel's own name changed between FL 11.1.1 and FL 11.5.14 —
+  [verified].** Up to FL 11.1.1, it is `ChanName` (id 192), one per channel block (943
+  blocks). From FL 11.5.14 on, id 192 is absent (FL 11.5–20.8) or holds the app's build
+  string (`"FL Studio 25.2.5.5055.5055"` on all 5 FL 25 saves), and the name is the
+  `PluginName` (id 203) in the channel's **header**: `64, 21, 201, 212, 203` in all 3,694
+  named channel blocks on FL ≥ 11.5, so the name is always exactly 4 events after its
+  `NewChan`, and a 203 anywhere else in a block is never read as its name. FL 11.2–11.4
+  was not available, so the boundary (11.5) is the narrowest gap observed, not pinned
+  exactly. Checks, beyond the header count: the number of channel blocks equals the
+  header's declared channel count (`FLhd.channels`) in 178 of 178 files, and the number
+  of *named* channels equals it in 175 — the 3 exceptions are the 2 bundled templates
+  whose single default Sampler channel has no name saved, and one FL 20.0.3 demo with 2
+  of 74 channels unnamed. And a check that catches wrong names, not just wrong counts:
+  the bundle ships two demo songs twice, once saved by FL 11.0/11.1 (names on id 192)
+  and once re-saved by FL 12.3 (names on the header 203) — every one of the older
+  saves' names (164 of 164, and 64 of 64) appears verbatim in the newer save.
+  `crates/wit-flp/tests/real_fixtures.rs` pins those pairs and 8 bundled files' name
+  lists.
+- **`DefPluginName` (id 201) is a channel's generator or a mixer effect, depending on
+  where it sits — [verified], on every version.** All 8,403 id-201 events in the 178
+  files sit either in a channel header (4,004: that channel's generator, e.g. `"FPC"`,
+  empty for a plain Sampler) or in the mixer (4,399: effects), none anywhere else. The
+  mixer position an effect sits on is counted from the first id-236 event (0 = Master);
+  positions 1–99 read as FL's "Insert 1"–"Insert 99", higher positions are shown as a
+  bare position (their FL label differs by version and was not checked). **Inferred**, not
+  observed in FL: 63 of the 85 files with an effect at position 0 have a Fruity Limiter
+  or Maximus there (the bundled `Basic with limiter.flp` template's only effect is a
+  Fruity Limiter at position 0), and
+  `Surround mix.flp` names insert *n* `"n"` right before position *n*. `PluginName` is
+  **not** a second plugin name (an earlier version merged it in, doubling every channel
+  change into spurious "plugin added/removed" lines), and a mixer effect is no longer
+  dropped on FL ≥ 11.5 (an earlier version only read 201s inside channel blocks there, so
+  adding an effect read as "plugin added" on FL 10 but "something changed Wit can't read"
+  on FL 20/25). A hosted VST/AU reads as `"Fruity Wrapper"`; its own name lives in its
+  opaque state (ADR-0003).
+- **v25's framing quirk, not just its keystream, breaks the naive event walk —
+  [verified].** Event id 172 (`0xAC`) carries a **3-byte** payload on FL 25, not the
+  general dword rule's 4 — [issue #7](https://github.com/sep-lab/Wit/issues/7) names this.
+  Walking the 5 real FL 25 saves under the 4-byte rule either fails outright (2 of 5, a
+  varint prefix longer than 5 bytes, around event 60) or reaches EOF only by coincidence,
+  with inconsistent event counts (1540–1652) for what is **inferred** (from filenames and
+  folder) to be saves of one project; 3 bytes gives a clean EOF on all 5 (1616–1710
+  events). `wit-flp` applies the 3-byte rule only when the file's own `Version` event
+  (id 199), walked earlier in the stream, says FL ≥ 25: `Version` is event #0 in all 178
+  files and 172 is event #4 on all 5 FL 25 saves, while 172 never occurs in the 173
+  older files. FL 21–24 were not available to check.
+- **Tempo is event id 156** (dword, `round(BPM * 1000)`) — not decoded as a semantic field
+  anywhere `flp_parse.py` does. Identified by scanning every dword-class id that occurs
+  exactly once per file for a value that divides evenly by 1000; on a real FL 20.8.3 file
+  it decoded to exactly `130000` → `130.0` BPM. Read on 169 of the 178 files; **absent**
+  on the FL 8.5/10.0 files (count zero) and **unreadable on FL 25**: the same field
+  decoded to values like `252566.982` BPM — garbage, consistent with the keystream.
+  `wit-flp` returns a typed "partial: v25 scalars unreadable" marker there instead.
+- **Mixer insert names are event id 204** (`flp_parse.py`'s `EVENT_NAMES` already names it
+  `"InsertName"`; what is new is extracting it as a field). Verified decoding real insert
+  names (`"Dream bell"`, `"REC"`). **Unverified on FL 25**: id 204 occurs zero times in
+  the 5 FL 25 saves. **Pattern names (id 193) are unverified on FL 25 for the same
+  reason** (zero occurrences there).
+- **A literal `"Arrangement"` text decoded from event id 241** on FL 20/25 files (absent
+  on FL 10, which predates arrangements), always right after an id-99 event (71 of 71) —
+  a plausible but **unverified** candidate for an arrangement name, kept separate from
+  the better-evidenced ids above.
+- **A name belongs to an object, and a missing name is not a missing object —
+  [verified].** FL saves a pattern's or a mixer insert's name only when the user set one
+  (94 of the 173 pre-FL-25 files have a pattern with no saved name), and a channel's name
+  can be missing too, so `wit-flp` keeps every name on the object it names, identified by
+  what the file itself provides: a **channel** by its rack position (`NewChan`'s own
+  payload is just that position, in 173 of 173 pre-FL-25 files); a **pattern** by the
+  number its id-65 event carries (all 2,550 pattern names follow their id-65 event —
+  2,525 directly, 25 after only ids 91/72 — and no number ever gets two names); a **mixer
+  insert** by its position, each id-204 name belonging to the insert whose id-236 event
+  comes next (2,619 of 2,619); an **arrangement** by its order. A comparison then reports
+  "named", "renamed" or "name cleared" on that object, and "added"/"removed" only when the
+  object itself appears or disappears. An earlier version compared bare name lists, so
+  clearing a pattern's name printed `pattern removed`, and naming a mixer insert printed
+  `mixer insert added` — on FL 8.5–20.8, which always save a fixed 105 (FL 8.5–12.5) or
+  127 (FL 12.9–20.8) mixer positions. Two FL 25-specific limits: pattern numbers are
+  scrambled scalars there, so patterns are not compared on FL 25 at all; and FL 25 saves
+  18 positions, which is the only case where a position appearing or disappearing is
+  reported as an insert added or removed (unverified).
 - FL's own `Backup/` autosave folder is typically **shared across an entire "Projects"
   root**, not per-project, and its filenames (`"<name> (autosaved at <time>).flp"`) carry
   only a time of day, no date — measured on 4 real autosaves spanning 2 calendar days,
-  where filename order and modification-time order disagreed. `wit-index`'s FL discovery
-  orders a project's autosave chain by file modification time, never by filename.
+  where filename order and modification-time order disagreed. `wit-index` orders a chain
+  by modification time (path as a tie-break), never by filename; treats every current
+  `.flp` as its own project; and groups autosaves by (**`Backup/` folder**, name), so two
+  folders' `"untitled"` chains are never merged, and a backup-only chain keeps one
+  registry key however many autosaves FL rotates away. A chain attaches to a same-named
+  current file under its Projects root — and when several exist (a copied project
+  folder), to the one at FL's own save location, so copying a project doesn't detach and
+  re-archive its autosaves. It never attaches to a same-named file *outside* the Projects
+  root: `"untitled"` is FL's name for every unsaved project, so an unrelated
+  `untitled.flp` in, say, Downloads would otherwise collect a Projects root's untitled
+  autosaves (the cost: a project moved out of its Projects root keeps its autosaves as a
+  separate backup-only project).
 
 ---
 

@@ -48,8 +48,9 @@ enum Command {
     LogicProbe { old: PathBuf, new: PathBuf },
     /// Print the names and tempo Wit can read out of an FL Studio project,
     /// and — when a second file is given — a plain-words comparison
-    /// between the two. FL Studio 25+ projects print names normally but
-    /// tempo as "can't read yet" (see `wit-flp`'s module docs for why).
+    /// between the two. FL Studio 25+ projects print tempo as "can't read
+    /// yet" and say which names are unverified on that version (see
+    /// `wit-flp`'s module docs for why).
     FlpProbe { a: PathBuf, b: Option<PathBuf> },
     /// Discover Logic/GarageBand/Ableton/FL Studio projects under `path` and
     /// archive-before-recycle every version into Wit's local index.
@@ -450,7 +451,7 @@ fn flp_probe(a: &std::path::Path, b: Option<&std::path::Path>) -> ExitCode {
     let extracted_a = match wit_flp::parse_file(a) {
         Ok(e) => e,
         Err(e) => {
-            eprintln!("wit: failed to read {}: {e}", a.display());
+            eprintln!("wit: failed to read {}: {e}", printable_path(a));
             return ExitCode::FAILURE;
         }
     };
@@ -463,7 +464,7 @@ fn flp_probe(a: &std::path::Path, b: Option<&std::path::Path>) -> ExitCode {
     let extracted_b = match wit_flp::parse_file(b) {
         Ok(e) => e,
         Err(e) => {
-            eprintln!("wit: failed to read {}: {e}", b.display());
+            eprintln!("wit: failed to read {}: {e}", printable_path(b));
             return ExitCode::FAILURE;
         }
     };
@@ -492,60 +493,252 @@ fn flp_probe(a: &std::path::Path, b: Option<&std::path::Path>) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Strip control characters (including bare `\r`/`\n` and terminal escape
+/// sequences) and Unicode bidirectional-override/isolate/mark characters
+/// from text before it ever reaches a `println!`. Every string `flp-probe`
+/// prints from a project — names and the FL version text alike — comes
+/// from an untrusted file's own bytes, and a file's path can carry the same
+/// characters; a crafted (or merely corrupt) one could otherwise move the
+/// cursor, or reorder how the rest of the line reads (a right-to-left
+/// override can make `'a' -> 'b'` display as something else). Legitimate
+/// joiners such as U+200C (used in Persian names) are kept.
+fn sanitize_for_print(s: &str) -> String {
+    s.chars()
+        .filter(|c| !c.is_control() && !is_bidi_control(*c))
+        .collect()
+}
+
+/// The Unicode bidi formatting characters: ALM, LRM/RLM, the embedding and
+/// override controls (LRE, RLE, PDF, LRO, RLO) and the isolates (LRI, RLI,
+/// FSI, PDI).
+fn is_bidi_control(c: char) -> bool {
+    matches!(c, '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+}
+
+fn printable_path(path: &std::path::Path) -> String {
+    sanitize_for_print(&path.display().to_string())
+}
+
+fn render_names_for_print(names: &[String]) -> String {
+    names
+        .iter()
+        .map(|n| sanitize_for_print(n))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Plain words for a tempo reading — matches `flp-probe --help`'s own
+/// description of the v25 case ("can't read yet"), rather than
+/// `Tempo`'s `Display` impl, which is worded for engineering diagnostics
+/// ("partial: v25 scalars unreadable") rather than a musician-facing CLI.
+fn render_tempo(tempo: wit_flp::Tempo) -> String {
+    match tempo {
+        wit_flp::Tempo::Unknown => "unknown".to_string(),
+        wit_flp::Tempo::Known(bpm) => format!("{bpm:.3} BPM"),
+        wit_flp::Tempo::PartialV25ScalarsUnreadable => "can't read yet".to_string(),
+    }
+}
+
 fn print_flp_summary(path: &std::path::Path, e: &wit_flp::Extracted) {
-    println!("  {}", path.display());
+    println!("  {}", printable_path(path));
     println!(
         "    FL Studio version: {}  channels: {}  tempo: {}",
-        e.fl_version.as_deref().unwrap_or("unknown"),
+        e.fl_version
+            .as_deref()
+            .map(sanitize_for_print)
+            .unwrap_or_else(|| "unknown".to_string()),
         e.channels,
-        e.tempo
+        render_tempo(e.tempo)
     );
-    if !e.channel_names.is_empty() {
-        println!("    channel names: {}", e.channel_names.join(", "));
-    }
-    if !e.pattern_names.is_empty() {
-        println!("    pattern names: {}", e.pattern_names.join(", "));
-    }
-    if !e.plugin_names.is_empty() {
-        println!("    plugin names: {}", e.plugin_names.join(", "));
-    }
-    if !e.mixer_insert_names.is_empty() {
+    let channel_names = e.channel_names();
+    if !channel_names.is_empty() {
         println!(
-            "    mixer insert names: {}",
-            e.mixer_insert_names.join(", ")
+            "    channel names: {}",
+            render_names_for_print(&channel_names)
         );
     }
-    if !e.arrangement_names.is_empty() {
-        println!("    arrangement names: {}", e.arrangement_names.join(", "));
+    let unnamed = e.channel_rack.len() - channel_names.len();
+    if unnamed > 0 {
+        println!("    channels with no name saved: {unnamed}");
+    }
+    let pattern_names = e.pattern_names();
+    if !pattern_names.is_empty() {
+        println!(
+            "    pattern names: {}",
+            render_names_for_print(&pattern_names)
+        );
+    }
+    let unnamed_patterns = e
+        .patterns
+        .iter()
+        .filter(|p| p.number.is_some() && p.name.is_none())
+        .count();
+    if unnamed_patterns > 0 {
+        println!("    patterns with no name saved: {unnamed_patterns}");
+    }
+    let generators = e.generator_names();
+    if !generators.is_empty() {
+        println!(
+            "    generator plugins: {}",
+            render_names_for_print(&generators)
+        );
+    }
+    if !e.mixer_effects.is_empty() {
+        let effects: Vec<String> = e
+            .mixer_effects
+            .iter()
+            .map(|m| {
+                format!(
+                    "{} ({})",
+                    sanitize_for_print(&m.name),
+                    mixer_place(m.position)
+                )
+            })
+            .collect();
+        println!("    effect plugins: {}", effects.join(", "));
+    }
+    let insert_names: Vec<String> = e
+        .mixer_inserts
+        .iter()
+        .enumerate()
+        .filter_map(|(position, name)| {
+            let name = name.as_deref()?;
+            let position = u16::try_from(position).ok()?;
+            Some(format!(
+                "{} ({})",
+                sanitize_for_print(name),
+                mixer_place(position)
+            ))
+        })
+        .collect();
+    if !insert_names.is_empty() {
+        println!("    mixer insert names: {}", insert_names.join(", "));
+    }
+    let arrangement_names = e.arrangement_names();
+    if !arrangement_names.is_empty() {
+        println!(
+            "    arrangement names: {}",
+            render_names_for_print(&arrangement_names)
+        );
     }
     if e.format_status == wit_flp::FormatStatus::PartialV25ScalarsUnreadable {
-        println!(
-            "    note: this FL Studio version scrambles some numeric settings that Wit \
-             can't unscramble yet — the names above are still trustworthy"
-        );
+        println!("{}", V25_NOTE);
+    }
+}
+
+/// Printed under every FL 25+ summary. What it calls checked vs unverified
+/// is exactly `wit_flp::FormatStatus::PartialV25ScalarsUnreadable`'s doc.
+const V25_NOTE: &str = "    note: this FL Studio version scrambles some numeric settings \
+     Wit can't unscramble yet, which is why tempo can't be read and patterns aren't \
+     compared. Channel and plugin names read cleanly on the real projects from this \
+     version Wit was checked against; pattern names and mixer insert names could not be \
+     checked (none of those projects had any), and neither could which mixer insert an \
+     effect sits on, so treat those as unverified.";
+
+/// Where a mixer position is, in FL's words where they are known: the
+/// Master, "insert n" for 1–99, and a bare position above that — see
+/// `wit_flp::MAX_NUMBERED_INSERT`.
+fn mixer_place(position: u16) -> String {
+    match position {
+        0 => "Master".to_string(),
+        n if n <= wit_flp::MAX_NUMBERED_INSERT => format!("insert {n}"),
+        n => format!("mixer position {n}"),
+    }
+}
+
+/// The subject of a mixer-insert line: "the Master insert", "mixer insert
+/// 3", "mixer position 104".
+fn mixer_subject(position: u16) -> String {
+    match position {
+        0 => "the Master insert".to_string(),
+        n if n <= wit_flp::MAX_NUMBERED_INSERT => format!("mixer insert {n}"),
+        n => format!("mixer position {n}"),
+    }
+}
+
+fn render_name_change(subject: &str, change: &wit_flp::NameChange) -> String {
+    let n = |name: &str| sanitize_for_print(name);
+    match change {
+        wit_flp::NameChange::Named { name } => format!("{subject} named: '{}'", n(name)),
+        wit_flp::NameChange::Renamed { old, new } => {
+            format!("{subject} renamed: '{}' -> '{}'", n(old), n(new))
+        }
+        wit_flp::NameChange::Cleared { old } => {
+            format!("{subject} name cleared (was '{}')", n(old))
+        }
     }
 }
 
 fn render_flp_change(change: &wit_flp::FlChange) -> String {
+    let n = |name: &str| sanitize_for_print(name);
+    // `: 'Kick'`, or ` (no name saved)` when the object has none.
+    let named = |name: &Option<String>| match name {
+        Some(name) => format!(": '{}'", n(name)),
+        None => " (no name saved)".to_string(),
+    };
+    let plugin = |g: &Option<String>| match g {
+        Some(g) => format!("'{}'", n(g)),
+        None => "none".to_string(),
+    };
+    let generator = |g: &Option<String>| match g {
+        Some(g) => format!(" (generator plugin '{}')", n(g)),
+        None => String::new(),
+    };
+    use wit_flp::FlChange as C;
     match change {
-        wit_flp::FlChange::ChannelAdded { name } => format!("channel added: '{name}'"),
-        wit_flp::FlChange::ChannelRemoved { name } => format!("channel removed: '{name}'"),
-        wit_flp::FlChange::ChannelRenamed { old, new } => {
-            format!("channel renamed: '{old}' -> '{new}'")
+        C::ChannelAdded {
+            name, generator: g, ..
+        } => format!("channel added{}{}", named(name), generator(g)),
+        C::ChannelRemoved {
+            name, generator: g, ..
+        } => format!("channel removed{}{}", named(name), generator(g)),
+        C::ChannelName { change, .. } => render_name_change("channel", change),
+        C::GeneratorChanged {
+            channel, old, new, ..
+        } => {
+            let on = match channel {
+                Some(c) => format!("channel '{}'", n(c)),
+                None => "a channel with no name saved".to_string(),
+            };
+            format!(
+                "generator plugin changed on {on}: {} -> {}",
+                plugin(old),
+                plugin(new)
+            )
         }
-        wit_flp::FlChange::PatternAdded { name } => format!("pattern added: '{name}'"),
-        wit_flp::FlChange::PatternRemoved { name } => format!("pattern removed: '{name}'"),
-        wit_flp::FlChange::PatternRenamed { old, new } => {
-            format!("pattern renamed: '{old}' -> '{new}'")
+        C::PatternAdded { number, name } => format!("pattern {number} added{}", named(name)),
+        C::PatternRemoved { number, name } => format!("pattern {number} removed{}", named(name)),
+        C::PatternName { number, change } => {
+            render_name_change(&format!("pattern {number}"), change)
         }
-        wit_flp::FlChange::PluginAdded { name } => format!("plugin added: '{name}'"),
-        wit_flp::FlChange::PluginRemoved { name } => format!("plugin removed: '{name}'"),
-        wit_flp::FlChange::TempoChanged { from_bpm, to_bpm } => {
-            format!("tempo: {from_bpm} -> {to_bpm} BPM")
+        C::EffectAdded { name, position } => {
+            format!(
+                "effect plugin added: '{}' ({})",
+                n(name),
+                mixer_place(*position)
+            )
         }
-        wit_flp::FlChange::BytesChangedNothingReadable => {
-            "something changed that Wit can't read yet".to_string()
+        C::EffectRemoved { name, position } => {
+            format!(
+                "effect plugin removed: '{}' ({})",
+                n(name),
+                mixer_place(*position)
+            )
         }
+        C::MixerInsertAdded { position, name } => {
+            format!("{} added{}", mixer_subject(*position), named(name))
+        }
+        C::MixerInsertRemoved { position, name } => {
+            format!("{} removed{}", mixer_subject(*position), named(name))
+        }
+        C::MixerInsertName { position, change } => {
+            render_name_change(&mixer_subject(*position), change)
+        }
+        C::ArrangementAdded { name, .. } => format!("arrangement added{}", named(name)),
+        C::ArrangementRemoved { name, .. } => format!("arrangement removed{}", named(name)),
+        C::ArrangementName { change, .. } => render_name_change("arrangement", change),
+        C::TempoChanged { from_bpm, to_bpm } => format!("tempo: {from_bpm} -> {to_bpm} BPM"),
+        C::BytesChangedNothingReadable => "something changed that Wit can't read yet".to_string(),
     }
 }
 
@@ -749,7 +942,118 @@ fn logic_report(path: &std::path::Path) -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{human_bytes, tag_info};
+    use super::{human_bytes, render_flp_change, sanitize_for_print, tag_info, V25_NOTE};
+
+    #[test]
+    fn sanitize_strips_control_and_bidi_characters_but_keeps_joiners() {
+        // A right-to-left override would make the rest of the line display
+        // reversed; ESC would start a terminal escape sequence.
+        assert_eq!(sanitize_for_print("Kick\u{202E}kcans"), "Kickkcans");
+        assert_eq!(sanitize_for_print("\u{1b}[2J25.2.5"), "[2J25.2.5");
+        assert_eq!(
+            sanitize_for_print("a\u{2066}b\u{2069}c\u{200F}d\u{061C}e\r\n"),
+            "abcde"
+        );
+        // ZWNJ is part of ordinary Persian spelling and must survive.
+        assert_eq!(sanitize_for_print("می\u{200C}خواهم"), "می\u{200C}خواهم");
+    }
+
+    #[test]
+    fn flp_probe_wording_never_uses_banned_vocabulary() {
+        // Every line flp-probe can print about a change, rendered with
+        // neutral names, plus the FL 25 note. Musicians' own names are
+        // theirs; Wit's own words must pass the Story contract's lint.
+        let name = || "x".to_string();
+        let named = || Some("x".to_string());
+        let renamed = || wit_flp::NameChange::Renamed {
+            old: name(),
+            new: name(),
+        };
+        let changes = [
+            wit_flp::FlChange::ChannelAdded {
+                position: 0,
+                name: named(),
+                generator: named(),
+            },
+            wit_flp::FlChange::ChannelRemoved {
+                position: 0,
+                name: None,
+                generator: None,
+            },
+            wit_flp::FlChange::ChannelName {
+                position: 0,
+                change: renamed(),
+            },
+            wit_flp::FlChange::ChannelName {
+                position: 0,
+                change: wit_flp::NameChange::Named { name: name() },
+            },
+            wit_flp::FlChange::ChannelName {
+                position: 0,
+                change: wit_flp::NameChange::Cleared { old: name() },
+            },
+            wit_flp::FlChange::GeneratorChanged {
+                position: 0,
+                channel: None,
+                old: named(),
+                new: None,
+            },
+            wit_flp::FlChange::PatternAdded {
+                number: 1,
+                name: None,
+            },
+            wit_flp::FlChange::PatternRemoved {
+                number: 1,
+                name: named(),
+            },
+            wit_flp::FlChange::PatternName {
+                number: 1,
+                change: renamed(),
+            },
+            wit_flp::FlChange::EffectAdded {
+                name: name(),
+                position: 0,
+            },
+            wit_flp::FlChange::EffectRemoved {
+                name: name(),
+                position: 104,
+            },
+            wit_flp::FlChange::MixerInsertAdded {
+                position: 3,
+                name: None,
+            },
+            wit_flp::FlChange::MixerInsertRemoved {
+                position: 0,
+                name: named(),
+            },
+            wit_flp::FlChange::MixerInsertName {
+                position: 3,
+                change: renamed(),
+            },
+            wit_flp::FlChange::ArrangementAdded {
+                position: 1,
+                name: named(),
+            },
+            wit_flp::FlChange::ArrangementRemoved {
+                position: 1,
+                name: None,
+            },
+            wit_flp::FlChange::ArrangementName {
+                position: 0,
+                change: renamed(),
+            },
+            wit_flp::FlChange::TempoChanged {
+                from_bpm: 120.0,
+                to_bpm: 128.0,
+            },
+            wit_flp::FlChange::BytesChangedNothingReadable,
+        ];
+        for change in &changes {
+            let line = render_flp_change(change);
+            assert!(wit_story::vocab::banned_words(&line).is_empty(), "{line}");
+        }
+        assert!(wit_story::vocab::banned_words(V25_NOTE).is_empty());
+    }
 
     #[test]
     fn byte_counts_are_formatted_in_decimal_units_not_binary() {
