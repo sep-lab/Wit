@@ -23,10 +23,15 @@ pub const MAIN_WINDOW: &str = "main";
 /// own icon (`icons/icon.png`, used for `default_window_icon()`) has an
 /// *opaque* background, which under template mode would fill the whole
 /// status-item slot with a solid black square instead of drawing a glyph.
-const TRAY_ICON_BYTES: &[u8] = include_bytes!("../icons/tray-icon.png");
+///
+/// Raw decoded RGBA8, not a PNG: `tauri::image::Image` takes pixels
+/// directly (`Image::new`), so there's no need for a PNG-decoding
+/// dependency just for one small generated icon.
+const TRAY_ICON_SIZE: u32 = 44;
+const TRAY_ICON_RGBA: &[u8] = include_bytes!("../icons/tray-icon.rgba");
 
-fn tray_icon() -> tauri::Result<Image<'static>> {
-    Image::from_bytes(TRAY_ICON_BYTES).map_err(Into::into)
+fn tray_icon() -> Image<'static> {
+    Image::new(TRAY_ICON_RGBA, TRAY_ICON_SIZE, TRAY_ICON_SIZE)
 }
 
 /// Build the "main" window fresh, with the same shape `tauri.conf.json`'s
@@ -87,7 +92,7 @@ pub fn setup(app: &App) -> tauri::Result<()> {
     let menu = Menu::with_items(app, &[&quit])?;
 
     TrayIconBuilder::new()
-        .icon(tray_icon()?)
+        .icon(tray_icon())
         .icon_as_template(true)
         .menu(&menu)
         .show_menu_on_left_click(false)

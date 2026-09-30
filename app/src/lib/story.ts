@@ -183,6 +183,11 @@ export interface ShelfCard {
   copies_label?: string | null;
   daw: Daw;
   /**
+   * "Logic", "GarageBand", "Live", "FL Studio" — so two songs with the
+   * same title in different DAWs can be told apart.
+   */
+  daw_label: string;
+  /**
    * The tray's one line for this song. Worded "no changes Wit can see",
    * never "nothing new".
    */
@@ -193,6 +198,12 @@ export interface ShelfCard {
    */
   last_worked_label?: string | null;
   moments_kept: number;
+  /**
+   * The moments pill, credited to whoever kept them — the same wording as
+   * [`KeptSummary::label`], summed over the song's lines ("10 moments on
+   * disk · Logic keeps 10").
+   */
+  moments_label: string;
   song_id: SongId;
   /**
    * The Story for each lineage, newest-worked first. Always non-empty.
@@ -255,6 +266,10 @@ export interface FamilyMember {
    */
   is_current: boolean;
   last_worked?: Timestamp | null;
+  /**
+   * "Wed 20:40", in the same wording as every other label.
+   */
+  last_worked_label?: string | null;
   /**
    * Index into [`Family::members`] of the member this one came from.
    */

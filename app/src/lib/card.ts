@@ -1,4 +1,4 @@
-import type { Actions, Comparison, Library, Moment, Sentence, ShelfCard, Story, TrackHeat } from "./story";
+import type { Actions, Comparison, Moment, Sentence, Story, TrackHeat } from "./story";
 
 /** What the change card needs, normalized from either a single [`Moment`]
  * or a [`Comparison`] between two — the mockup's card looks the same
@@ -22,22 +22,6 @@ export interface CardData {
    */
   stubNote: string | null;
   trackHeat: readonly TrackHeat[];
-}
-
-/**
- * The DAW to show on a Shelf card or tray line, as Story text — never a
- * UI-side enum-to-label mapping (review round 1, blocking #2: two
- * "Coastline"s, Logic and Live, looked identical with no DAW shown).
- * `ShelfCard` doesn't carry its own `daw_label` yet (that's landing in a
- * small wit-story contract PR — `Library.daw_label`); until then this
- * reads it off the card's first story, `story_ids[0]`, per the
- * coordinator's interim instruction.
- */
-export function firstStoryDawLabel(library: Library, card: ShelfCard): string | null {
-  const storyId = card.story_ids[0];
-  if (!storyId) return null;
-  const story = library.stories.find((s) => s.id === storyId);
-  return story?.header.daw_label ?? null;
 }
 
 export function findMoment(story: Story, momentId: string): Moment | null {

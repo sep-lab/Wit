@@ -6,21 +6,6 @@
   const story = $derived(appState.currentStory);
   const family = $derived(story?.family ?? null);
 
-  // FamilyMember carries a raw Timestamp with no rendered label field
-  // (unlike ShelfCard/Moment, which the engine gives a pre-rendered
-  // string alongside every timestamp — see this lane's PR body, "Needs
-  // from other lanes"). This uses the platform's own date formatting —
-  // not invented copy, just a numeric-to-calendar conversion — rather
-  // than re-implement wit-story's "Today/Yesterday/Thu" wording, which
-  // that crate deliberately keeps to itself.
-  function formatTimestamp(seconds: number): string {
-    return new Date(seconds * 1000).toLocaleDateString(undefined, {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
-  }
-
   // A relation kind this build doesn't recognize yet renders its raw text
   // rather than an empty pill (wit-story's own compatibility rule: an
   // unknown variant renders as text, skips styling — review round 1,
@@ -39,8 +24,8 @@
   </div>
   <div class="row-wrap">
     <span class="pill">{relationLabel(member.relation.kind)}</span>
-    {#if member.last_worked}
-      <span class="muted">{formatTimestamp(member.last_worked)}</span>
+    {#if member.last_worked_label}
+      <span class="muted">{member.last_worked_label}</span>
     {/if}
   </div>
 {/snippet}

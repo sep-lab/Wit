@@ -1,0 +1,51 @@
+# cargo-deny for the app's own Cargo workspace (app/src-tauri is its own
+# workspace, per CONTRIBUTING.md — the root /deny.toml never sees this
+# tree). Same license boundary as the root: see /deny.toml and ADR-0004.
+#
+# Run locally, from app/src-tauri: cargo deny check licenses advisories
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+  # RUSTSEC-2024-0370 (proc-macro-error, unmaintained since 2024-09).
+  # Pulled in transitively on Linux only, via tao -> gtk / gdk / glib
+  # (gtk-rs 0.18's own proc-macro dependency), for the tray/window
+  # backend on that OS. Upstream gtk-rs has not released a version off
+  # proc-macro-error; there is no safe upgrade path available today.
+  # proc-macro-error is a build-time-only dependency (it expands to
+  # nothing at runtime), so this does not ship in the built app.
+  "RUSTSEC-2024-0370",
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.8
+# Same permissive-only boundary as the root /deny.toml.
+allow = [
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "MIT",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "MPL-2.0",
+  "Zlib",
+  "ISC",
+  "Unicode-3.0",
+  "CC0-1.0",
+]
+exceptions = []
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+deny = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

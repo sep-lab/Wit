@@ -17,13 +17,17 @@
 # SmartScreen walkthroughs are still required for pilot recipients on every
 # OS.
 #
-# Before any bundle is built, every leg runs the same checks: `npm run
-# check` (svelte-check + tsc), `npm test` (vitest), `npm run lint:vocab`
-# (the banned-vocabulary lint over app/src), and a type-staleness check
+# Before any bundle is built, every leg runs the same checks: `cargo fmt`/
+# `clippy`/`test` for app/src-tauri, `npm run check` (svelte-check + tsc),
+# `npm test` (vitest), `npm run lint:vocab` (the banned-vocabulary lint,
+# over both app/src and app/src-tauri/src — a Rust error string can cross
+# the IPC boundary and reach the UI verbatim), and a type-staleness check
 # (`npm run gen:types` must not change `src/lib/story.ts` — that file is
 # generated from `crates/wit-story/schema/library.schema.json` and is
 # committed, so a schema change with a stale generated file fails the
-# build instead of silently drifting).
+# build instead of silently drifting). `cargo-deny` for app/src-tauri
+# (its own deny.toml, since it's its own Cargo workspace) runs once, on
+# the ubuntu leg, same pattern as ci.yml's "Licenses" job.
 #
 # NOT yet in ci.yml's `ci-ok` `needs:` — see the comment above that job. It
 # becomes required there once this build is reliably green on all three
@@ -106,6 +110,24 @@ jobs:
         if: steps.detect.outputs.exists == 'true'
         working-directory: app/src-tauri
         run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: cargo test (app/src-tauri)
+        if: steps.detect.outputs.exists == 'true'
+        working-directory: app/src-tauri
+        run: cargo test --locked
+
+      # Once per run, not once per OS — cargo-deny reads the one
+      # Cargo.lock, which already resolves dependencies for all three
+      # platforms (a Linux-only advisory like RUSTSEC-2024-0370, ignored
+      # in app/src-tauri/deny.toml, shows up here even though this step
+      # itself runs on the ubuntu leg). Same pattern as ci.yml's
+      # "Licenses (cargo-deny)" job.
+      - name: Licenses (cargo-deny, app/src-tauri)
+        if: steps.detect.outputs.exists == 'true' && runner.os == 'Linux'
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses advisories
+          manifest-path: app/src-tauri/Cargo.toml
 
       - name: Install Node 22
         if: steps.detect.outputs.exists == 'true'

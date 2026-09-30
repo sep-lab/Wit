@@ -2,7 +2,6 @@
   import { appState } from "../stores/app-state.svelte";
   import { showMainWindow } from "../lib/ipc";
   import { EMPTY_STATES } from "../lib/chrome";
-  import { firstStoryDawLabel } from "../lib/card";
 
   appState.load();
 
@@ -23,13 +22,10 @@
          (this lane's brief, "Laws" and item 4 "Tray"). -->
     <ul class="tray-list">
       {#each appState.library.shelf as card (card.song_id)}
-        {@const dawLabel = firstStoryDawLabel(appState.library, card)}
         <li>
           <span class="song-title">
             <span class="name-span" dir="auto">{card.title}</span>
-            {#if dawLabel}
-              <span class="muted">· {dawLabel}</span>
-            {/if}
+            <span class="muted">· {card.daw_label}</span>
           </span>
           <span class="muted">{card.digest}</span>
         </li>
