@@ -871,7 +871,7 @@ fn assemble(meta: StoryMeta, saves: Vec<Save>, read: fn(&Path) -> Reading, clock
         subtitle.push(format!("last worked {}", clock.moment_label(t)));
     }
 
-    let kept_label = kept_label(n_moments, kept_by_wit, facts.label, facts.keeps);
+    let kept_label = kept_label(n_moments, kept_by_wit, facts.label, facts.keeps, 1);
 
     let family_label = meta.family.as_ref().map(|f| {
         let all_alternatives = f
@@ -915,16 +915,29 @@ fn assemble(meta: StoryMeta, saves: Vec<Save>, read: fn(&Path) -> Reading, clock
     }
 }
 
-/// "41 moments kept · Logic keeps 10" once Wit has kept some; "10 moments on
-/// disk · Logic keeps 10" while every moment is still the DAW's own. The one
-/// wording for both the Story header and the Shelf card.
-fn kept_label(moments: u32, kept_by_wit: u32, daw_label: &str, daw_keeps: Option<u32>) -> String {
+/// "41 moments kept · Logic keeps 10 backups" once Wit has kept some; "11
+/// moments on disk · Logic keeps 10 backups" while every moment is still the
+/// DAW's own (the current save plus its backups, so the count can exceed the
+/// backups). With more than one line (Logic alternatives) the DAW clause says
+/// "per alternative", so "30 on disk" never reads as if someone else kept 20.
+/// The one wording for both the Story header and the Shelf card.
+fn kept_label(
+    moments: u32,
+    kept_by_wit: u32,
+    daw_label: &str,
+    daw_keeps: Option<u32>,
+    lines: usize,
+) -> String {
     let word = if moments == 1 { "moment" } else { "moments" };
-    match (kept_by_wit, daw_keeps) {
-        (k, Some(keeps)) if k > 0 => format!("{moments} {word} kept · {daw_label} keeps {keeps}"),
-        (_, Some(keeps)) => format!("{moments} {word} on disk · {daw_label} keeps {keeps}"),
-        (k, None) if k > 0 => format!("{moments} {word} kept"),
-        (_, None) => format!("{moments} {word} on disk · {daw_label} keeps no backups"),
+    let per = if lines > 1 { " per alternative" } else { "" };
+    let keeps = match daw_keeps {
+        Some(k) => format!("{daw_label} keeps {k} backups{per}"),
+        None => format!("{daw_label} keeps no backups"),
+    };
+    if kept_by_wit > 0 {
+        format!("{moments} {word} kept · {keeps}")
+    } else {
+        format!("{moments} {word} on disk · {keeps}")
     }
 }
 
@@ -1147,6 +1160,9 @@ pub fn ableton_story(
 
 fn shelf_card(stories: &[Story]) -> Option<ShelfCard> {
     let newest = stories.iter().max_by_key(|s| s.header.last_worked)?;
+    // Every line of a card is one project, so one DAW; the labels below rely
+    // on it.
+    debug_assert!(stories.iter().all(|s| s.header.daw == newest.header.daw));
     let moments_kept = stories.iter().map(|s| s.header.kept.moments).sum();
     let copies = newest
         .family
@@ -1186,6 +1202,7 @@ fn shelf_card(stories: &[Story]) -> Option<ShelfCard> {
             stories.iter().map(|s| s.header.kept.kept_by_wit).sum(),
             &newest.header.daw_label,
             newest.header.kept.daw_keeps,
+            stories.len(),
         ),
         daw_label: newest.header.daw_label.clone(),
         copies,
@@ -1206,4 +1223,33 @@ fn shelf_card(stories: &[Story]) -> Option<ShelfCard> {
         digest,
         story_ids: story_ids.into_iter().map(|(_, id)| id).collect(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::kept_label;
+
+    #[test]
+    fn kept_label_credits_whoever_kept_the_saves() {
+        assert_eq!(
+            kept_label(11, 0, "Logic", Some(10), 1),
+            "11 moments on disk · Logic keeps 10 backups"
+        );
+        assert_eq!(
+            kept_label(30, 0, "Logic", Some(10), 3),
+            "30 moments on disk · Logic keeps 10 backups per alternative"
+        );
+        assert_eq!(
+            kept_label(41, 30, "Logic", Some(10), 1),
+            "41 moments kept · Logic keeps 10 backups"
+        );
+        assert_eq!(
+            kept_label(1, 0, "GarageBand", None, 1),
+            "1 moment on disk · GarageBand keeps no backups"
+        );
+        assert_eq!(
+            kept_label(3, 2, "GarageBand", None, 1),
+            "3 moments kept · GarageBand keeps no backups"
+        );
+    }
 }

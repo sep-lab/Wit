@@ -153,6 +153,9 @@ pub fn library_violations(library: &Library) -> Vec<String> {
             card.moments_label.as_str(),
             card.daw_label.as_str(),
         ];
+        if let Some(l) = &card.copies_label {
+            texts.push(l);
+        }
         if let Some(l) = &card.last_worked_label {
             texts.push(l);
         }
