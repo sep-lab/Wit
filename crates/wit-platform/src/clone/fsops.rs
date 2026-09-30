@@ -661,7 +661,11 @@ mod tests {
         std::fs::hard_link(&project, real.join("R/planted")).unwrap();
         let d = Dir::open(&real.join("R")).unwrap();
         assert_eq!(d.links_of(OsStr::new("planted")).unwrap(), 2);
-        assert!(d.remove_file(OsStr::new("planted")).is_err());
+        // Current std may delete a read-only file outright (then only the
+        // planted *name* goes); where it refuses, Wit must not fall back to
+        // clearing the attribute. Either way the project is untouched.
+        let _ = d.remove_file(OsStr::new("planted"));
+        assert_eq!(std::fs::read(&project).unwrap(), b"project");
         assert!(
             std::fs::metadata(&project)
                 .unwrap()
