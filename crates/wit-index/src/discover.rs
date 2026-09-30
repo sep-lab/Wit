@@ -205,8 +205,9 @@ pub struct FlpProject {
     /// merged with another one just because it shares a name, and never
     /// dropped (see [`discover_flp_projects`]'s doc for the bug this
     /// closed). `None` only for a **backup-only lineage**: a `Backup/`
-    /// autosave chain whose project was, e.g., renamed via Save As, so no
-    /// current file anywhere shares its old name. Never dropped either —
+    /// autosave chain with no unambiguous current file under its Projects
+    /// root (the project was renamed via Save As, moved out of the Projects
+    /// root, or never saved — FL's `"untitled"`). Never dropped either —
     /// archive-before-recycle applies here the same way it does to every
     /// other DAW this crate discovers.
     pub current: Option<PathBuf>,
@@ -263,14 +264,15 @@ impl FlpProject {
 ///    Projects root (`<root>/Song copy/Song.flp`) leaves the original's
 ///    chain where it was, instead of detaching it and re-archiving it as
 ///    a new backup-only project.
-/// 3. None under the Projects root -> attach only if exactly one
-///    same-named current file exists anywhere else (a project moved out of
-///    the Projects root).
 ///
-/// A current file claimed by two chains keeps only the one whose Projects
-/// root contains it (if exactly one does); otherwise neither attaches.
-/// Every chain left unattached becomes its own backup-only [`FlpProject`]
-/// (`current: None`) — never dropped.
+/// A same-named file *outside* the Projects root never receives the chain:
+/// `"untitled"` is FL's own name for every unsaved project, so an
+/// unrelated `untitled.flp` in, say, Downloads would otherwise collect a
+/// Projects root's untitled autosaves. The accepted cost: a project moved
+/// out of its Projects root keeps its autosaves as a separate backup-only
+/// project. When nested Projects roots both claim one file, the nearest
+/// (deepest) root's chain wins. Every chain left unattached becomes its
+/// own backup-only [`FlpProject`] (`current: None`) — never dropped.
 pub fn discover_flp_projects(root: &Path) -> Vec<FlpProject> {
     use std::collections::BTreeMap;
 
@@ -315,25 +317,27 @@ pub fn discover_flp_projects(root: &Path) -> Vec<FlpProject> {
             .push(current);
     }
 
-    // Each chain's candidate current file (rules 1–3 in the doc above),
-    // and whether that candidate lives under the chain's Projects root.
-    let mut claims: BTreeMap<&PathBuf, Vec<(&ChainKey, bool)>> = BTreeMap::new();
+    // Each chain's candidate current file (rules 1–2 in the doc above),
+    // with how deep the chain's Projects root is (nearest root wins).
+    let mut claims: BTreeMap<&PathBuf, Vec<(&ChainKey, usize)>> = BTreeMap::new();
     for key in chains.keys() {
         let (folder, name) = key;
-        let same_name = currents_by_name.get(name).map(Vec::as_slice).unwrap_or(&[]);
-        let projects_root = folder.parent();
-        let near: Vec<&PathBuf> = same_name
+        let Some(projects_root) = folder.parent() else {
+            continue;
+        };
+        let near: Vec<&PathBuf> = currents_by_name
+            .get(name)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
             .iter()
             .copied()
-            .filter(|c| projects_root.is_some_and(|r| c.starts_with(r)))
+            .filter(|c| c.starts_with(projects_root))
             .collect();
         let claim = match near.as_slice() {
-            [only] => Some((*only, true)),
-            [] => match same_name {
-                [only] => Some((*only, false)),
-                _ => None,
-            },
-            several => projects_root.and_then(|r| {
+            [] => None,
+            [only] => Some(*only),
+            several => {
+                let r = projects_root;
                 let own = [
                     r.join(name).join(format!("{name}.flp")),
                     r.join(format!("{name}.flp")),
@@ -344,33 +348,28 @@ pub fn discover_flp_projects(root: &Path) -> Vec<FlpProject> {
                     .filter(|c| own.iter().any(|o| o == *c))
                     .collect();
                 match at_own.as_slice() {
-                    [only] => Some((*only, true)),
+                    [only] => Some(*only),
                     _ => None,
                 }
-            }),
+            }
         };
-        if let Some((current, is_near)) = claim {
-            claims.entry(current).or_default().push((key, is_near));
+        if let Some(current) = claim {
+            let depth = projects_root.components().count();
+            claims.entry(current).or_default().push((key, depth));
         }
     }
-    // A current file claimed by several chains keeps only the one whose
-    // Projects root contains it, if exactly one does.
+    // A current file claimed by several (nested) Projects roots' chains
+    // keeps the nearest root's, if exactly one is nearest.
     let mut attached: BTreeMap<&PathBuf, &ChainKey> = BTreeMap::new();
     for (current, chain_keys) in claims {
-        let winner = match chain_keys.as_slice() {
-            [(key, _)] => Some(*key),
-            several => match several
-                .iter()
-                .filter(|(_, near)| *near)
-                .collect::<Vec<_>>()
-                .as_slice()
-            {
-                [(key, _)] => Some(*key),
-                _ => None,
-            },
-        };
-        if let Some(key) = winner {
-            attached.insert(current, key);
+        let deepest = chain_keys.iter().map(|(_, depth)| *depth).max();
+        let nearest: Vec<&ChainKey> = chain_keys
+            .iter()
+            .filter(|(_, depth)| Some(*depth) == deepest)
+            .map(|(key, _)| *key)
+            .collect();
+        if let [key] = nearest.as_slice() {
+            attached.insert(current, *key);
         }
     }
 
@@ -732,6 +731,45 @@ mod tests {
             projects.iter().filter(|p| p.current.is_none()).collect();
         assert_eq!(backup_only.len(), 1, "{projects:?}");
         assert_eq!(backup_only[0].backups.len(), 1);
+    }
+
+    #[test]
+    fn an_untitled_file_elsewhere_never_receives_a_projects_roots_autosaves() {
+        // "untitled" is FL's own name for any unsaved project: a stray
+        // untitled.flp outside the Projects root is not that chain's save.
+        let dir = tempfile::tempdir().unwrap();
+        touch(
+            &dir.path()
+                .join("Projects/Backup/untitled (autosaved at 1h00).flp"),
+        );
+        touch(&dir.path().join("Downloads/untitled.flp"));
+
+        let projects = discover_flp_projects(dir.path());
+        assert_eq!(projects.len(), 2, "{projects:?}");
+        let downloaded = projects
+            .iter()
+            .find(|p| p.current == Some(dir.path().join("Downloads/untitled.flp")))
+            .unwrap();
+        assert!(downloaded.backups.is_empty(), "{projects:?}");
+        let chain = projects.iter().find(|p| p.current.is_none()).unwrap();
+        assert_eq!(chain.backups.len(), 1);
+    }
+
+    #[test]
+    fn nested_projects_roots_give_a_file_the_nearest_roots_chain() {
+        let dir = tempfile::tempdir().unwrap();
+        touch(&dir.path().join("A/B/Song/Song.flp"));
+        touch(&dir.path().join("A/Backup/Song (autosaved at 1h00).flp"));
+        touch(&dir.path().join("A/B/Backup/Song (autosaved at 2h00).flp"));
+
+        let projects = discover_flp_projects(dir.path());
+        let song = projects.iter().find(|p| p.current.is_some()).unwrap();
+        assert_eq!(song.backup_folder, Some(dir.path().join("A/B/Backup")));
+        assert_eq!(
+            projects.len(),
+            2,
+            "the outer chain stays its own: {projects:?}"
+        );
     }
 
     #[test]
