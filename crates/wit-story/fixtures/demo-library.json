@@ -8,6 +8,8 @@
       "last_worked": 1790421600,
       "last_worked_label": "Today 11:20",
       "moments_kept": 1,
+      "moments_label": "1 moment on disk · GarageBand keeps no backups",
+      "daw_label": "GarageBand",
       "copies": 0,
       "copies_label": null,
       "artwork": {
@@ -26,6 +28,8 @@
       "last_worked": 1790291100,
       "last_worked_label": "Thu 23:05",
       "moments_kept": 10,
+      "moments_label": "10 moments on disk · Logic keeps 10 backups",
+      "daw_label": "Logic",
       "copies": 0,
       "copies_label": null,
       "artwork": {
@@ -44,6 +48,8 @@
       "last_worked": 1790196000,
       "last_worked_label": "Wed 20:40",
       "moments_kept": 5,
+      "moments_label": "5 moments on disk · Logic keeps 10 backups per alternative",
+      "daw_label": "Logic",
       "copies": 1,
       "copies_label": "+1 alternative",
       "artwork": {
@@ -63,6 +69,8 @@
       "last_worked": 1767645857,
       "last_worked_label": "5 Jan 20:44",
       "moments_kept": 5,
+      "moments_label": "5 moments on disk · Live keeps 10 backups",
+      "daw_label": "Live",
       "copies": 0,
       "copies_label": null,
       "artwork": {
@@ -169,7 +177,7 @@
           "moments": 10,
           "daw_keeps": 10,
           "kept_by_wit": 0,
-          "label": "10 moments on disk · Logic keeps 10"
+          "label": "10 moments on disk · Logic keeps 10 backups"
         },
         "family_label": null
       },
@@ -868,7 +876,7 @@
           "moments": 2,
           "daw_keeps": 10,
           "kept_by_wit": 0,
-          "label": "2 moments on disk · Logic keeps 10"
+          "label": "2 moments on disk · Logic keeps 10 backups"
         },
         "family_label": "2 alternatives of this song"
       },
@@ -1025,6 +1033,7 @@
             },
             "parent": null,
             "last_worked": 1790191800,
+            "last_worked_label": "Wed 19:30",
             "is_current": false
           },
           {
@@ -1036,6 +1045,7 @@
             },
             "parent": null,
             "last_worked": 1790196000,
+            "last_worked_label": "Wed 20:40",
             "is_current": true
           }
         ],
@@ -1064,7 +1074,7 @@
           "moments": 3,
           "daw_keeps": 10,
           "kept_by_wit": 0,
-          "label": "3 moments on disk · Logic keeps 10"
+          "label": "3 moments on disk · Logic keeps 10 backups"
         },
         "family_label": "2 alternatives of this song"
       },
@@ -1296,6 +1306,7 @@
             },
             "parent": null,
             "last_worked": 1790191800,
+            "last_worked_label": "Wed 19:30",
             "is_current": true
           },
           {
@@ -1307,6 +1318,7 @@
             },
             "parent": null,
             "last_worked": 1790196000,
+            "last_worked_label": "Wed 20:40",
             "is_current": false
           }
         ],
@@ -1335,7 +1347,7 @@
           "moments": 5,
           "daw_keeps": 10,
           "kept_by_wit": 0,
-          "label": "5 moments on disk · Live keeps 10"
+          "label": "5 moments on disk · Live keeps 10 backups"
         },
         "family_label": null
       },

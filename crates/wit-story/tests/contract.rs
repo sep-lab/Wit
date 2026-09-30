@@ -184,10 +184,18 @@ fn every_inferred_sentence_says_probably() {
     );
 }
 
-/// Nothing in v1 is kept by Wit, so nothing may say Wit kept it.
+/// Nothing in v1 is kept by Wit, so nothing may say Wit kept it — on the
+/// Story header, a moment note, or the Shelf card.
 #[test]
 fn only_moments_wit_kept_say_wit_kept_them() {
     let (_dir, lib) = demo_library();
+    for card in &lib.shelf {
+        assert!(
+            !card.moments_label.contains("kept"),
+            "{}",
+            card.moments_label
+        );
+    }
     for story in &lib.stories {
         assert!(
             !story.header.kept.label.contains("kept") || story.header.kept.kept_by_wit > 0,
@@ -307,4 +315,29 @@ fn ids_are_unique_across_watched_folders() {
     for (x, y) in la.shelf.iter().zip(lb.shelf.iter()) {
         assert_ne!(x.song_id, y.song_id);
     }
+}
+
+/// A song with several full Logic alternatives has more moments on disk than
+/// one alternative's backups; the Shelf card must not read as if someone
+/// other than Logic kept the rest.
+#[test]
+fn multi_alternative_songs_say_per_alternative() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("demo");
+    wit_demo::build_demo_library(&root).unwrap();
+    let lib = build_library(&root, "demo", &fixture_clock());
+    let card = lib.shelf.iter().find(|c| c.title == "Night Bus").unwrap();
+    assert!(card.story_ids.len() > 1);
+    assert!(
+        card.moments_label
+            .ends_with("Logic keeps 10 backups per alternative"),
+        "{}",
+        card.moments_label
+    );
+    let single = lib
+        .shelf
+        .iter()
+        .find(|c| c.title == "Coastline" && c.daw_label == "Logic")
+        .unwrap();
+    assert!(single.moments_label.ends_with("Logic keeps 10 backups"));
 }
