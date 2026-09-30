@@ -217,7 +217,7 @@ $ cargo run --release -p wit-cli -- demo-library /tmp/wit-demo
   these are synthetic fixtures for Wit's own readers — Logic and Live cannot open them
   point the app at: /tmp/wit-demo
 
-$ cargo run --release -p wit-cli -- diff-als '/tmp/wit-demo/Ableton/Coastline Project/Backup/Coastline [2026-01-04 103012].als' '/tmp/wit-demo/Ableton/Coastline Project/Backup/Coastline [2026-01-04 111845].als'
+$ cargo run --release -p wit-cli -- diff-als '/tmp/wit-demo/Ableton/Coastline Project/Backup/Coastline [2026-01-04 111845].als' '/tmp/wit-demo/Ableton/Coastline Project/Backup/Coastline [2026-01-05 200133].als'
   2 semantic change(s)
     FX+     [Rhodes] added: AutoFilter
     CLIP~   [Rhodes] 'verse rhodes' muted
@@ -233,7 +233,7 @@ $ cargo run --release -p wit-cli -- logic-probe '/tmp/wit-demo/Logic/Coastline.l
   (bytes identical: false — diagnostic only, not part of the verdict above)
 
 $ cargo run --release -p wit-cli -- scan /tmp/wit-demo --data-dir /tmp/wit-demo-index
-  found 3 Logic/GarageBand project(s), 1 Ableton lineage(s) — 21 new version(s) archived
+  found 3 Logic/GarageBand project(s), 1 Ableton lineage(s), 0 FL Studio project(s) — 21 new version(s) archived
     Coastline (logic): 10 version(s)
     Coastline (ableton): 5 version(s)
     Kitchen Jam (garageband): 1 version(s)
@@ -430,7 +430,7 @@ Rust and no reverse engineering.
 | 🟢 | **Replicate the branching-adoption finding** ([#12](https://github.com/sep-lab/Wit/issues/12)) | Not a parser question — the roadmap's whole premise rests on this |
 | 🟢 | **Run the experiments on your own sessions** and report numbers ([#4](https://github.com/sep-lab/Wit/issues/4)) | Everything so far is measured on a handful of projects. Breadth is the gap. |
 | 🟢 | **Write up how your studio actually collaborates** | Shapes the roadmap more than feature requests do |
-| 🟡 | **Model device *parameters* in the Ableton extractor** ([#2](https://github.com/sep-lab/Wit/issues/2)) | Biggest known gap — the differ currently misses knob-only changes |
+| 🟡 | **Extend device-parameter modelling in the Ableton extractor** ([#2](https://github.com/sep-lab/Wit/issues/2)) | The differ already catches a same-shape knob turn on a regular track (a device fingerprint, `FX~`). Confirmed still blind, on real saves, to the master/main track's own devices (never walked at all) and to a Max for Live device's own state (a save that changed it produced no record); plugin state kept outside `Manual` values, such as AU/VST state blobs, is invisible to the fingerprint by construction |
 | 🟡 | **Map more Logic `ProjectData` chunk payloads** ([#3](https://github.com/sep-lab/Wit/issues/3)) | Container is decoded; payload schemas are not |
 | 🔴 | **Verify a Wit-merged `.als` opens in Live** ([#1](https://github.com/sep-lab/Wit/issues/1)) | Untested, and a release gate |
 | 🔴 | **Solve the FL Studio v25 scalar keystream** ([#7](https://github.com/sep-lab/Wit/issues/7)) | Blocks modern FL support |
