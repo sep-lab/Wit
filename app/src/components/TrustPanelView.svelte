@@ -7,16 +7,47 @@
   let showPreview = $state(false);
   let copyStatus = $state<string | null>(null);
 
+  function formatDateTime(seconds: number): string {
+    return new Date(seconds * 1000).toLocaleString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  const EVENT_KIND_LABELS: Record<string, string> = {
+    compare_opened: "Compare opened",
+    share_created: "Share created",
+    restore_made: "Restore made",
+  };
+
   function reportText(): string {
     if (!trust) return "";
     const c = trust.counters;
-    // Counts only — no names, no paths (this lane's brief, item 4: the
-    // Story contract's own rule for TrustPanel/PilotCounters).
-    return [
+    // Counts, kinds and timestamps only — no names, no paths (this
+    // lane's brief, item 4: the Story contract's own rule for
+    // TrustPanel/PilotCounters). `since` and every event are included:
+    // the pilot's own success metric ("two compares in any 7-day
+    // window") needs them, not just the running totals (review round 1,
+    // non-blocking #4).
+    const lines = [
       `Compares opened: ${c.compares_opened}`,
       `Shares created: ${c.shares_created}`,
       `Restores made: ${c.restores_made}`,
-    ].join("\n");
+    ];
+    if (c.since) {
+      lines.push(`Since: ${formatDateTime(c.since)}`);
+    }
+    if (c.events.length > 0) {
+      lines.push("Events:");
+      for (const event of c.events) {
+        const label = EVENT_KIND_LABELS[event.kind] ?? event.kind;
+        lines.push(`  ${label} at ${formatDateTime(event.at)}`);
+      }
+    }
+    return lines.join("\n");
   }
 
   function togglePreview() {

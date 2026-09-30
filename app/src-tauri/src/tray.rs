@@ -6,15 +6,59 @@
 //! main window is created and shown regardless of tray setup).
 
 use tauri::{
+    image::Image,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    App, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+    App, AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_positioner::{Position, WindowExt};
 
 pub const TRAY_WINDOW: &str = "tray-popover";
+pub const MAIN_WINDOW: &str = "main";
+
+/// A monochrome circle, fully transparent outside it — a template icon
+/// (review round 1, blocking #5). macOS ignores an `icon_as_template`
+/// image's colour entirely and uses only its alpha channel, recolouring
+/// the opaque pixels to match the current menu-bar appearance; the app's
+/// own icon (`icons/icon.png`, used for `default_window_icon()`) has an
+/// *opaque* background, which under template mode would fill the whole
+/// status-item slot with a solid black square instead of drawing a glyph.
+const TRAY_ICON_BYTES: &[u8] = include_bytes!("../icons/tray-icon.png");
+
+fn tray_icon() -> tauri::Result<Image<'static>> {
+    Image::from_bytes(TRAY_ICON_BYTES).map_err(Into::into)
+}
+
+/// Build the "main" window fresh, with the same shape `tauri.conf.json`'s
+/// `app.windows[0]` describes. Used both at startup (implicitly, by Tauri
+/// itself, from that config) and defensively by `show_main_window` if the
+/// window was ever destroyed rather than hidden (review round 1, blocking
+/// #5: today, closing it destroys it while the hidden tray popover keeps
+/// the process alive, and there is no way back).
+pub fn ensure_main_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+        return Ok(window);
+    }
+    WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::App("index.html".into()))
+        .title("Wit")
+        .inner_size(960.0, 720.0)
+        .min_inner_size(480.0, 480.0)
+        .build()
+}
 
 pub fn setup(app: &App) -> tauri::Result<()> {
+    // Closing the main window hides it (the app keeps running in the
+    // tray) instead of destroying it — Quit is still the tray menu's job.
+    if let Some(main) = app.get_webview_window(MAIN_WINDOW) {
+        let hide_instead_of_close = main.clone();
+        main.on_window_event(move |event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = hide_instead_of_close.hide();
+            }
+        });
+    }
+
     let popover = WebviewWindowBuilder::new(
         app,
         TRAY_WINDOW,
@@ -43,6 +87,8 @@ pub fn setup(app: &App) -> tauri::Result<()> {
     let menu = Menu::with_items(app, &[&quit])?;
 
     TrayIconBuilder::new()
+        .icon(tray_icon()?)
+        .icon_as_template(true)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {

@@ -24,8 +24,10 @@ export const NAV_LABELS = {
 
 export const EMPTY_STATES = {
   loading: "Loading your library…",
-  noLibrary:
-    "Wit hasn't found any songs yet. Point it at a folder to see what's changed.",
+  // Review round 1, non-blocking #7: this used to say "Point it at a
+  // folder", but there is no such control yet (library() takes no root
+  // — see lib/ipc.ts) — don't promise one.
+  noLibrary: "Wit hasn't found any songs to show yet.",
   noSongSelected: "Pick a song from the Shelf to see what changed.",
   noHeatStrip: null, // intentionally absent: the capability note explains why.
   sendReadyUnknown: "Wit hasn't checked whether this song is ready to send yet.",
@@ -34,6 +36,7 @@ export const EMPTY_STATES = {
   noFamily: "Wit hasn't found any other copies of this song.",
   reportCopied: "Copied.",
   reportCopyFailed: "Couldn't copy that — you can select the text above instead.",
+  genericError: "That didn't work. Nothing was changed.",
 } as const;
 
 export const SECTION_TITLES = {
@@ -47,6 +50,8 @@ export const SECTION_TITLES = {
   copyReport: "Copy pilot report",
   copyReportPreviewTitle: "This is exactly what would be copied:",
   confirmCopy: "Copy",
+  overview: "Overview: oldest to newest",
+  backToOverview: "Back to the overview",
 } as const;
 
 export const COUNTER_LABELS = {

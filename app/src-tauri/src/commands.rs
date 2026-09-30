@@ -1,53 +1,27 @@
-use std::path::{Path, PathBuf};
-
-use tauri::{command, AppHandle, Manager};
-use wit_story::{Clock, Comparison, Library, Timestamp};
+use tauri::{command, AppHandle};
+use wit_story::{Comparison, Library};
 
 use crate::error::NotAvailable;
 use crate::fixture::demo_library;
+use crate::tray::ensure_main_window;
 
-/// The clock the OS gives us: now, plus the viewer's local UTC offset —
-/// this lane's brief, item 3. Never a network time source (ADR-0008).
-fn local_clock() -> Clock {
-    let now = Timestamp(chrono::Utc::now().timestamp());
-    // `local_minus_utc()` is seconds and always a whole number of minutes.
-    let offset_minutes = chrono::Local::now().offset().local_minus_utc() / 60;
-    Clock::fixed(now, offset_minutes)
-}
-
-/// The folder as the owner sees it, with `~` for the home directory —
-/// this lane's brief, item 3 ("label = the folder shown with `~` for the
-/// home dir"). Falls back to the raw path when it isn't under the home
-/// directory, or the home directory can't be found.
-fn folder_label(root: &Path) -> String {
-    if let Some(home) = dirs::home_dir() {
-        if let Ok(rel) = root.strip_prefix(&home) {
-            return if rel.as_os_str().is_empty() {
-                "~".to_string()
-            } else {
-                format!("~/{}", rel.display())
-            };
-        }
-    }
-    root.display().to_string()
-}
-
-/// `wit_story::build_library` for a configured root, or the fixture — this
-/// lane's brief, item 3: "With no root, or when the page runs in a plain
-/// browser (no Tauri), load `crates/wit-story/fixtures/demo-library.json`."
-/// A plain browser has no IPC at all, so this half of that rule is the
-/// Tauri side: no root configured (yet) behaves the same way.
+/// The Library to show — the embedded fixture, for now.
+///
+/// Review round 1, non-blocking #1: this command used to accept an
+/// arbitrary root path over IPC (with no caller passing one, and no
+/// validation of it) and ran `wit_story::build_library`'s filesystem walk
+/// synchronously on the main thread. Both are dropped until
+/// `crates/wit-platform` exists to hand this a root it has already
+/// checked (never inside a DAW package, never a parent of another
+/// watched root, per ADR-0007) and a real OS clock. `spawn_blocking` keeps
+/// the work off the main thread regardless — today that's just a trivial
+/// JSON parse, but a real implementation will do real filesystem I/O
+/// here.
 #[command]
-pub fn library(root: Option<String>) -> Result<Library, String> {
-    match root {
-        Some(path) => {
-            let root_path = PathBuf::from(&path);
-            let label = folder_label(&root_path);
-            let clock = local_clock();
-            Ok(wit_story::build_library(&root_path, &label, &clock))
-        }
-        None => Ok(demo_library()),
-    }
+pub async fn library() -> Result<Library, String> {
+    tauri::async_runtime::spawn_blocking(demo_library)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Drag-compare on the timeline. Stubbed until the engine grows a
@@ -84,12 +58,15 @@ pub fn reveal(song_id: String) -> Result<(), NotAvailable> {
 
 /// Show and focus the main window — used by the tray popover's "Open Wit"
 /// button. A real command, not a stub: it only needs Tauri's own window
-/// API, no engine dependency.
+/// API, no engine dependency. Rebuilds the window if it doesn't exist
+/// (review round 1, blocking #5): closing main only ever hides it now
+/// (see `tray::setup`), but this stays defensive in case some other path
+/// destroys it — the alternative is a hidden, unreachable process the
+/// owner can only kill from Activity Monitor / Task Manager.
 #[command]
 pub fn show_main_window(app: AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("main") {
-        window.show().map_err(|e| e.to_string())?;
-        window.set_focus().map_err(|e| e.to_string())?;
-    }
+    let window = ensure_main_window(&app).map_err(|e| e.to_string())?;
+    window.show().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())?;
     Ok(())
 }

@@ -9,7 +9,12 @@
 //     .svelte file's <script> block, mustache expression or attribute
 //     value (covers chrome.ts constants, ternaries, aria-labels, …);
 //   - every static text node in a .svelte file's markup (covers a bare
-//     heading like `<h1>Family</h1>`).
+//     heading like `<h1>Family</h1>`);
+//   - every quoted string literal in app/src-tauri/src/*.rs (review round
+//     1, non-blocking #7): a Rust `NotAvailable::new("...")` message
+//     crosses the IPC boundary and is shown to the musician exactly as
+//     written (see src/lib/ipc.ts's NotAvailableError), so it is held to
+//     the same bar as a TS string literal, not treated as backend-only.
 //
 // Deliberately NOT scanned, because it is never shown to a musician:
 //   - <style> block contents (CSS, not prose — this is also why no CSS
@@ -33,6 +38,7 @@ import { fileURLToPath } from "node:url";
 const here = fileURLToPath(new URL(".", import.meta.url));
 const appRoot = join(here, "..");
 const srcDir = join(appRoot, "src");
+const rustSrcDir = join(appRoot, "src-tauri", "src");
 
 const { words, phrases } = JSON.parse(
   readFileSync(join(srcDir, "lib", "vocab-words.json"), "utf8")
@@ -109,7 +115,7 @@ function stringsToCheck(filePath, text) {
 function shouldScan(path) {
   if (EXCLUDE_FILES.has(path)) return false;
   if (/\.(test|spec)\.tsx?$/.test(path)) return false;
-  return /\.(ts|svelte)$/.test(path);
+  return /\.(ts|svelte|rs)$/.test(path);
 }
 
 function* walk(dir) {
@@ -123,7 +129,7 @@ function* walk(dir) {
 
 let scanned = 0;
 const violations = [];
-for (const file of walk(srcDir)) {
+for (const file of [...walk(srcDir), ...walk(rustSrcDir)]) {
   if (!shouldScan(file)) continue;
   scanned += 1;
   const text = readFileSync(file, "utf8");

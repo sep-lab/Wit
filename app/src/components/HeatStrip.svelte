@@ -62,7 +62,7 @@
   .lab {
     font-size: 12px;
     color: var(--text-secondary);
-    width: 96px;
+    width: 78px;
     flex: none;
     white-space: nowrap;
     overflow: hidden;

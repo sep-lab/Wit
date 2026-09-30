@@ -15,6 +15,13 @@ export default defineConfig({
     strictPort: true,
   },
   envPrefix: ["VITE_", "TAURI_"],
+  // Under Vitest, force Svelte's package.json "browser" export condition
+  // — otherwise `import { mount } from "svelte"` resolves to the
+  // server-side render build (`svelte/index-server.js`, whose `mount()`
+  // always throws) rather than the client build a jsdom component test
+  // needs (review round 1, non-blocking #9: this is what the new
+  // component-mount tests need to actually mount anything).
+  resolve: process.env.VITEST ? { conditions: ["browser"] } : undefined,
   build: {
     outDir: "dist",
     emptyOutDir: true,

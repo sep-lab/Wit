@@ -54,18 +54,20 @@ async function invokeOrStub<T>(
 }
 
 /**
- * The Library to show: the real IPC command when running inside Tauri
- * with a configured root, or the fixture everywhere else (this lane's
- * brief, item 3). `root: null` also falls through to the fixture on the
- * Rust side, for a first run with no watched folder configured yet.
+ * The Library to show: the real IPC command when running inside Tauri,
+ * or the fixture everywhere else (this lane's brief, item 3). Review
+ * round 1, non-blocking #1: the command took an arbitrary root path with
+ * no caller and no validation yet — dropped until `crates/wit-platform`
+ * exists to hand it a real, checked root. Both sides serve the same
+ * embedded fixture for now.
  */
-export async function fetchLibrary(root: string | null): Promise<Library> {
+export async function fetchLibrary(): Promise<Library> {
   if (!isTauri()) {
     const { demoLibrary } = await import("./fixture");
     return demoLibrary;
   }
   const { invoke } = await import("@tauri-apps/api/core");
-  return invoke<Library>("library", { root });
+  return invoke<Library>("library");
 }
 
 /** Drag-compare on the timeline (this lane's brief, item 4). Stubbed until

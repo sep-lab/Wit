@@ -20,10 +20,12 @@
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans Arabic",
     sans-serif;
 
-  /* Heat-strip tint scale (mockup's `tint` array): transparent, light,
-   * mid, dark green. Darker means more changed. Fixed across themes, like
-   * the mockup — these are data colours, not surface colours. */
-  --heat-0: transparent;
+  /* Heat-strip tint scale (mockup's `tint` array): light, mid, dark
+   * green, over a visible-but-quiet level 0 (review round 1, blocking
+   * #8: `transparent` made an untouched cell invisible against the page
+   * background instead of reading as "no change"). Fixed across themes,
+   * like the mockup — these are data colours, not surface colours. */
+  --heat-0: var(--surface-1);
   --heat-1: #9fe1cb;
   --heat-2: #1d9e75;
   --heat-3: #085041;
@@ -74,7 +76,13 @@ button {
   cursor: pointer;
 }
 
-button:hover:not(:disabled) {
+/* `:where()` zeroes this selector's own specificity, so a component's
+   plain `.tick { background: ... }` (or any future button-like element
+   that needs its own hover fill) can override it without a specificity
+   fight — review round 1, blocking #7 also fixes this at the call site
+   (Timeline.svelte), but this keeps the same class of bug from
+   recurring elsewhere. */
+:where(button):hover:not(:disabled) {
   background: var(--surface-1);
 }
 
@@ -90,9 +98,10 @@ button:focus-visible,
 }
 
 /* Layout: 16px side gutters everywhere (this lane's brief, "Layout &
- * theming"), a readable max-width column, stacking below 640px. */
+ * theming"), a readable max-width column (720px, matching the approved
+ * mockup's `.page`), stacking below 640px. */
 .page {
-  max-width: 760px;
+  max-width: 720px;
   margin: 0 auto;
   padding: 24px 16px 48px;
 }

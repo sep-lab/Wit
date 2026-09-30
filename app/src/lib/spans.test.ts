@@ -25,22 +25,18 @@ describe("renderSpan", () => {
     expect(renderSpan({ kind: "value", text: "x" }).rtl).toBe(false);
   });
 
-  it("never turns a name into markup, even one that looks like a tag", () => {
+  it("passes a hostile-looking name through renderSpans unchanged, as plain data", () => {
+    // This only proves the pure helper doesn't parse or strip the text —
+    // it mounts nothing, so it cannot see whether a component actually
+    // renders it as markup or as text. components/SentenceLine.test.ts
+    // (review round 1, non-blocking #9) mounts the real component in
+    // jsdom and checks the DOM for exactly that.
     const spans: Span[] = [
       { kind: "plain", text: "Renamed '" },
       { kind: "name", text: "<script>alert(1)</script>" },
       { kind: "plain", text: "'" },
     ];
     const rendered = renderSpans(spans);
-    expect(rendered.map((r) => r.text).join("")).toBe(
-      "Renamed '<script>alert(1)</script>'"
-    );
-    // Nothing here is interpreted as HTML: renderSpan never strips,
-    // escapes or evaluates the text — the component binds it as a text
-    // node ({span.text}, never {@html span.text}), so the string above
-    // is displayed literally, not executed.
-    for (const r of rendered) {
-      expect(typeof r.text).toBe("string");
-    }
+    expect(rendered.map((r) => r.text).join("")).toBe("Renamed '<script>alert(1)</script>'");
   });
 });

@@ -1,5 +1,6 @@
 import type { Library, Story } from "../lib/story";
 import { fetchLibrary } from "../lib/ipc";
+import { userFacingErrorMessage } from "../lib/errors";
 
 export type Screen = "shelf" | "song" | "family" | "send-ready" | "trust";
 
@@ -14,6 +15,9 @@ class AppState {
   library = $state<Library | null>(null);
   loadError = $state<string | null>(null);
   loading = $state(true);
+  // The app opens on the Shelf, never the Song view (review round 1,
+  // blocking #3) — preparing a default story selection below must not
+  // change this.
   screen = $state<Screen>("shelf");
 
   selectedSongId = $state<string | null>(null);
@@ -23,17 +27,17 @@ class AppState {
   selectedMomentId = $state<string | null>(null);
   compareRange = $state<[string, string] | null>(null);
 
-  async load(root: string | null = null): Promise<void> {
+  async load(): Promise<void> {
     this.loading = true;
     this.loadError = null;
     try {
-      const library = await fetchLibrary(root);
+      const library = await fetchLibrary();
       this.library = library;
       if (!this.selectedSongId && library.shelf.length > 0) {
-        this.selectSong(library.shelf[0].song_id);
+        this.prepareSong(library.shelf[0].song_id);
       }
     } catch (err) {
-      this.loadError = err instanceof Error ? err.message : String(err);
+      this.loadError = userFacingErrorMessage(err);
     } finally {
       this.loading = false;
     }
@@ -48,12 +52,24 @@ class AppState {
     return this.library.stories.find((s) => s.id === this.selectedStoryId) ?? null;
   }
 
-  selectSong(songId: string): void {
+  /**
+   * Select a song's default story without changing `screen` — the Shelf
+   * card's own `story_ids[0]` (newest-worked first), not just the first
+   * match `library.stories` happens to list (review round 1, non-blocking
+   * #3: those two orders can disagree).
+   */
+  private prepareSong(songId: string): void {
     this.selectedSongId = songId;
+    const card = this.library?.shelf.find((c) => c.song_id === songId);
+    const preferredStoryId = card?.story_ids[0];
     const stories = this.storiesForSong(songId);
-    this.selectedStoryId = stories[0]?.id ?? null;
+    this.selectedStoryId = preferredStoryId ?? stories[0]?.id ?? null;
     this.selectedMomentId = null;
     this.compareRange = null;
+  }
+
+  selectSong(songId: string): void {
+    this.prepareSong(songId);
     this.screen = "song";
   }
 
@@ -61,6 +77,17 @@ class AppState {
     this.selectedStoryId = storyId;
     this.selectedMomentId = null;
     this.compareRange = null;
+  }
+
+  /** A Family member may belong to a different song than the one being
+   * viewed (a Save-As copy, a restore) — keep `selectedSongId` in sync
+   * too, not just the story (review round 1, non-blocking #3: "Second
+   * lineage unreachable" — Family members are otherwise unclickable). */
+  selectFamilyMember(songId: string, storyId: string | null | undefined): void {
+    if (!storyId) return;
+    this.selectedSongId = songId;
+    this.selectStory(storyId);
+    this.screen = "song";
   }
 
   selectMoment(momentId: string): void {
@@ -71,6 +98,14 @@ class AppState {
   selectCompareRange(fromId: string, toId: string): void {
     this.compareRange = [fromId, toId];
     this.selectedMomentId = null;
+  }
+
+  /** Back to the Story's own overview compare (oldest → newest) — the
+   * default first view (review round 1, non-blocking #5: give a way back
+   * to it after clicking a tick). */
+  showOverview(): void {
+    this.selectedMomentId = null;
+    this.compareRange = null;
   }
 
   goTo(screen: Screen): void {

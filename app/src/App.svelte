@@ -113,4 +113,16 @@
     background: var(--surface-1);
     border-color: var(--border-stronger);
   }
+
+  /* Review round 1, non-blocking #6: five comfortable desktop-size
+     buttons wasted most of a 375px-wide screen. */
+  @media (max-width: 640px) {
+    nav {
+      gap: 4px;
+    }
+    nav button {
+      padding: 4px 8px;
+      font-size: 12px;
+    }
+  }
 </style>
