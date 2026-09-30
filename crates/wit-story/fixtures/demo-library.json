@@ -36,7 +36,7 @@
         "kind": "generated",
         "seed": 1861125265
       },
-      "digest": "2 changes Wit can see in your last session",
+      "digest": "3 changes Wit can see in your last session",
       "story_ids": [
         "logic:c48616f99467b3e1#000"
       ]
@@ -93,8 +93,8 @@
         "daw": "garage_band",
         "daw_label": "GarageBand",
         "tempo_bpm": 88.0,
-        "key": null,
-        "time_signature": null,
+        "key": "C major",
+        "time_signature": "4/4",
         "last_worked": 1790421600,
         "subtitle": "GarageBand · 88 BPM · last worked Today 11:20",
         "kept": {
@@ -169,8 +169,8 @@
         "daw": "logic",
         "daw_label": "Logic",
         "tempo_bpm": 124.0,
-        "key": null,
-        "time_signature": null,
+        "key": "C major",
+        "time_signature": "4/4",
         "last_worked": 1790291100,
         "subtitle": "Logic · 124 BPM · last worked Thu 23:05",
         "kept": {
@@ -263,7 +263,7 @@
               "sentences": [
                 {
                   "icon": "add",
-                  "text": "Added region 'Chorus Rhodes'",
+                  "text": "Added region 'Chorus Rhodes' on track 1",
                   "spans": [
                     {
                       "kind": "plain",
@@ -275,14 +275,20 @@
                     },
                     {
                       "kind": "plain",
-                      "text": "'"
+                      "text": "' on track 1"
                     }
                   ],
                   "track": null,
                   "lane": null,
-                  "place": null,
-                  "place_label": null,
-                  "confidence": "exact",
+                  "place": {
+                    "kind": "bars",
+                    "start": 5.0,
+                    "end": null,
+                    "approximate": true,
+                    "section": null
+                  },
+                  "place_label": "about bar 5",
+                  "confidence": "approximate",
                   "tier": "structure"
                 }
               ],
@@ -458,7 +464,7 @@
               "sentences": [
                 {
                   "icon": "add",
-                  "text": "Added region 'Brushed Kit'",
+                  "text": "Added region 'Brushed Kit' on track 1",
                   "spans": [
                     {
                       "kind": "plain",
@@ -470,14 +476,20 @@
                     },
                     {
                       "kind": "plain",
-                      "text": "'"
+                      "text": "' on track 1"
                     }
                   ],
                   "track": null,
                   "lane": null,
-                  "place": null,
-                  "place_label": null,
-                  "confidence": "exact",
+                  "place": {
+                    "kind": "bars",
+                    "start": 9.0,
+                    "end": null,
+                    "approximate": true,
+                    "section": null
+                  },
+                  "place_label": "about bar 9",
+                  "confidence": "approximate",
                   "tier": "structure"
                 },
                 {
@@ -567,7 +579,7 @@
               },
               "source_label": "Logic backup 08",
               "verdict": "changed",
-              "weight": 1,
+              "weight": 2,
               "sentences": [
                 {
                   "icon": "add",
@@ -584,6 +596,26 @@
                     {
                       "kind": "plain",
                       "text": "'"
+                    }
+                  ],
+                  "track": null,
+                  "lane": null,
+                  "place": null,
+                  "place_label": null,
+                  "confidence": "exact",
+                  "tier": "structure"
+                },
+                {
+                  "icon": "tracks",
+                  "text": "Track count 2 → 3",
+                  "spans": [
+                    {
+                      "kind": "plain",
+                      "text": "Track count "
+                    },
+                    {
+                      "kind": "value",
+                      "text": "2 → 3"
                     }
                   ],
                   "track": null,
@@ -621,7 +653,7 @@
               "sentences": [
                 {
                   "icon": "add",
-                  "text": "Added region 'Chorus Rhodes 2'",
+                  "text": "Added region 'Chorus Rhodes 2' on track 1",
                   "spans": [
                     {
                       "kind": "plain",
@@ -633,14 +665,20 @@
                     },
                     {
                       "kind": "plain",
-                      "text": "'"
+                      "text": "' on track 1"
                     }
                   ],
                   "track": null,
                   "lane": null,
-                  "place": null,
-                  "place_label": null,
-                  "confidence": "exact",
+                  "place": {
+                    "kind": "bars",
+                    "start": 13.0,
+                    "end": null,
+                    "approximate": true,
+                    "section": null
+                  },
+                  "place_label": "about bar 13",
+                  "confidence": "approximate",
                   "tier": "structure"
                 }
               ],
@@ -741,8 +779,28 @@
             "tier": "structure"
           },
           {
+            "icon": "tracks",
+            "text": "Track count 2 → 3",
+            "spans": [
+              {
+                "kind": "plain",
+                "text": "Track count "
+              },
+              {
+                "kind": "value",
+                "text": "2 → 3"
+              }
+            ],
+            "track": null,
+            "lane": null,
+            "place": null,
+            "place_label": null,
+            "confidence": "exact",
+            "tier": "structure"
+          },
+          {
             "icon": "add",
-            "text": "Added region 'Chorus Rhodes'",
+            "text": "Added region 'Chorus Rhodes' on track 1",
             "spans": [
               {
                 "kind": "plain",
@@ -754,19 +812,25 @@
               },
               {
                 "kind": "plain",
-                "text": "'"
+                "text": "' on track 1"
               }
             ],
             "track": null,
             "lane": null,
-            "place": null,
-            "place_label": null,
-            "confidence": "exact",
+            "place": {
+              "kind": "bars",
+              "start": 5.0,
+              "end": null,
+              "approximate": true,
+              "section": null
+            },
+            "place_label": "about bar 5",
+            "confidence": "approximate",
             "tier": "structure"
           },
           {
             "icon": "add",
-            "text": "Added region 'Brushed Kit'",
+            "text": "Added region 'Brushed Kit' on track 1",
             "spans": [
               {
                 "kind": "plain",
@@ -778,19 +842,25 @@
               },
               {
                 "kind": "plain",
-                "text": "'"
+                "text": "' on track 1"
               }
             ],
             "track": null,
             "lane": null,
-            "place": null,
-            "place_label": null,
-            "confidence": "exact",
+            "place": {
+              "kind": "bars",
+              "start": 9.0,
+              "end": null,
+              "approximate": true,
+              "section": null
+            },
+            "place_label": "about bar 9",
+            "confidence": "approximate",
             "tier": "structure"
           },
           {
             "icon": "add",
-            "text": "Added region 'Chorus Rhodes 2'",
+            "text": "Added region 'Chorus Rhodes 2' on track 1",
             "spans": [
               {
                 "kind": "plain",
@@ -802,14 +872,20 @@
               },
               {
                 "kind": "plain",
-                "text": "'"
+                "text": "' on track 1"
               }
             ],
             "track": null,
             "lane": null,
-            "place": null,
-            "place_label": null,
-            "confidence": "exact",
+            "place": {
+              "kind": "bars",
+              "start": 13.0,
+              "end": null,
+              "approximate": true,
+              "section": null
+            },
+            "place_label": "about bar 13",
+            "confidence": "approximate",
             "tier": "structure"
           },
           {
@@ -837,7 +913,7 @@
             "tier": "structure"
           }
         ],
-        "summary": "7 changes Wit can see: 1 song setting, 1 probable rename, 1 new track or MIDI region, 3 regions added, 1 new audio file",
+        "summary": "8 changes Wit can see: 2 song settings, 1 probable rename, 1 new track or MIDI region, 3 regions added, 1 new audio file",
         "note": null,
         "track_heat": [],
         "listen": []
@@ -868,8 +944,8 @@
         "daw": "logic",
         "daw_label": "Logic",
         "tempo_bpm": 88.0,
-        "key": null,
-        "time_signature": null,
+        "key": "C major",
+        "time_signature": "4/4",
         "last_worked": 1790196000,
         "subtitle": "Logic · 88 BPM · last worked Wed 20:40",
         "kept": {
@@ -935,7 +1011,7 @@
               "sentences": [
                 {
                   "icon": "add",
-                  "text": "Added region 'Verse'",
+                  "text": "Added region 'Verse' on track 1",
                   "spans": [
                     {
                       "kind": "plain",
@@ -947,14 +1023,20 @@
                     },
                     {
                       "kind": "plain",
-                      "text": "'"
+                      "text": "' on track 1"
                     }
                   ],
                   "track": null,
                   "lane": null,
-                  "place": null,
-                  "place_label": null,
-                  "confidence": "exact",
+                  "place": {
+                    "kind": "bars",
+                    "start": 5.0,
+                    "end": null,
+                    "approximate": true,
+                    "section": null
+                  },
+                  "place_label": "about bar 5",
+                  "confidence": "approximate",
                   "tier": "structure"
                 }
               ],
@@ -980,7 +1062,7 @@
         "sentences": [
           {
             "icon": "add",
-            "text": "Added region 'Verse'",
+            "text": "Added region 'Verse' on track 1",
             "spans": [
               {
                 "kind": "plain",
@@ -992,14 +1074,20 @@
               },
               {
                 "kind": "plain",
-                "text": "'"
+                "text": "' on track 1"
               }
             ],
             "track": null,
             "lane": null,
-            "place": null,
-            "place_label": null,
-            "confidence": "exact",
+            "place": {
+              "kind": "bars",
+              "start": 5.0,
+              "end": null,
+              "approximate": true,
+              "section": null
+            },
+            "place_label": "about bar 5",
+            "confidence": "approximate",
             "tier": "structure"
           }
         ],
@@ -1066,8 +1154,8 @@
         "daw": "logic",
         "daw_label": "Logic",
         "tempo_bpm": 88.0,
-        "key": null,
-        "time_signature": null,
+        "key": "C major",
+        "time_signature": "4/4",
         "last_worked": 1790191800,
         "subtitle": "Logic · 88 BPM · last worked Wed 19:30",
         "kept": {
@@ -1134,7 +1222,7 @@
               "sentences": [
                 {
                   "icon": "add",
-                  "text": "Added region 'Verse'",
+                  "text": "Added region 'Verse' on track 1",
                   "spans": [
                     {
                       "kind": "plain",
@@ -1146,14 +1234,20 @@
                     },
                     {
                       "kind": "plain",
-                      "text": "'"
+                      "text": "' on track 1"
                     }
                   ],
                   "track": null,
                   "lane": null,
-                  "place": null,
-                  "place_label": null,
-                  "confidence": "exact",
+                  "place": {
+                    "kind": "bars",
+                    "start": 5.0,
+                    "end": null,
+                    "approximate": true,
+                    "section": null
+                  },
+                  "place_label": "about bar 5",
+                  "confidence": "approximate",
                   "tier": "structure"
                 }
               ],
@@ -1180,7 +1274,7 @@
               },
               "source_label": "current save",
               "verdict": "changed",
-              "weight": 1,
+              "weight": 2,
               "sentences": [
                 {
                   "icon": "add",
@@ -1197,6 +1291,26 @@
                     {
                       "kind": "plain",
                       "text": "'"
+                    }
+                  ],
+                  "track": null,
+                  "lane": null,
+                  "place": null,
+                  "place_label": null,
+                  "confidence": "exact",
+                  "tier": "structure"
+                },
+                {
+                  "icon": "tracks",
+                  "text": "Track count 1 → 2",
+                  "spans": [
+                    {
+                      "kind": "plain",
+                      "text": "Track count "
+                    },
+                    {
+                      "kind": "value",
+                      "text": "1 → 2"
                     }
                   ],
                   "track": null,
@@ -1252,8 +1366,28 @@
             "tier": "structure"
           },
           {
+            "icon": "tracks",
+            "text": "Track count 1 → 2",
+            "spans": [
+              {
+                "kind": "plain",
+                "text": "Track count "
+              },
+              {
+                "kind": "value",
+                "text": "1 → 2"
+              }
+            ],
+            "track": null,
+            "lane": null,
+            "place": null,
+            "place_label": null,
+            "confidence": "exact",
+            "tier": "structure"
+          },
+          {
             "icon": "add",
-            "text": "Added region 'Verse'",
+            "text": "Added region 'Verse' on track 1",
             "spans": [
               {
                 "kind": "plain",
@@ -1265,14 +1399,20 @@
               },
               {
                 "kind": "plain",
-                "text": "'"
+                "text": "' on track 1"
               }
             ],
             "track": null,
             "lane": null,
-            "place": null,
-            "place_label": null,
-            "confidence": "exact",
+            "place": {
+              "kind": "bars",
+              "start": 5.0,
+              "end": null,
+              "approximate": true,
+              "section": null
+            },
+            "place_label": "about bar 5",
+            "confidence": "approximate",
             "tier": "structure"
           }
         ],

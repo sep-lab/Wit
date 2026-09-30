@@ -10,8 +10,17 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+# `metadata.rs` reads `MetaData.plist` through `plist::stream::Reader` (a
+# flat event stream, never a recursively-built `Value` tree) so it can
+# enforce its own depth and event-count bounds against a hostile plist —
+# see that module's doc. The `stream` module is only public behind this
+# crate feature, which the crate's own docs flag as liable to break on a
+# minor version bump; pinned with a tilde requirement (the crate's own
+# recommendation) rather than the workspace's usual caret.
+plist = { version = "~1.10.1", features = ["enable_unstable_features_that_may_break_with_minor_version_bumps"] }
 
 [dev-dependencies]
 proptest = "1"
 # The M2 gate reads `plutil -extract … json` output (tests/jonkubis_fixtures.rs).
 serde_json = "1"
+tempfile = "3"

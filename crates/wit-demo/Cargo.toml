@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 flate2 = "1.0"
+plist = "1"
 
 [dev-dependencies]
 tempfile = "3"

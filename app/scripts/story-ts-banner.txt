@@ -1,0 +1,8 @@
+/**
+ * GENERATED FILE — do not hand-edit.
+ * Source: crates/wit-story/schema/library.schema.json (itself generated from
+ * crates/wit-story/src/types.rs and pinned by crates/wit-story/tests/contract.rs).
+ * Regenerate with: npm run gen:types
+ * CI fails the build if this file is stale (app-build.yml runs
+ * `npm run gen:types` then `git diff --exit-code`).
+ */

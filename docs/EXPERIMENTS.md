@@ -614,12 +614,25 @@ was unknown before this experiment.
 **Method.** `wit logic-report <library-root>` (new in this change; `crates/wit-index/src/report.rs`,
 `crates/wit-cli/src/main.rs`) discovers every Logic/GarageBand bundle under a library root
 (reusing `wit-index`'s M3 discovery, `discover_logic_projects`), and for every alternative's
-chain (`Project File Backups/00`–`09` oldest-first, then the current `ProjectData` —
-matching M2's `backup_chain()` order in `wit-logic/tests/real_fixtures.rs`) walks every
-consecutive pair with `wit_logic::walk` and reports, per pair: `semantic_equal`'s verdict,
-`wit_logic::change_count` (a new diagnostic — one per differing census tag or added/removed
-extracted name, or a tempo change; `0` exactly when the verdict is `NoStructuralChange`),
-and raw byte identity.
+chain (every backup plus the current `ProjectData`, ordered by file modification time —
+**not** `Project File Backups/00`–`09` slot-name order, which the `00`–`09` slots
+disagree with once the ring has wrapped past `09` back to `00`; see the follow-up below)
+walks every consecutive pair with `wit_logic::walk` and reports, per pair:
+`semantic_equal`'s verdict, `wit_logic::change_count` (a new diagnostic — one per differing
+census tag or added/removed extracted name, or a tempo change; `0` exactly when the verdict
+is `NoStructuralChange`), and raw byte identity.
+
+**Follow-up correction (found in review, PLAN-V2 Logic lane, 2026-09-29).** `logic_report`
+originally built each alternative's chain in `Project File Backups/00`–`09` slot-name
+order, which is a directory listing, not a save order — the slots are a ring, so a project
+old enough to have wrapped once has its pairing mixed up around the wrap. **Measured**
+against a real library: 4 of 28 alternatives had backups out of slot order, and re-pairing
+by file modification time instead of slot name changed the count of pairs with no visible
+structural change from 49 to 51 of 164 total. The fix orders by file modification time
+instead (tie-broken by slot name); see `crates/wit-index/src/discover.rs`'s
+`sort_by_save_time` and `LogicAlternative::backups`'s doc comment. **The 33.0%/67.0% split
+and the distribution below predate that fix and need to be re-measured** against the real
+library before being cited again — the reproduction command is unchanged.
 
 **Result — measured, n = 32 projects, 2026-08-16.**
 

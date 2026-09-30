@@ -11,10 +11,12 @@
 //! - resolving a `.logicx` bundle directory to its current alternative
 //!   (`resolve_project_data`'s `as_bundle` branch in `wit-cli::main`).
 //!
-//! Every case also asserts the tempdir's own absolute path — standing in
-//! for a real machine's home directory — never leaks into `wit`'s output,
-//! the same privacy discipline `wit dupes`/`wit logic-report` enforce with
-//! `wit_index::assert_no_home_paths`.
+//! The three success cases above also assert the tempdir's own absolute
+//! path — standing in for a real machine's home directory — never leaks
+//! into `wit`'s output, the same privacy discipline `wit dupes`/`wit
+//! logic-report` enforce with `wit_index::assert_no_home_paths`. The fourth
+//! case, a read failure, does not: by design, `resolve_project_data`'s
+//! error path prints the path it tried, so the failure is actionable.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -168,7 +170,7 @@ fn resolves_a_bundle_directory_to_its_current_alternative() {
 }
 
 #[test]
-fn reports_a_read_failure_without_panicking_and_without_leaking_the_path() {
+fn reports_a_read_failure_without_panicking() {
     // Mirrors `diff_als.rs`'s equivalent case: a missing/invalid
     // `ProjectData` must fail loudly, not panic, and the error path (which
     // does print the resolved path, by design, so the failure is

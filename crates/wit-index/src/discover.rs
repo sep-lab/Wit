@@ -4,6 +4,7 @@
 //! and neither takes a path as input, only bytes).
 
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogicKind {
@@ -17,10 +18,21 @@ pub struct LogicAlternative {
     /// `Alternatives/<name>/ProjectData` — always present if the
     /// alternative directory exists at all.
     pub current: PathBuf,
-    /// `Alternatives/<name>/Project File Backups/NN/ProjectData`, sorted
-    /// by slot name. Empty for GarageBand (probe-verified: GarageBand has
-    /// no `Project File Backups/`) and for a Logic project that hasn't
+    /// `Alternatives/<name>/Project File Backups/NN/ProjectData`, sorted by
+    /// **slot name** (`00`..`09`) — this is a raw directory listing, not a
+    /// save order. Empty for GarageBand (probe-verified: GarageBand has no
+    /// `Project File Backups/`) and for a Logic project that hasn't
     /// accumulated any yet — never assumed present.
+    ///
+    /// **Slot order is not save order.** The slots are a ring: Logic writes
+    /// the next backup into the next slot and wraps from `09` back to `00`,
+    /// so on any project old enough to have wrapped once, slot `00` holds a
+    /// *newer* save than slot `09`. Anything that needs chronological
+    /// order — [`LogicProject::all_versions`], `wit-index::report`'s
+    /// `logic_report` — sorts by file modification time instead (tie-broken
+    /// by slot name, so two saves in the same second stay deterministic).
+    /// Found in review: `report.rs` originally paired backups in this
+    /// field's slot order and so mis-paired a wrapped chain.
     pub backups: Vec<PathBuf>,
 }
 
@@ -34,15 +46,47 @@ pub struct LogicProject {
     pub alternatives: Vec<LogicAlternative>,
 }
 
+/// A path's modification time, or the Unix epoch when it can't be read
+/// (permissions, a race with a deletion, ...) — never a panic, and a
+/// deliberately *old* fallback so an unreadable file sorts first rather
+/// than jumping the queue as if it were newest.
+pub(crate) fn mtime_or_epoch(path: &Path) -> SystemTime {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .unwrap_or(SystemTime::UNIX_EPOCH)
+}
+
+/// Sort a chain of save paths into real chronological order: by file
+/// modification time, tie-broken by the path itself (which embeds the slot
+/// name for a backup) so the order is deterministic even when two saves
+/// land in the same mtime second. This is the one ordering every consumer
+/// that cares about save order should use — see [`LogicAlternative::backups`]
+/// for why slot order alone is not it.
+pub(crate) fn sort_by_save_time(paths: &mut [&PathBuf]) {
+    paths.sort_by(|a, b| {
+        mtime_or_epoch(a)
+            .cmp(&mtime_or_epoch(b))
+            .then_with(|| a.cmp(b))
+    });
+}
+
 impl LogicProject {
-    /// Every `ProjectData` path across every alternative, current save
-    /// first then backups, oldest-to-current within each alternative's
-    /// backup slots — the order `wit scan`'s version count means.
+    /// Every `ProjectData` path across every alternative, in real
+    /// chronological order **within each alternative** (oldest backup to
+    /// the current save, by file modification time — see
+    /// [`LogicAlternative::backups`]); alternatives themselves keep their
+    /// existing relative order, since Logic's alternatives are siblings
+    /// with no shared timeline to interleave them into.
     pub fn all_versions(&self) -> Vec<&PathBuf> {
         let mut v = Vec::new();
         for alt in &self.alternatives {
-            v.extend(alt.backups.iter());
-            v.push(&alt.current);
+            let mut chain: Vec<&PathBuf> = alt
+                .backups
+                .iter()
+                .chain(std::iter::once(&alt.current))
+                .collect();
+            sort_by_save_time(&mut chain);
+            v.extend(chain);
         }
         v
     }
@@ -495,6 +539,36 @@ mod tests {
         assert_eq!(p.alternatives.len(), 1);
         assert_eq!(p.alternatives[0].backups.len(), 2);
         assert_eq!(p.all_versions().len(), 3);
+    }
+
+    #[test]
+    fn all_versions_orders_a_wrapped_backup_ring_by_mtime_not_by_slot() {
+        // The ring already wrapped: slots 08/09 hold the oldest two saves,
+        // slots 00/01 the next two (written after wrapping past 09), and
+        // the current save is newest. Slot-alphabetical order would read
+        // 00, 01, 08, 09, current — real chronological order is
+        // 08, 09, 00, 01, current.
+        let dir = tempfile::tempdir().unwrap();
+        let bundle = dir.path().join("Song.logicx");
+        let alt = bundle.join("Alternatives/000");
+        let chronological = [
+            (alt.join("Project File Backups/08/ProjectData"), 1_000),
+            (alt.join("Project File Backups/09/ProjectData"), 2_000),
+            (alt.join("Project File Backups/00/ProjectData"), 3_000),
+            (alt.join("Project File Backups/01/ProjectData"), 4_000),
+            (alt.join("ProjectData"), 5_000),
+        ];
+        for (path, secs) in &chronological {
+            touch_at(path, *secs);
+        }
+
+        let projects = discover_logic_projects(dir.path());
+        let versions = projects[0].all_versions();
+        let expected: Vec<&PathBuf> = chronological.iter().map(|(p, _)| p).collect();
+        assert_eq!(
+            versions, expected,
+            "must follow mtime order, not slot-name order"
+        );
     }
 
     #[test]

@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "Baseline capabilities for the main window and the tray popover. No network, filesystem, shell or updater permissions are granted anywhere (ADR-0008: no network code in the app, no auto-updater).",
+  "windows": ["main", "tray-popover"],
+  "permissions": ["core:default"]
+}
