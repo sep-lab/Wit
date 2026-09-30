@@ -488,7 +488,10 @@ Measured while porting `experiments/flp_parse.py` to `crates/wit-flp`, on read-o
 songs, templates and system files, saved by FL 8.5.0 through 20.8.1 — Image-Line's own
 material), the real FL 10.0.0 project measured above, and a real FL 25.2.5 project's
 current save plus 4 of its `Backup/` autosaves (not named here — personal material, per
-AGENTS.md). All 178 walk to a clean end of stream.
+AGENTS.md). All 178 walk to a clean end of stream. Every number in this section is printed
+by `WIT_FIXTURES=<folder holding those files> cargo test -p wit-flp --test real_fixtures --
+--ignored --nocapture` (the two same-song checks and the pinned name lists need FL Studio
+20's bundled files under that folder).
 
 - **Where a name sits decides what it names — [verified].** FL's text events carry no
   owner, so `wit-flp` walks the stream as three regions: **channel blocks** (each starts
@@ -525,8 +528,8 @@ AGENTS.md). All 178 walk to a clean end of stream.
   files sit either in a channel header (4,004: that channel's generator, e.g. `"FPC"`,
   empty for a plain Sampler) or in the mixer (4,399: effects), none anywhere else. The
   mixer position an effect sits on is counted from the first id-236 event (0 = Master);
-  positions 1–99 read as FL's "Insert 1"–"Insert 99", higher positions are left
-  unlabelled (their FL label differs by version and was not checked). **Inferred**, not
+  positions 1–99 read as FL's "Insert 1"–"Insert 99", higher positions are shown as a
+  bare position (their FL label differs by version and was not checked). **Inferred**, not
   observed in FL: 63 of the 85 files with an effect at position 0 have a Fruity Limiter
   or Maximus there (the bundled `Basic with limiter.flp` template's only effect is a
   Fruity Limiter at position 0), and
@@ -561,8 +564,27 @@ AGENTS.md). All 178 walk to a clean end of stream.
   the 5 FL 25 saves. **Pattern names (id 193) are unverified on FL 25 for the same
   reason** (zero occurrences there).
 - **A literal `"Arrangement"` text decoded from event id 241** on FL 20/25 files (absent
-  on FL 10, which predates arrangements) — a plausible but **unverified** candidate for an
-  arrangement name, kept separate from the better-evidenced ids above.
+  on FL 10, which predates arrangements), always right after an id-99 event (71 of 71) —
+  a plausible but **unverified** candidate for an arrangement name, kept separate from
+  the better-evidenced ids above.
+- **A name belongs to an object, and a missing name is not a missing object —
+  [verified].** FL saves a pattern's or a mixer insert's name only when the user set one
+  (94 of the 173 pre-FL-25 files have a pattern with no saved name), and a channel's name
+  can be missing too, so `wit-flp` keeps every name on the object it names, identified by
+  what the file itself provides: a **channel** by its rack position (`NewChan`'s own
+  payload is just that position, in 173 of 173 pre-FL-25 files); a **pattern** by the
+  number its id-65 event carries (all 2,550 pattern names follow their id-65 event —
+  2,525 directly, 25 after only ids 91/72 — and no number ever gets two names); a **mixer
+  insert** by its position, each id-204 name belonging to the insert whose id-236 event
+  comes next (2,619 of 2,619); an **arrangement** by its order. A comparison then reports
+  "named", "renamed" or "name cleared" on that object, and "added"/"removed" only when the
+  object itself appears or disappears. An earlier version compared bare name lists, so
+  clearing a pattern's name printed `pattern removed`, and naming a mixer insert printed
+  `mixer insert added` — on FL 8.5–20.8, which always save a fixed 105 (FL 8.5–12.5) or
+  127 (FL 12.9–20.8) mixer positions. Two FL 25-specific limits: pattern numbers are
+  scrambled scalars there, so patterns are not compared on FL 25 at all; and FL 25 saves
+  18 positions, which is the only case where a position appearing or disappearing is
+  reported as an insert added or removed (unverified).
 - FL's own `Backup/` autosave folder is typically **shared across an entire "Projects"
   root**, not per-project, and its filenames (`"<name> (autosaved at <time>).flp"`) carry
   only a time of day, no date — measured on 4 real autosaves spanning 2 calendar days,
@@ -573,7 +595,11 @@ AGENTS.md). All 178 walk to a clean end of stream.
   registry key however many autosaves FL rotates away. A chain attaches to a same-named
   current file under its Projects root — and when several exist (a copied project
   folder), to the one at FL's own save location, so copying a project doesn't detach and
-  re-archive its autosaves.
+  re-archive its autosaves. It never attaches to a same-named file *outside* the Projects
+  root: `"untitled"` is FL's name for every unsaved project, so an unrelated
+  `untitled.flp` in, say, Downloads would otherwise collect a Projects root's untitled
+  autosaves (the cost: a project moved out of its Projects root keeps its autosaves as a
+  separate backup-only project).
 
 ---
 

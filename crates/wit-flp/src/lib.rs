@@ -63,7 +63,10 @@
 //!    mixer effect, say) is never read as a channel's name.
 //!    `DefPluginName` (201) is a channel's generator in a channel header
 //!    and an effect in the mixer — on every version, which the prototype
-//!    (one flat text listing) never distinguished.
+//!    (one flat text listing) never distinguished. And every name is kept
+//!    on the object it names (a channel's rack position, a pattern's
+//!    number, a mixer position, an arrangement's order), because FL saves
+//!    most names only when the user set one.
 //! 3. **`extract.rs`: tempo (id 156) and a best-effort arrangement name
 //!    (id 241) are new** — neither is decoded as a *semantic* field by the
 //!    prototype, which prints one generic, unlabelled text row per id in
@@ -77,9 +80,10 @@ mod compare;
 mod extract;
 mod frame;
 
-pub use compare::{compare, compare_with_bytes, FlChange};
+pub use compare::{compare, compare_with_bytes, FlChange, NameChange};
 pub use extract::{
-    decode_text, extract, major_version, Extracted, FormatStatus, MixerEffect, RackChannel, Tempo,
+    decode_text, extract, major_version, Extracted, FormatStatus, MixerEffect, Pattern,
+    RackChannel, Tempo, MAX_NUMBERED_INSERT,
 };
 pub use frame::{parse_container, FlpError, Header, RawEvent, MAX_EVENTS};
 

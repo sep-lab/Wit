@@ -38,6 +38,20 @@
 //! anywhere else — on every FL version measured, which is why generator
 //! and effect plugins can be read the same way on every version.
 //!
+//! # Names are kept with the object they name
+//!
+//! FL saves a pattern's or a mixer insert's name only when the user set
+//! one, and a channel's can be missing too, so a list of names can't tell
+//! "renamed" from "removed". Each name is stored on its object instead:
+//! a channel by its rack position, a pattern by the number its `PatNew`
+//! (65) carries, a mixer insert by its position (each `InsertName` names
+//! the insert whose 236 comes next), an arrangement by its order. See each
+//! id's doc for the measurement behind the attachment.
+//!
+//! Every number quoted in this module is printed by
+//! `WIT_FIXTURES=… cargo test -p wit-flp --test real_fixtures -- --ignored
+//! --nocapture` over the same 178 files.
+//!
 //! # The channel-name id changed in FL 11.5
 //!
 //! A first pass of this module read every channel's name from id 192
@@ -55,6 +69,7 @@
 //! appears verbatim among the newer saves' names.
 
 use crate::frame::{Header, RawEvent};
+use std::collections::BTreeMap;
 use std::fmt;
 
 /// `NewChan` — starts a channel block. Present in every FL version
@@ -67,10 +82,19 @@ const NEW_CHAN: u8 = 64;
 /// through 11.1.1, exactly one per channel block (943 blocks). **Never
 /// read on FL >= 11.5** — see [`NEW_CHANNEL_SCHEME_MIN_VERSION`].
 const CHAN_NAME: u8 = 192;
-/// `PatName` — a pattern's display name. Verified on real pre-v25 files
-/// (e.g. `"Choir"` on an FL 10 file). **Unverified on FL 25**: id 193
-/// occurs zero times in all 5 real FL 25 saves checked, so whether it
-/// still names a pattern there has not been observed either way.
+/// `PatNew` — starts a stretch of one pattern's events; its word payload is
+/// that pattern's number. Measured on the 173 pre-FL-25 files: numbers
+/// start at 1, one pattern's events can come in several stretches (up to
+/// 8 `PatNew` events with the same number), and no number ever gets two
+/// different names. **Unreadable on FL 25**: it is a scalar, so the
+/// keystream scrambles it (values like `42658` on a 1-pattern project).
+const PAT_NEW: u8 = 65;
+/// `PatName` — a pattern's display name, **saved only when the user set
+/// one**: 94 of the 173 pre-FL-25 files have a pattern with no saved name.
+/// It belongs to the pattern whose `PatNew` came last: 2,525 of 2,550
+/// names directly follow their `PatNew`, the other 25 follow it after only
+/// ids 91/72. Verified on real pre-v25 files (e.g. `"Choir"`).
+/// **Unverified on FL 25**: id 193 occurs zero times in all 5 FL 25 saves.
 const PAT_NAME: u8 = 193;
 /// `Version` — the FL Studio build that wrote the file, e.g.
 /// `"25.2.5.5055"`. Event #0 in all 178 real files checked.
@@ -98,23 +122,38 @@ const PLUGIN_NAME: u8 = 203;
 /// declaring one of those versions takes the pre-11.5 path — untested for
 /// that range rather than wrong by measurement.
 const NEW_CHANNEL_SCHEME_MIN_VERSION: (u32, u32) = (11, 5);
-/// `InsertName` — a mixer insert's display name (present only when the
-/// insert was renamed). Verified: decodes real insert names (`"Dream
-/// bell"`, `"REC"`) on real pre-v25 files. **Unverified on FL 25**: id 204
-/// occurs zero times in all 5 real FL 25 saves checked.
+/// `InsertName` — a mixer insert's display name, **saved only when the
+/// user set one**. It belongs to the insert whose 236 comes *next*: every
+/// one of the 2,619 id-204 events in the 178 files is followed by a 236
+/// before any other 204 (FL 20.7's `Surround mix.flp` template names
+/// insert *n* `"n"` and puts a plugin renamed `"n"` on it). Verified
+/// decoding real names (`"Dream bell"`, `"REC"`). **Unverified on FL 25**:
+/// id 204 occurs zero times in all 5 FL 25 saves.
 const INSERT_NAME: u8 = 204;
 /// One per mixer position, in mixer order; the first one starts the
-/// mixer. Measured: 105 per file on FL 8.5–12.5, 127 on FL 12.9–20.8, 18
-/// on the FL 25 saves checked — and never inside a channel block. The
-/// position (0 = Master, counted from the first 236) is what
-/// [`MixerEffect::insert`] reports.
+/// mixer. Measured: 105 per file on FL 8.5–12.5, 127 on FL 12.9–20.8
+/// (so on those versions an insert is never added or removed — the count
+/// is fixed by the FL version), 18 on the FL 25 saves checked — and never
+/// inside a channel block. A position is counted from the first 236 (0 =
+/// Master); see [`MAX_NUMBERED_INSERT`].
 const MIXER_INSERT_START: u8 = 236;
-/// Mixer positions above this are not labelled (see
-/// [`MixerEffect::insert`]): 1–99 are "Insert 1".."Insert 99" on every FL
-/// version with 105 or 127 positions, but what FL calls positions 100 and
-/// up differs by version (sends and the "current" track on 105-position
-/// files, more inserts on 127-position ones) and was not checked here.
-const MAX_LABELLED_INSERT: u32 = 99;
+/// Mixer positions 1 to this are FL's "Insert 1".."Insert 99" on every
+/// version with 105 or 127 positions. What FL calls a higher position
+/// differs by version (sends and the "current" track on 105-position
+/// files, more inserts on 127-position ones) and was not checked, so a
+/// reader should show those as a bare position, not an insert number.
+/// **Inferred, not observed in FL itself:** 63 of the 85 real files with
+/// an effect at position 0 have a Fruity Limiter or Maximus there (the
+/// bundled `Basic with limiter.flp` template's only effect is a Fruity
+/// Limiter at position 0), and `Surround mix.flp`'s insert names match
+/// this numbering. Unverified on FL 25.
+pub const MAX_NUMBERED_INSERT: u16 = 99;
+/// `ArrangementNew` — starts an arrangement. Its word payload counts
+/// 0, 1, ... in file order on every pre-FL-25 file (and is scrambled on FL
+/// 25), so an arrangement's position is counted from these events rather
+/// than read from the payload. Every one of the 71 in the 178 files is
+/// followed by its [`ARRANGEMENT_NAME_GUESS`] before the next one.
+const ARRANGEMENT_NEW: u8 = 99;
 /// Events that end the channel section. **Derived from the data:** none of
 /// these ids occurs inside any channel block (before the next `NewChan`)
 /// in any of the 178 real files, and the first event after every file's
@@ -142,10 +181,10 @@ const CHANNEL_HEADER_IDS: [u8; 3] = [21, DEF_PLUGIN_NAME, 212];
 const TEMPO: u8 = 156;
 /// An empirically observed, **undocumented** id that decoded to the
 /// literal text `"Arrangement"` on the FL 20/25 files checked (absent on
-/// FL 10, which predates arrangements). The closest candidate found for
-/// the whitelist's "playlist/arrangement names if present"; kept separate
-/// from the better-evidenced ids above. `Extracted::arrangement_names` is
-/// empty, never wrong, if this guess is off for a given file.
+/// FL 10, which predates arrangements), always right after an
+/// [`ARRANGEMENT_NEW`]. The closest candidate found for the whitelist's
+/// "playlist/arrangement names if present"; kept separate from the
+/// better-evidenced ids above.
 const ARRANGEMENT_NAME_GUESS: u8 = 241;
 
 /// Decode a NUL-terminated FL text payload — byte-for-byte port of
@@ -244,12 +283,16 @@ pub enum FormatStatus {
     /// pattern names (id 193) and mixer insert names (id 204) — neither id
     /// occurs in any of those 5 files — and the mixer position an effect is
     /// attributed to (FL 25 saves only 18 mixer positions, and which FL
-    /// label each carries was not checked). [`Extracted::tempo`] is
-    /// [`Tempo::PartialV25ScalarsUnreadable`].
+    /// label each carries was not checked). Pattern numbers are scalars,
+    /// so patterns carry no number and are not compared.
+    /// [`Extracted::tempo`] is [`Tempo::PartialV25ScalarsUnreadable`].
     PartialV25ScalarsUnreadable,
 }
 
-/// One channel in the Channel rack, in rack order.
+/// One channel in the Channel rack. Channels are identified by their
+/// place in the rack: `NewChan`'s own payload is just the rack position
+/// (0, 1, 2, ... in order on all 173 pre-FL-25 files; scrambled on FL 25),
+/// so there is no separate id to key on.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RackChannel {
     /// The channel's own display name, or `None` when the file carries no
@@ -263,6 +306,17 @@ pub struct RackChannel {
     pub generator: Option<String>,
 }
 
+/// One pattern: its number and, if the user named it, its name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pattern {
+    /// The number FL saves with the pattern ([`PAT_NEW`]'s payload) —
+    /// **inferred** to be FL's own "Pattern n" number (values start at 1).
+    /// `None` on FL 25, where it is a scrambled scalar.
+    pub number: Option<u16>,
+    /// `None` when no name was saved (FL then shows its default name).
+    pub name: Option<String>,
+}
+
 /// One effect plugin in the mixer.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MixerEffect {
@@ -271,22 +325,17 @@ pub struct MixerEffect {
     /// plugin's name lives in its opaque state (ADR-0003), not in a
     /// whitelisted text event.
     pub name: String,
-    /// Which mixer insert it sits on: `Some(0)` is the Master, `Some(n)` is
-    /// FL's "Insert n". `None` for positions above 99, whose FL label
-    /// depends on the version and was not checked. Counted from the first
-    /// [`MIXER_INSERT_START`] event. **Inferred, not observed in FL
-    /// itself:** 63 of the 85 real files with an effect at position 0 have
-    /// a Fruity Limiter or Maximus there (the bundled `Basic with
-    /// limiter.flp` template's only effect is a Fruity Limiter at position
-    /// 0), and FL 20.7's `Surround mix.flp` template names insert *n* (204)
-    /// `"n"` right before position *n*'s 236 — both consistent with this
-    /// numbering. Unverified on FL 25.
-    pub insert: Option<u16>,
+    /// The mixer position it sits on (0 = Master) — see
+    /// [`MAX_NUMBERED_INSERT`] for which positions are FL's "Insert n".
+    pub position: u16,
 }
 
 /// Everything this crate's whitelist extracts from one `.flp`: the header
 /// fields, the FL Studio version that wrote it, tempo, and every
-/// whitelisted name category.
+/// whitelisted name category. Names are kept **with the object they
+/// belong to** (a channel, pattern, mixer position or arrangement), because
+/// FL saves most of them only when the user set one: a name disappearing
+/// usually means it was cleared, not that its object was removed.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Extracted {
     pub header_format: i16,
@@ -299,18 +348,22 @@ pub struct Extracted {
     pub fl_version: Option<String>,
     pub format_status: FormatStatus,
     pub tempo: Tempo,
-    /// One entry per channel block (`NewChan`), in rack order. See
-    /// [`Extracted::channel_names`] and [`Extracted::generator_names`].
+    /// One entry per channel block (`NewChan`), in rack order.
     pub channel_rack: Vec<RackChannel>,
-    pub pattern_names: Vec<String>,
+    /// Before FL 25: one entry per pattern number, in number order, named
+    /// or not. On FL 25 (numbers unreadable): one entry per saved pattern
+    /// name, `number: None`.
+    pub patterns: Vec<Pattern>,
+    /// One entry per mixer position (0 = Master): that insert's saved
+    /// name, if any.
+    pub mixer_inserts: Vec<Option<String>>,
     /// Every effect plugin in the mixer, in mixer order — on every FL
     /// version (FL < 11.5 used to list these mixed in with generators;
     /// FL >= 11.5 used to drop them).
     pub mixer_effects: Vec<MixerEffect>,
-    pub mixer_insert_names: Vec<String>,
-    /// Best-effort — see [`ARRANGEMENT_NAME_GUESS`]. Always empty rather
-    /// than wrong if the guess doesn't hold for a given file.
-    pub arrangement_names: Vec<String>,
+    /// One entry per arrangement, in order: its name — best-effort, see
+    /// [`ARRANGEMENT_NAME_GUESS`].
+    pub arrangements: Vec<Option<String>>,
 }
 
 impl Extracted {
@@ -330,6 +383,24 @@ impl Extracted {
             .iter()
             .filter_map(|c| c.generator.clone())
             .collect()
+    }
+
+    /// Every saved pattern name, in pattern order.
+    pub fn pattern_names(&self) -> Vec<String> {
+        self.patterns
+            .iter()
+            .filter_map(|p| p.name.clone())
+            .collect()
+    }
+
+    /// Every saved mixer insert name, in mixer order.
+    pub fn mixer_insert_names(&self) -> Vec<String> {
+        self.mixer_inserts.iter().flatten().cloned().collect()
+    }
+
+    /// Every saved arrangement name, in order.
+    pub fn arrangement_names(&self) -> Vec<String> {
+        self.arrangements.iter().flatten().cloned().collect()
     }
 }
 
@@ -356,7 +427,7 @@ enum Region {
     /// After the channel section, before the mixer.
     AfterChannels,
     /// In the mixer, at this position (0 = Master).
-    Mixer { position: u32 },
+    Mixer { position: u16 },
 }
 
 /// Extract every whitelisted field from an already-walked event stream.
@@ -387,6 +458,14 @@ pub fn extract(header: &Header, events: &[RawEvent<'_>]) -> Extracted {
     // blank, which leaves `generator` at None but must still not let a
     // second header 201 overwrite it).
     let mut generator_seen = false;
+    // Pattern number -> saved name, before FL 25; the pattern a 193 names
+    // is the one whose PatNew came last.
+    let mut patterns: BTreeMap<u16, Option<String>> = BTreeMap::new();
+    let mut current_pattern: Option<u16> = None;
+    // An InsertName names the insert whose 236 comes next.
+    let mut pending_insert_name: Option<String> = None;
+    // Whether the last arrangement started still waits for its name.
+    let mut arrangement_unnamed = false;
 
     for event in events {
         let id = event.id;
@@ -407,6 +486,7 @@ pub fn extract(header: &Header, events: &[RawEvent<'_>]) -> Extracted {
                     _ => 0,
                 },
             };
+            out.mixer_inserts.push(pending_insert_name.take());
         } else if matches!(region, Region::Channel { .. }) && CHANNEL_SECTION_END_IDS.contains(&id)
         {
             region = Region::AfterChannels;
@@ -435,12 +515,7 @@ pub fn extract(header: &Header, events: &[RawEvent<'_>]) -> Extracted {
                 }
                 Region::Mixer { position } => {
                     if let Some(name) = non_blank(event.payload) {
-                        out.mixer_effects.push(MixerEffect {
-                            name,
-                            insert: u16::try_from(position)
-                                .ok()
-                                .filter(|_| position <= MAX_LABELLED_INSERT),
-                        });
+                        out.mixer_effects.push(MixerEffect { name, position });
                     }
                 }
                 // Measured never: a 201 before the channels, after the
@@ -465,9 +540,47 @@ pub fn extract(header: &Header, events: &[RawEvent<'_>]) -> Extracted {
                     }
                 }
             }
-            PAT_NAME => push_text(&mut out.pattern_names, event.payload),
-            INSERT_NAME => push_text(&mut out.mixer_insert_names, event.payload),
-            ARRANGEMENT_NAME_GUESS => push_text(&mut out.arrangement_names, event.payload),
+            PAT_NEW if !v25_plus => {
+                if let Ok(bytes) = <[u8; 2]>::try_from(event.payload) {
+                    let number = u16::from_le_bytes(bytes);
+                    patterns.entry(number).or_default();
+                    current_pattern = Some(number);
+                }
+            }
+            PAT_NAME if v25_plus => {
+                // Pattern numbers are scrambled on FL 25: keep the name,
+                // without a number to key it on.
+                if let Some(name) = non_blank(event.payload) {
+                    out.patterns.push(Pattern {
+                        number: None,
+                        name: Some(name),
+                    });
+                }
+            }
+            PAT_NAME => {
+                // Measured: every 193 has a PatNew before it, and no
+                // pattern number is ever given two names.
+                if let Some(slot) = current_pattern.and_then(|n| patterns.get_mut(&n)) {
+                    if slot.is_none() {
+                        *slot = non_blank(event.payload);
+                    }
+                }
+            }
+            INSERT_NAME => pending_insert_name = non_blank(event.payload),
+            ARRANGEMENT_NEW => {
+                out.arrangements.push(None);
+                arrangement_unnamed = true;
+            }
+            ARRANGEMENT_NAME_GUESS => {
+                let name = non_blank(event.payload);
+                match out.arrangements.last_mut() {
+                    Some(slot) if arrangement_unnamed => *slot = name,
+                    // Never observed: a name with no arrangement start of
+                    // its own. Kept as its own arrangement, not merged.
+                    _ => out.arrangements.push(name),
+                }
+                arrangement_unnamed = false;
+            }
             TEMPO if v25_plus => out.tempo = Tempo::PartialV25ScalarsUnreadable,
             TEMPO if event.payload.len() == 4 => {
                 let raw = u32::from_le_bytes(event.payload.try_into().unwrap());
@@ -476,18 +589,21 @@ pub fn extract(header: &Header, events: &[RawEvent<'_>]) -> Extracted {
             _ => {}
         }
     }
+    if !v25_plus {
+        out.patterns = patterns
+            .into_iter()
+            .map(|(number, name)| Pattern {
+                number: Some(number),
+                name,
+            })
+            .collect();
+    }
     out
 }
 
 fn non_blank(payload: &[u8]) -> Option<String> {
     let text = decode_text(payload);
     (!text.trim().is_empty()).then_some(text)
-}
-
-fn push_text(into: &mut Vec<String>, payload: &[u8]) {
-    if let Some(text) = non_blank(payload) {
-        into.push(text);
-    }
 }
 
 #[cfg(test)]
@@ -667,7 +783,7 @@ mod tests {
             e.mixer_effects,
             vec![MixerEffect {
                 name: "Control Surface".to_string(),
-                insert: Some(0),
+                position: 0,
             }]
         );
     }
@@ -798,7 +914,7 @@ mod tests {
             channel("Snare", ""),
         ]);
         assert_eq!(e.channel_names(), strings(&["Kick", "Snare"]));
-        assert_eq!(e.pattern_names, strings(&["Intro"]));
+        assert_eq!(e.pattern_names(), strings(&["Intro"]));
     }
 
     #[test]
@@ -840,11 +956,12 @@ mod tests {
             latin1_text(199, "10.0.0"),
             old_scheme_channel("Kick", ""),
             old_scheme_channel("Xtra Bass", "Sytrus"),
+            word_event(65, 1),
             latin1_text(193, "Choir"),
         ]);
         assert_eq!(e.channel_names(), strings(&["Kick", "Xtra Bass"]));
         assert_eq!(e.generator_names(), strings(&["Sytrus"]));
-        assert_eq!(e.pattern_names, strings(&["Choir"]));
+        assert_eq!(e.pattern_names(), strings(&["Choir"]));
     }
 
     #[test]
@@ -883,7 +1000,7 @@ mod tests {
     // ---- mixer effects, on every version ------------------------------ //
 
     #[test]
-    fn mixer_effects_are_read_with_their_insert_on_fl_11_5_plus() {
+    fn mixer_effects_and_insert_names_are_read_by_position_on_fl_11_5_plus() {
         let e = extracted_of(vec![
             latin1_text(199, "20.8.0.1377"),
             channel("Kick", ""),
@@ -902,19 +1019,23 @@ mod tests {
             vec![
                 MixerEffect {
                     name: "Maximus".to_string(),
-                    insert: Some(0)
+                    position: 0
                 },
                 MixerEffect {
                     name: "Fruity Reeverb 2".to_string(),
-                    insert: Some(2)
+                    position: 2
                 },
                 MixerEffect {
                     name: "Fruity Limiter".to_string(),
-                    insert: Some(2)
+                    position: 2
                 },
             ]
         );
-        assert_eq!(e.mixer_insert_names, strings(&["Drums", "Vox"]));
+        // Each 204 names the insert whose 236 comes next.
+        assert_eq!(
+            e.mixer_inserts,
+            vec![None, Some("Drums".to_string()), Some("Vox".to_string())]
+        );
     }
 
     #[test]
@@ -938,33 +1059,35 @@ mod tests {
         ]);
         assert_eq!(e.channel_names(), strings(&["Kick"]));
         assert_eq!(e.generator_names(), strings(&["Sytrus"]));
-        let effects: Vec<(&str, Option<u16>)> = e
+        let effects: Vec<(&str, u16)> = e
             .mixer_effects
             .iter()
-            .map(|m| (m.name.as_str(), m.insert))
+            .map(|m| (m.name.as_str(), m.position))
             .collect();
         assert_eq!(
             effects,
-            vec![
-                ("Fruity Limiter", Some(0)),
-                ("Fruity Wrapper", Some(1)),
-                ("Maximus", Some(1)),
-            ]
+            vec![("Fruity Limiter", 0), ("Fruity Wrapper", 1), ("Maximus", 1)]
         );
     }
 
     #[test]
-    fn mixer_positions_above_99_are_not_labelled() {
+    fn every_mixer_position_is_kept_named_or_not() {
+        // FL 8.5–20.8 save a fixed 105/127 positions; an unnamed insert is
+        // still an insert, so the list keeps one entry per position.
         let mut events = vec![latin1_text(199, "20.8.0.1377")];
-        for _ in 0..100 {
+        for _ in 0..3 {
             events.push(var_event(236, &[0; 4]));
         }
-        events.push(latin1_text(201, "at position 99"));
+        events.push(latin1_text(204, "Vocals"));
         events.push(var_event(236, &[0; 4]));
-        events.push(latin1_text(201, "at position 100"));
+        events.push(latin1_text(204, " ")); // blank: no name
+        events.push(var_event(236, &[0; 4]));
         let e = extracted_of(events);
-        assert_eq!(e.mixer_effects[0].insert, Some(99));
-        assert_eq!(e.mixer_effects[1].insert, None);
+        assert_eq!(
+            e.mixer_inserts,
+            vec![None, None, None, Some("Vocals".to_string()), None]
+        );
+        assert_eq!(e.mixer_insert_names(), strings(&["Vocals"]));
     }
 
     #[test]
@@ -983,15 +1106,77 @@ mod tests {
     // ---- other fields ------------------------------------------------- //
 
     #[test]
-    fn insert_names_are_extracted() {
-        let e = extracted_of(vec![latin1_text(204, "Dream bell")]);
-        assert_eq!(e.mixer_insert_names, strings(&["Dream bell"]));
+    fn an_insert_name_with_no_insert_after_it_is_not_attached_anywhere() {
+        // Never observed (every 204 is followed by a 236): nothing to name.
+        let e = extracted_of(vec![
+            var_event(236, &[0; 4]),
+            latin1_text(204, "Dream bell"),
+        ]);
+        assert_eq!(e.mixer_inserts, vec![None]);
     }
 
     #[test]
-    fn arrangement_name_guess_is_extracted_but_kept_separate() {
-        let e = extracted_of(vec![latin1_text(241, "Arrangement")]);
-        assert_eq!(e.arrangement_names, strings(&["Arrangement"]));
+    fn pattern_names_belong_to_the_pattern_number_before_them() {
+        // Measured shapes: the name right after its PatNew, or after a run
+        // of 91/72 events; a pattern's events can come in several stretches
+        // with the same number; unnamed patterns still exist.
+        let e = extracted_of(vec![
+            latin1_text(199, "20.8.0.1377"),
+            word_event(65, 1),
+            var_event(224, &[0; 8]),
+            word_event(65, 2),
+            var_event(224, &[0; 8]),
+            word_event(65, 3),
+            dword_event(154, 0),
+            word_event(65, 1),
+            latin1_text(193, "Clap Mute"),
+            word_event(65, 3),
+            word_event(91, 0),
+            word_event(91, 0),
+            latin1_text(193, "Outro"),
+        ]);
+        let got: Vec<(Option<u16>, Option<&str>)> = e
+            .patterns
+            .iter()
+            .map(|p| (p.number, p.name.as_deref()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (Some(1), Some("Clap Mute")),
+                (Some(2), None),
+                (Some(3), Some("Outro")),
+            ]
+        );
+    }
+
+    #[test]
+    fn fl_25_pattern_numbers_are_not_trusted() {
+        // PatNew's payload is a scalar, scrambled on FL 25.
+        let e = extracted_of(vec![
+            latin1_text(199, "25.2.5.5055"),
+            word_event(65, 42658),
+            latin1_text(193, "Hook"),
+        ]);
+        assert_eq!(
+            e.patterns,
+            vec![Pattern {
+                number: None,
+                name: Some("Hook".to_string())
+            }]
+        );
+    }
+
+    #[test]
+    fn arrangement_names_belong_to_the_arrangement_before_them() {
+        let e = extracted_of(vec![
+            word_event(99, 0),
+            latin1_text(241, "Arrangement"),
+            word_event(99, 1),
+            latin1_text(241, " "),
+        ]);
+        assert_eq!(e.arrangements, vec![Some("Arrangement".to_string()), None]);
+        assert_eq!(e.arrangement_names(), strings(&["Arrangement"]));
     }
 
     #[test]
@@ -1000,11 +1185,13 @@ mod tests {
             latin1_text(199, "20.8.0.1377"),
             channel("   ", ""),
             channel("Real", ""),
+            word_event(65, 1),
             latin1_text(193, ""),
         ]);
         assert_eq!(e.channel_names(), strings(&["Real"]));
         assert_eq!(e.channel_rack[0].name, None);
-        assert!(e.pattern_names.is_empty());
+        assert!(e.pattern_names().is_empty());
+        assert_eq!(e.patterns.len(), 1);
     }
 
     #[test]
