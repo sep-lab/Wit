@@ -462,6 +462,7 @@ impl RestoresDir {
         };
         for component in &components[split..] {
             let Component::Normal(name) = component else {
+                drop(dir); // close before undo (Windows can't remove an open folder)
                 undo(created);
                 return Err(CloneError::InvalidRestoresPath {
                     path: path.to_path_buf(),
@@ -472,8 +473,10 @@ impl RestoresDir {
                 Ok(()) => true,
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => false,
                 Err(e) => {
+                    let err = io_err("create folder", &dir.path().join(name))(e);
+                    drop(dir);
                     undo(created);
-                    return Err(io_err("create folder", &dir.path().join(name))(e));
+                    return Err(err);
                 }
             };
             let child = match dir.open_dir(name) {
@@ -482,6 +485,7 @@ impl RestoresDir {
                     if made {
                         let _ = dir.remove_empty_dir(name);
                     }
+                    drop(dir);
                     undo(created);
                     return Err(CloneError::InvalidRestoresPath {
                         path: path.to_path_buf(),
@@ -498,6 +502,7 @@ impl RestoresDir {
                 if made {
                     let _ = dir.remove_empty_dir(name);
                 }
+                drop(dir);
                 undo(created);
                 return Err(e);
             }
@@ -509,32 +514,30 @@ impl RestoresDir {
 
         // 3. The authoritative check: the OS's own resolution of the caller's
         //    spelling must be exactly the folder we hold.
-        let fail = |created: Vec<(Dir, OsString)>, e: CloneError| {
-            undo(created);
-            Err(e)
-        };
-        let id = match dir.id() {
-            Ok(id) => id,
-            Err(e) => return fail(created, io_err("inspect", dir.path())(e)),
-        };
-        let resolved = match fs::canonicalize(path) {
-            Ok(r) => r,
-            Err(e) => return fail(created, io_err("resolve", path)(e)),
-        };
-        if FileId::of_path(&resolved).ok() != Some(id) {
-            return fail(
-                created,
-                CloneError::InvalidRestoresPath {
+        let checked = (|| {
+            let id = dir.id().map_err(io_err("inspect", dir.path()))?;
+            let resolved = fs::canonicalize(path).map_err(io_err("resolve", path))?;
+            if FileId::of_path(&resolved).ok() != Some(id) {
+                return Err(CloneError::InvalidRestoresPath {
                     path: path.to_path_buf(),
                     reason: "it resolves to a different folder from one moment to the next",
-                },
-            );
-        }
-        for spelling in [&resolved, &dir.path().to_path_buf()] {
-            if let Err(e) = check_placement(spelling, Some(id), &roots) {
-                return fail(created, e);
+                });
             }
-        }
+            for spelling in [&resolved, &dir.path().to_path_buf()] {
+                check_placement(spelling, Some(id), &roots)?;
+            }
+            Ok((id, resolved))
+        })();
+        // Close the innermost handle before any undo: Windows can't remove
+        // a folder that is still open.
+        drop(dir);
+        let (id, resolved) = match checked {
+            Ok(v) => v,
+            Err(e) => {
+                undo(created);
+                return Err(e);
+            }
+        };
         drop(created); // keep them: validation passed
 
         // 4. Wit's data folder (journal): never inside the Restores folder.

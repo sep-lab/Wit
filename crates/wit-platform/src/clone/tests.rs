@@ -483,11 +483,18 @@ fn hostile_long_names_fit_and_land() {
 fn a_crash_leftover_is_journaled_listed_and_removable_only_while_unchanged() {
     let w = world();
     let restores = w.restores("Restores").unwrap();
-    let mut new = restores.begin_restore("Song", "x", None).unwrap();
-    new.write_file(Path::new("half"), b"half").unwrap();
-    let staging = new.staging_path();
-    std::mem::forget(new); // a crash: no Drop, no commit
-                           // A later "run": a fresh RestoresDir on the same folders.
+    // A crash mid-restore: a staging folder created and journaled exactly as
+    // `NewRestore::begin` does, half-written, then the process is gone
+    // (no Drop, no commit, no handles left open).
+    let staging = {
+        let root = restores.pin().unwrap();
+        let name = staging_name();
+        root.mkdir(OsStr::new(&name)).unwrap();
+        journal_created(&restores, &root, &name).unwrap();
+        restores.path().join(name)
+    };
+    fs::write(staging.join("half"), b"half").unwrap();
+    // A later "run": a fresh RestoresDir on the same folders.
     let later = w.restores("Restores").unwrap();
     let leftovers = later.staging_leftovers().unwrap();
     assert_eq!(leftovers.len(), 1);
