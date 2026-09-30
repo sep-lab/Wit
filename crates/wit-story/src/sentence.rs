@@ -630,6 +630,99 @@ pub fn logic_name_renamed(old: &str, new: &str, tier: Tier) -> Sentence {
     s
 }
 
+/// How a Logic region change honestly names its subject: the bare stem
+/// when it's the family's only region object, or "a 'stem' region" when it
+/// isn't — matching `experiments/logic_region_map.py`'s own
+/// `family_subject` wording, never a copy count (a family can hold region
+/// objects that were never placed at all, so a count next to "which copy"
+/// would overstate what's actually ambiguous — see
+/// `wit_logic::regions::RegionSubject`'s doc). Built with the `Builder`
+/// directly, the same way [`logic_name_added`] above bypasses a generic
+/// `ChangeRecord` template: a fixed one-name-per-sentence template can't
+/// put "a "/" region" in [`SpanKind::Plain`] around just the stem.
+fn logic_region_subject(b: Builder, stem: &str, ambiguous: bool) -> Builder {
+    if ambiguous {
+        b.plain("a ").name(SpanKind::Region, stem).plain(" region")
+    } else {
+        b.name(SpanKind::Region, stem)
+    }
+}
+
+/// "on track 3" / "from track 3" — Wit's own words about a raw, 1-based
+/// track *number* from `wit_logic::regions`' placement diff, in
+/// [`SpanKind::Plain`]. Never [`SpanKind::Track`] (reserved for a name a
+/// musician typed) and never set on [`Sentence::track`] either (documented
+/// as a track's display *name* — Logic's `karT`↔`qeSM` pairing that would
+/// give one is still unsolved).
+fn on_track_number(preposition: &str, track: u8) -> String {
+    format!("{preposition}track {track}")
+}
+
+/// A region appeared on the timeline. `at` is always [`BarPos::about`] for
+/// Logic (see `wit-story::build::logic_bar_pos`); this only renders it, it
+/// doesn't decide that.
+pub fn logic_region_added(
+    stem: &str,
+    ambiguous: bool,
+    track: u8,
+    at: BarPos,
+    tier: Tier,
+) -> Sentence {
+    logic_region_subject(Builder::new().plain("Added region "), stem, ambiguous)
+        .plain(&on_track_number(" on ", track))
+        .finish(Icon::Add, tier)
+        .at(bars_from_pos(&at))
+}
+
+pub fn logic_region_removed(
+    stem: &str,
+    ambiguous: bool,
+    track: u8,
+    at: BarPos,
+    tier: Tier,
+) -> Sentence {
+    logic_region_subject(Builder::new().plain("Removed region "), stem, ambiguous)
+        .plain(&on_track_number(" from ", track))
+        .finish(Icon::Remove, tier)
+        .at(bars_from_pos(&at))
+}
+
+/// A region moved on one track — never called for a cross-track move
+/// (`wit-story::build::logic_sentences` reports that as a removal plus an
+/// addition instead, since one sentence can't honestly name both tracks).
+pub fn logic_region_moved(
+    stem: &str,
+    ambiguous: bool,
+    track: u8,
+    from: BarPos,
+    to: BarPos,
+    tier: Tier,
+) -> Sentence {
+    let delta = to.bar - from.bar;
+    let direction = if delta >= 0.0 { "later" } else { "earlier" };
+    let amount = delta.abs();
+    let unit = if (amount - 1.0).abs() < f64::EPSILON {
+        "bar"
+    } else {
+        "bars"
+    };
+    let about = if to.approximate || from.approximate {
+        "about "
+    } else {
+        ""
+    };
+    let s = logic_region_subject(Builder::new().plain("Moved "), stem, ambiguous)
+        .plain(&on_track_number(" on ", track))
+        .plain(" ")
+        .value(&format!(
+            "{about}{} {unit} {direction}",
+            friendly_num(amount)
+        ))
+        .finish(Icon::Move, tier);
+    let place_label = format!("now {about}bar {}", friendly_num(to.bar.floor()));
+    s.at(bars_from_pos(&to)).with_label(place_label)
+}
+
 fn region_builder(verb: &str, name: &str, track: &Option<String>, preposition: &str) -> Builder {
     let b = Builder::new().plain(verb).name(SpanKind::Region, name);
     match track {
