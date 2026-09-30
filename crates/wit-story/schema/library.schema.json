@@ -358,6 +358,13 @@
             }
           ]
         },
+        "last_worked_label": {
+          "description": "\"Wed 20:40\", in the same wording as every other label.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "parent": {
           "description": "Index into [`Family::members`] of the member this one came from.",
           "type": [
@@ -1092,6 +1099,10 @@
         "daw": {
           "$ref": "#/$defs/Daw"
         },
+        "daw_label": {
+          "description": "\"Logic\", \"GarageBand\", \"Live\", \"FL Studio\" — so two songs with the\nsame title in different DAWs can be told apart.",
+          "type": "string"
+        },
         "digest": {
           "description": "The tray's one line for this song. Worded \"no changes Wit can see\",\nnever \"nothing new\".",
           "type": "string"
@@ -1118,6 +1129,10 @@
           "format": "uint32",
           "minimum": 0
         },
+        "moments_label": {
+          "description": "The moments pill, credited to whoever kept them — the same wording as\n[`KeptSummary::label`], summed over the song's lines (\"10 moments on\ndisk · Logic keeps 10\").",
+          "type": "string"
+        },
         "song_id": {
           "$ref": "#/$defs/SongId"
         },
@@ -1137,6 +1152,8 @@
         "title",
         "daw",
         "moments_kept",
+        "moments_label",
+        "daw_label",
         "copies",
         "artwork",
         "digest",

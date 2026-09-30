@@ -105,6 +105,13 @@ pub struct ShelfCard {
     /// "Thu 23:05", or "21 Sep" when older than a week.
     pub last_worked_label: Option<String>,
     pub moments_kept: u32,
+    /// The moments pill, credited to whoever kept them — the same wording as
+    /// [`KeptSummary::label`], summed over the song's lines ("10 moments on
+    /// disk · Logic keeps 10").
+    pub moments_label: String,
+    /// "Logic", "GarageBand", "Live", "FL Studio" — so two songs with the
+    /// same title in different DAWs can be told apart.
+    pub daw_label: String,
     /// Other members of this song's family (copies, alternatives,
     /// restores) — the "+2 copies" badge. 0 = no badge.
     pub copies: u32,
@@ -487,6 +494,8 @@ pub struct FamilyMember {
     /// Index into [`Family::members`] of the member this one came from.
     pub parent: Option<u32>,
     pub last_worked: Option<Timestamp>,
+    /// "Wed 20:40", in the same wording as every other label.
+    pub last_worked_label: Option<String>,
     /// This member is the Story being viewed.
     pub is_current: bool,
 }

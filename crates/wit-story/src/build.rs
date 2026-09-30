@@ -871,22 +871,7 @@ fn assemble(meta: StoryMeta, saves: Vec<Save>, read: fn(&Path) -> Reading, clock
         subtitle.push(format!("last worked {}", clock.moment_label(t)));
     }
 
-    let moments_word = if n_moments == 1 { "moment" } else { "moments" };
-    let kept_label = match (kept_by_wit, facts.keeps) {
-        (k, Some(keeps)) if k > 0 => format!(
-            "{n_moments} {moments_word} kept · {} keeps {keeps}",
-            facts.label
-        ),
-        (_, Some(keeps)) => format!(
-            "{n_moments} {moments_word} on disk · {} keeps {keeps}",
-            facts.label
-        ),
-        (k, None) if k > 0 => format!("{n_moments} {moments_word} kept"),
-        (_, None) => format!(
-            "{n_moments} {moments_word} on disk · {} keeps no backups",
-            facts.label
-        ),
-    };
+    let kept_label = kept_label(n_moments, kept_by_wit, facts.label, facts.keeps);
 
     let family_label = meta.family.as_ref().map(|f| {
         let all_alternatives = f
@@ -927,6 +912,19 @@ fn assemble(meta: StoryMeta, saves: Vec<Save>, read: fn(&Path) -> Reading, clock
         capability: facts.capability(),
         family: meta.family,
         send_ready: None,
+    }
+}
+
+/// "41 moments kept · Logic keeps 10" once Wit has kept some; "10 moments on
+/// disk · Logic keeps 10" while every moment is still the DAW's own. The one
+/// wording for both the Story header and the Shelf card.
+fn kept_label(moments: u32, kept_by_wit: u32, daw_label: &str, daw_keeps: Option<u32>) -> String {
+    let word = if moments == 1 { "moment" } else { "moments" };
+    match (kept_by_wit, daw_keeps) {
+        (k, Some(keeps)) if k > 0 => format!("{moments} {word} kept · {daw_label} keeps {keeps}"),
+        (_, Some(keeps)) => format!("{moments} {word} on disk · {daw_label} keeps {keeps}"),
+        (k, None) if k > 0 => format!("{moments} {word} kept"),
+        (_, None) => format!("{moments} {word} on disk · {daw_label} keeps no backups"),
     }
 }
 
@@ -1027,6 +1025,7 @@ pub fn logic_stories(
                 relation: Relation::Alternative,
                 parent: None,
                 last_worked: Some(mtime(&alt.current)),
+                last_worked_label: Some(clock.moment_label(mtime(&alt.current))),
                 is_current: false,
             })
             .collect(),
@@ -1182,6 +1181,13 @@ fn shelf_card(stories: &[Story]) -> Option<ShelfCard> {
             .and_then(|s| s.moments.last())
             .map(|m| m.label.clone()),
         moments_kept,
+        moments_label: kept_label(
+            moments_kept,
+            stories.iter().map(|s| s.header.kept.kept_by_wit).sum(),
+            &newest.header.daw_label,
+            newest.header.kept.daw_keeps,
+        ),
+        daw_label: newest.header.daw_label.clone(),
         copies,
         copies_label: newest.header.family_label.as_ref().map(|_| {
             let all_alternatives = newest.family.as_ref().is_some_and(|f| {
