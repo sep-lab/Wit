@@ -1,0 +1,12 @@
+[package]
+name = "wit-privacy"
+version = "0.0.0"
+description = "Zero-dependency privacy checks for text Wit prints or copies: refuses absolute home-directory paths on macOS, Linux and Windows. A leaf crate so read-only crates can use it without depending on anything that writes."
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
