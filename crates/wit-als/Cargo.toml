@@ -12,7 +12,7 @@ workspace = true
 [dependencies]
 wit-model = { path = "../wit-model" }
 flate2 = "1.0"
-quick-xml = "0.41"
+quick-xml = "0.42"
 blake3 = "1.5"
 
 [dev-dependencies]
