@@ -22,12 +22,20 @@
 //! | OS | Roots (each only if it exists) |
 //! |---|---|
 //! | macOS | `~/Music/Logic`, `~/Music/GarageBand`, `~/Music/Ableton` (Live's User Library — sets are often saved elsewhere), `~/Documents/Image-Line/FL Studio/Projects` |
-//! | Windows | `%USERPROFILE%\Documents\Image-Line\FL Studio\Projects`, `%USERPROFILE%\Documents\Ableton`, `%USERPROFILE%\Music`, plus the same two under `OneDrive\Documents` (folder redirection) |
+//! | Windows | `%USERPROFILE%\Documents\Image-Line\FL Studio\Projects`, `%USERPROFILE%\Documents\Ableton`, `%USERPROFILE%\Music`, plus the same three under the OneDrive folder (`%OneDrive%`, else `%USERPROFILE%\OneDrive`) for OneDrive folder redirection |
 //! | Linux | `~/Music`, `~/Documents` (both honour `~/.config/user-dirs.dirs`), and REAPER's project folder `~/Documents/REAPER Media` or `~/REAPER Media` when not already covered |
 //!
 //! The REAPER location on Linux and the OneDrive redirection on Windows are
 //! **inferred** from those products' documented defaults, not verified on a
 //! real install. Anything else is one "Add folder" away ([`UserFolders`]).
+//!
+//! **Why not the Windows known-folder API?** `SHGetKnownFolderPath` would
+//! find a Music/Documents folder the user moved to another drive, but
+//! calling it needs either `unsafe` FFI (this crate is
+//! `forbid(unsafe_code)`) or the `dirs` crate and another copy of the
+//! Windows bindings. OneDrive redirection — by far the common case — is
+//! covered through the `%OneDrive%` environment variables instead; a folder
+//! moved elsewhere is added with "Add folder".
 //!
 //! # Default Restores folder
 //!
@@ -52,6 +60,8 @@ pub struct HomeLayout {
     pub home: PathBuf,
     pub documents: PathBuf,
     pub music: PathBuf,
+    /// Windows: the OneDrive folder (`%OneDrive%`), when OneDrive is set up.
+    pub onedrive: Option<PathBuf>,
 }
 
 impl HomeLayout {
@@ -62,6 +72,7 @@ impl HomeLayout {
         HomeLayout {
             documents: home.join("Documents"),
             music: home.join("Music"),
+            onedrive: None,
             home,
         }
     }
@@ -84,7 +95,13 @@ impl HomeLayout {
     pub fn detect() -> Option<HomeLayout> {
         let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
         let home = std::env::var_os(var).filter(|h| !h.is_empty())?;
-        let layout = HomeLayout::from_home(PathBuf::from(home));
+        let mut layout = HomeLayout::from_home(PathBuf::from(home));
+        if TargetOs::current() == TargetOs::Windows {
+            layout.onedrive = ["OneDrive", "OneDriveConsumer", "OneDriveCommercial"]
+                .iter()
+                .find_map(|v| std::env::var_os(v).filter(|p| !p.is_empty()))
+                .map(PathBuf::from);
+        }
         if TargetOs::current() != TargetOs::Linux {
             return Some(layout);
         }
@@ -183,7 +200,11 @@ pub fn candidate_roots(layout: &HomeLayout, os: TargetOs) -> Vec<CandidateRoot> 
                 ),
                 candidate(layout.music.clone(), None, "your Music folder"),
             ];
-            let onedrive_docs = layout.home.join("OneDrive").join("Documents");
+            let onedrive = layout
+                .onedrive
+                .clone()
+                .unwrap_or_else(|| layout.home.join("OneDrive"));
+            let onedrive_docs = onedrive.join("Documents");
             if onedrive_docs != layout.documents {
                 roots.push(candidate(
                     fl(&onedrive_docs),
@@ -194,6 +215,14 @@ pub fn candidate_roots(layout: &HomeLayout, os: TargetOs) -> Vec<CandidateRoot> 
                     onedrive_docs.join("Ableton"),
                     Some(Daw::AbletonLive),
                     "Ableton Live's folder under OneDrive folder redirection",
+                ));
+            }
+            let onedrive_music = onedrive.join("Music");
+            if onedrive_music != layout.music {
+                roots.push(candidate(
+                    onedrive_music,
+                    None,
+                    "your Music folder under OneDrive folder redirection",
                 ));
             }
             roots
@@ -575,7 +604,7 @@ mod tests {
             roots.add(&root.path, RootKind::Discovery).unwrap();
         }
         let restores = default_restores_dir(&layout, TargetOs::current());
-        crate::clone::RestoresDir::new(&restores, &roots).unwrap();
+        crate::clone::RestoresDir::new(&restores, &roots, &layout.home.join("WitData")).unwrap();
     }
 
     #[test]

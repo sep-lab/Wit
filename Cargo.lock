@@ -1643,10 +1643,12 @@ dependencies = [
  "notify",
  "proptest",
  "reflink-copy",
+ "rustix",
  "same-file",
  "sysinfo",
  "tempfile",
  "unicode-normalization",
+ "winapi-util",
  "wit-privacy",
 ]
 

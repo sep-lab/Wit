@@ -11,7 +11,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime};
-use wit_platform::clone::{write_file_in_restores, RestoresDir};
+use wit_platform::clone::{clone_tree, write_file_in_restores, RestoresDir};
 use wit_platform::roots::{RootKind, WatchedRoots};
 use wit_platform::watch::{ProjectKind, ProjectWatcher, WatchConfig, WatchEvent};
 
@@ -37,7 +37,7 @@ fn rig(kind: RootKind, extra_ignore: Option<&str>, setup: impl FnOnce(&Path)) ->
     setup(&watched);
     let mut roots = WatchedRoots::new();
     roots.add(&watched, kind).unwrap();
-    let restores = RestoresDir::new(&base.join("Restores"), &roots).unwrap();
+    let restores = RestoresDir::new(&base.join("Restores"), &roots, &base.join("WitData")).unwrap();
     let mut config = WatchConfig::new(roots, &restores).unwrap().settle(SETTLE);
     if let Some(dir) = extra_ignore {
         config = config.ignore(&watched.join(dir));
@@ -90,6 +90,16 @@ fn settled_after_save(w: &ProjectWatcher) -> Vec<(PathBuf, ProjectKind)> {
         }
     }
     settled
+}
+
+/// Set one file's mtime (needs a write handle on Windows).
+fn set_mtime(path: &Path, t: SystemTime) {
+    OpenOptions::new()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(t)
+        .unwrap();
 }
 
 /// Make every file under `dir` look last saved an hour ago. Setting a file
@@ -261,7 +271,7 @@ fn a_restore_is_watched_and_appears_as_exactly_one_new_project() {
         .restores
         .fresh_destination("Song", "2026-09-29", Some("als"))
         .unwrap();
-    let landed = write_file_in_restores(dest, b"restored set").unwrap();
+    let landed = write_file_in_restores(dest, b"restored set").unwrap().path;
     let got = settled_after_save(&r.watcher);
     assert_eq!(got, vec![(landed.clone(), ProjectKind::Ableton)]);
     // A musician keeps working in the restored copy: that's history too.
@@ -296,9 +306,67 @@ fn a_restore_being_staged_is_invisible_until_renamed_into_place() {
         .filter(|e| matches!(e, WatchEvent::Settled { .. }))
         .collect();
     assert!(during.is_empty(), "staging surfaced: {during:?}");
-    let landed = new.commit().unwrap();
+    let landed = new.commit().unwrap().path;
     let got = settled_after_save(&r.watcher);
     assert_eq!(got, vec![(landed, ProjectKind::Logic)]);
+}
+
+/// Review finding 2(a): an atomic replace by an older version (different
+/// size, 10-minute-old mtime) used to produce no event.
+#[test]
+fn an_atomic_replace_by_an_older_version_is_reported() {
+    let r = rig(RootKind::Discovery, None, |w| {
+        fs::create_dir_all(w.join("Set Project")).unwrap();
+        fs::write(w.join("Set Project/Set.als"), b"version two").unwrap();
+    });
+    let set = r.base.join("watched/Set Project/Set.als");
+    let temp = r.base.join("watched/Set Project/.Set.als.swap");
+    fs::write(&temp, b"version one, which was longer").unwrap();
+    set_mtime(&temp, SystemTime::now() - Duration::from_secs(600));
+    fs::rename(&temp, &set).unwrap();
+    let got = settled_after_save(&r.watcher);
+    assert_eq!(
+        got,
+        vec![(fs::canonicalize(&set).unwrap(), ProjectKind::Ableton)]
+    );
+}
+
+/// `cp -p` / `rsync --inplace`-style: the file is rewritten in place and its
+/// old mtime is put back.
+#[test]
+fn an_in_place_rewrite_that_restores_the_old_mtime_is_reported() {
+    let r = rig(RootKind::Discovery, None, |w| {
+        fs::write(w.join("Beat.flp"), b"first").unwrap();
+    });
+    let flp = r.base.join("watched/Beat.flp");
+    let old = fs::metadata(&flp).unwrap().modified().unwrap();
+    fs::write(&flp, b"second, longer").unwrap();
+    set_mtime(&flp, old);
+    let got = settled_after_save(&r.watcher);
+    assert_eq!(
+        got,
+        vec![(fs::canonicalize(&flp).unwrap(), ProjectKind::FlStudio)]
+    );
+}
+
+/// Review finding 2(b): a restore via `clone_tree` of stored bytes whose
+/// mtime is preserved used to produce no event, so ADR-0007 §6 ("restores
+/// are visible") failed.
+#[test]
+fn a_restore_that_preserves_old_mtimes_is_reported() {
+    let r = rig(RootKind::Discovery, None, |_| {});
+    let store = r.base.join("store");
+    fs::create_dir_all(&store).unwrap();
+    let stored = store.join("stored.als");
+    fs::write(&stored, b"stored bytes a DAW wrote").unwrap();
+    set_mtime(&stored, SystemTime::now() - Duration::from_secs(3_600));
+    let dest = r
+        .restores
+        .fresh_destination("Set", "2026-09-29", Some("als"))
+        .unwrap();
+    let landed = clone_tree(&stored, dest).unwrap().path;
+    let got = settled_after_save(&r.watcher);
+    assert_eq!(got, vec![(landed, ProjectKind::Ableton)]);
 }
 
 #[test]

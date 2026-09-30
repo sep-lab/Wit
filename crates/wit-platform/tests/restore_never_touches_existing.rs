@@ -14,8 +14,13 @@
 //! very long names). The Restores folder is often *inside* a watched root,
 //! which ADR-0007 allows. Before restoring, it plants symlinks and hard
 //! links **inside the Restores folder** that point into projects, named
-//! exactly like the restores about to be created. Then it runs a random
-//! sequence of restores with hostile song names and hostile relative paths.
+//! exactly like the restores about to be created. Some cases then attack
+//! the Restores folder itself: move it into a package (leaving a decoy at
+//! its path), turn its parent into a project folder, or have a thread flip
+//! its path to a symlink into a package *while* restores run. Multi-step
+//! restores may find a symlink planted inside their own staging folder.
+//! Then it runs a random sequence of restores with hostile song names and
+//! hostile relative paths.
 //!
 //! The oracle never trusts the path logic under test: it snapshots the whole
 //! world (without following symlinks) and decides "is X inside Y" by **file
@@ -25,21 +30,24 @@
 //! Asserted for every case:
 //! 1. `RestoresDir::new` only ever creates folders (the Restores folder and
 //!    its missing parents), never changes existing content, and grants a
-//!    folder only if it obeys the placement rules: not inside a
-//!    `.logicx`/`.band` package or an Ableton project folder, not next to an
-//!    `.als`/`.flp`, and not a parent of any other watched root;
+//!    folder only if it obeys the placement rules: not inside a project
+//!    folder of any DAW, and not a parent of any other watched root;
 //! 2. across the restores, **every pre-existing file, folder, symlink and
 //!    hard link is byte-for-byte and metadata-identical** (type, size,
-//!    mtime, read-only flag, symlink target; the Restores folder's own
-//!    mtime/size may change, as adding an entry must);
+//!    mtime, read-only flag, inode, mode, BSD flags, symlink target; the
+//!    Restores folder's own mtime/size may change, as adding an entry must);
 //! 3. every new path lies under a **new** entry directly inside the Restores
-//!    folder, and there is exactly one such entry per successful restore.
+//!    folder, exactly one per successful restore; no new entry is a symlink
+//!    or shares an inode with anything that existed; and no new entry was
+//!    created while the Restores folder sat inside a project folder.
 
 use proptest::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::SystemTime;
 use unicode_normalization::UnicodeNormalization;
 use wit_platform::clone::{
@@ -48,6 +56,7 @@ use wit_platform::clone::{
 use wit_platform::roots::{RootKind, WatchedRoots};
 
 const MARKER: &str = "Ableton Project Info";
+const STAGING_PLANT: &str = "planted-link";
 
 fn names() -> Vec<String> {
     vec![
@@ -87,6 +96,8 @@ fn songs() -> Vec<String> {
         ".".into(),
         "Music/Logic".into(),
         "x\u{0}y\nz".into(),
+        "Song\u{202E}3pm.als".into(),
+        "🎹".repeat(120),
     ]
 }
 
@@ -201,6 +212,8 @@ enum RelPart {
     AbsoluteWatched,
     /// The name of an entry planted in the Restores folder.
     Planted(usize),
+    /// The symlink planted inside this restore's own staging folder.
+    StagingPlant,
 }
 
 fn rel_strategy() -> impl Strategy<Value = Vec<RelPart>> {
@@ -212,6 +225,7 @@ fn rel_strategy() -> impl Strategy<Value = Vec<RelPart>> {
             1 => Just(RelPart::Here),
             1 => Just(RelPart::AbsoluteWatched),
             1 => (0..PLANTED.len()).prop_map(RelPart::Planted),
+            2 => Just(RelPart::StagingPlant),
         ],
         0..5,
     )
@@ -229,6 +243,8 @@ enum Op {
     },
     Multi {
         from_root: Option<usize>,
+        /// Plant a symlink to this dir inside the restore's staging folder.
+        plant_in_staging: Option<usize>,
         writes: Vec<Vec<RelPart>>,
         removes: Vec<Vec<RelPart>>,
         commit: bool,
@@ -243,16 +259,20 @@ fn op_strategy() -> impl Strategy<Value = Op> {
         (0usize..3, song).prop_map(|(root, song)| Op::Clone { root, song }),
         (
             prop::option::of(0usize..3),
+            prop::option::weighted(0.4, 0usize..8),
             prop::collection::vec(rel_strategy(), 0..4),
             prop::collection::vec(rel_strategy(), 0..3),
             any::<bool>(),
         )
-            .prop_map(|(from_root, writes, removes, commit)| Op::Multi {
-                from_root,
-                writes,
-                removes,
-                commit,
-            }),
+            .prop_map(
+                |(from_root, plant_in_staging, writes, removes, commit)| Op::Multi {
+                    from_root,
+                    plant_in_staging,
+                    writes,
+                    removes,
+                    commit,
+                }
+            ),
     ]
 }
 
@@ -265,6 +285,20 @@ struct Plant {
     to_file: bool,
     /// A hard link (files only) instead of a symlink.
     hard: bool,
+}
+
+/// An attack on the Restores folder itself, after it was granted.
+#[derive(Debug, Clone, Copy)]
+enum Swap {
+    None,
+    /// Move the real Restores folder into a package; leave a decoy folder
+    /// at its path.
+    MoveIntoPackage,
+    /// Make the Restores folder's parent an Ableton project folder.
+    ParentBecomesProject,
+    /// A thread flips the Restores path to a symlink into a package and back
+    /// while the restores run (Unix).
+    FlipSymlink,
 }
 
 #[derive(Debug, Clone)]
@@ -284,6 +318,7 @@ struct Scenario {
     /// Windows: spell the world root in verbatim `\\?\` form.
     verbatim: bool,
     plants: Vec<Plant>,
+    swap: Swap,
     ops: Vec<Op>,
 }
 
@@ -297,6 +332,12 @@ fn scenario_strategy() -> impl Strategy<Value = Scenario> {
             hard,
         },
     );
+    let swap = prop_oneof![
+        6 => Just(Swap::None),
+        1 => Just(Swap::MoveIntoPackage),
+        1 => Just(Swap::ParentBecomesProject),
+        2 => Just(Swap::FlipSymlink),
+    ];
     (
         prop::collection::vec(prop::collection::vec(0..n, 1..=3), 1..8),
         prop::collection::vec((0usize..8, any::<bool>()), 0..2),
@@ -309,6 +350,7 @@ fn scenario_strategy() -> impl Strategy<Value = Scenario> {
         prop::collection::vec(step_strategy(), 1..=5),
         (any::<bool>(), any::<bool>()),
         prop::collection::vec(plant, 0..4),
+        swap,
         prop::collection::vec(op_strategy(), 1..5),
     )
         .prop_map(
@@ -321,18 +363,22 @@ fn scenario_strategy() -> impl Strategy<Value = Scenario> {
                 steps,
                 (trailing_separator, verbatim),
                 plants,
+                swap,
                 ops,
-            )| Scenario {
-                dirs,
-                project_files,
-                links,
-                roots,
-                start,
-                steps,
-                trailing_separator,
-                verbatim,
-                plants,
-                ops,
+            )| {
+                Scenario {
+                    dirs,
+                    project_files,
+                    links,
+                    roots,
+                    start,
+                    steps,
+                    trailing_separator,
+                    verbatim,
+                    plants,
+                    swap,
+                    ops,
+                }
             },
         )
 }
@@ -352,6 +398,29 @@ struct Entry {
     len: u64,
     modified: Option<SystemTime>,
     readonly: bool,
+    ino: u64,
+    mode: u32,
+    flags: u32,
+}
+
+#[cfg(unix)]
+fn ino_mode(m: &fs::Metadata) -> (u64, u32) {
+    use std::os::unix::fs::MetadataExt;
+    (m.ino(), m.mode())
+}
+#[cfg(not(unix))]
+fn ino_mode(_m: &fs::Metadata) -> (u64, u32) {
+    (0, 0)
+}
+
+#[cfg(target_os = "macos")]
+fn bsd_flags(m: &fs::Metadata) -> u32 {
+    use std::os::macos::fs::MetadataExt;
+    m.st_flags()
+}
+#[cfg(not(target_os = "macos"))]
+fn bsd_flags(_m: &fs::Metadata) -> u32 {
+    0
 }
 
 /// Every entry under `dir`, never following symlinks.
@@ -377,11 +446,15 @@ fn snapshot(dir: &Path) -> BTreeMap<PathBuf, Entry> {
             } else {
                 Kind::Other
             };
+            let (ino, mode) = ino_mode(&meta);
             let entry = Entry {
                 kind,
                 len: meta.len(),
                 modified: meta.modified().ok(),
                 readonly: meta.permissions().readonly(),
+                ino,
+                mode,
+                flags: bsd_flags(&meta),
             };
             out.insert(p, entry);
         }
@@ -408,6 +481,29 @@ fn has_ext(p: &Path, exts: &[&str]) -> bool {
         .is_some_and(|e| exts.iter().any(|x| e.eq_ignore_ascii_case(x)))
 }
 
+/// The oracle's own reading of "a DAW project folder" (ADR-0007).
+fn is_project_folder(dir: &Path) -> bool {
+    if has_ext(dir, &["logicx", "band"]) || dir.join(MARKER).is_dir() {
+        return true;
+    }
+    if let Some(name) = dir.file_name() {
+        let mut flp = name.to_os_string();
+        flp.push(".flp");
+        if dir.join(flp).is_file() {
+            return true;
+        }
+    }
+    fs::read_dir(dir.join("Backup")).is_ok_and(|entries| {
+        entries
+            .flatten()
+            .any(|e| e.path().is_file() && has_ext(&e.path(), &["flp"]))
+    })
+}
+
+fn inside_a_project(dir: &Path) -> bool {
+    fs::canonicalize(dir).is_ok_and(|c| c.ancestors().any(is_project_folder))
+}
+
 fn symlink(target: &Path, link: &Path) -> bool {
     #[cfg(unix)]
     {
@@ -432,6 +528,10 @@ fn with_trailing_separator(p: &Path) -> PathBuf {
 
 struct Built {
     _tmp: tempfile::TempDir,
+    /// Wit's data folder (the staging journal) — outside the sandbox, so the
+    /// oracle's "only one new entry under Restores" doesn't see it.
+    _data_tmp: tempfile::TempDir,
+    data: PathBuf,
     /// The world lives six levels below the temp dir, so however many `..`
     /// a generated spelling climbs (at most five), it stays in the sandbox.
     world: PathBuf,
@@ -446,6 +546,7 @@ struct Built {
 fn build(s: &Scenario) -> Built {
     let all = names();
     let tmp = tempfile::tempdir().unwrap();
+    let data_tmp = tempfile::tempdir().unwrap();
     let sandbox = fs::canonicalize(tmp.path()).unwrap();
     let world = sandbox.join("s1/s2/s3/s4/s5/world");
     fs::create_dir_all(&world).unwrap();
@@ -533,7 +634,9 @@ fn build(s: &Scenario) -> Built {
         restores = with_trailing_separator(&restores);
     }
     Built {
+        data: data_tmp.path().join("WitData"),
         _tmp: tmp,
+        _data_tmp: data_tmp,
         world,
         sandbox,
         dirs,
@@ -566,6 +669,45 @@ fn plant(s: &Scenario, b: &Built, restores: &RestoresDir) -> usize {
     planted
 }
 
+/// A package folder to aim attacks at (created if the world has none).
+fn a_package(b: &Built) -> PathBuf {
+    b.dirs
+        .iter()
+        .find(|d| has_ext(d, &["logicx", "band"]))
+        .cloned()
+        .unwrap_or_else(|| {
+            let p = b.world.join("Target.logicx");
+            let _ = fs::create_dir_all(p.join("Alternatives/000"));
+            let _ = fs::write(p.join("Alternatives/000/ProjectData"), b"target bytes");
+            p
+        })
+}
+
+/// Apply a pre-restore attack on the Restores folder. Returns whether the
+/// folder was moved away (so no restore may complete).
+fn apply_swap(s: &Scenario, b: &Built, restores: &RestoresDir) -> bool {
+    match s.swap {
+        Swap::None | Swap::FlipSymlink => false,
+        Swap::MoveIntoPackage => {
+            let package = a_package(b);
+            let into = package.join("moved-restores");
+            if fs::rename(restores.path(), &into).is_ok() {
+                // A decoy at the old path: same name, different folder.
+                let _ = fs::create_dir(restores.path());
+                true
+            } else {
+                false
+            }
+        }
+        Swap::ParentBecomesProject => {
+            if let Some(parent) = restores.path().parent() {
+                let _ = fs::create_dir(parent.join(MARKER));
+            }
+            false
+        }
+    }
+}
+
 fn rel_path(parts: &[RelPart], b: &Built) -> PathBuf {
     let all = names();
     let mut p = PathBuf::new();
@@ -576,6 +718,7 @@ fn rel_path(parts: &[RelPart], b: &Built) -> PathBuf {
             RelPart::Up => p.push(".."),
             RelPart::Here => p.push("."),
             RelPart::Planted(i) => p.push(PLANTED[*i]),
+            RelPart::StagingPlant => p.push(STAGING_PLANT),
             RelPart::AbsoluteWatched => {
                 let base = b.roots.first().unwrap_or(&b.world);
                 p = base.join("f.txt").join(&p);
@@ -611,6 +754,7 @@ fn run_ops(s: &Scenario, b: &Built, restores: &RestoresDir) -> usize {
             }
             Op::Multi {
                 from_root,
+                plant_in_staging,
                 writes,
                 removes,
                 commit,
@@ -621,6 +765,12 @@ fn run_ops(s: &Scenario, b: &Built, restores: &RestoresDir) -> usize {
                 if let Some(r) = from_root {
                     let src = b.roots.get(*r % b.roots.len().max(1)).unwrap_or(&b.world);
                     let _ = new.clone_tree_from(src);
+                }
+                if let Some(target) = plant_in_staging {
+                    // An adversary with the user's permissions plants a link
+                    // inside the restore's own staging folder.
+                    let target = &b.dirs[target % b.dirs.len()];
+                    symlink(target, &new.staging_path().join(STAGING_PLANT));
                 }
                 for w in writes {
                     let _ = new.write_file(&rel_path(w, b), b"swapped bytes");
@@ -637,12 +787,38 @@ fn run_ops(s: &Scenario, b: &Built, restores: &RestoresDir) -> usize {
     completed
 }
 
+/// A thread flipping the Restores path between the real folder and a
+/// symlink into a package, until stopped; the real folder is back in place
+/// when it returns.
+#[cfg(unix)]
+fn start_flipper(
+    restores: &Path,
+    package: PathBuf,
+) -> (Arc<AtomicBool>, std::thread::JoinHandle<()>) {
+    let stop = Arc::new(AtomicBool::new(false));
+    let s2 = Arc::clone(&stop);
+    let real = restores.to_path_buf();
+    let aside = real.with_file_name(".restores-aside");
+    let handle = std::thread::spawn(move || {
+        while !s2.load(Ordering::SeqCst) {
+            if fs::rename(&real, &aside).is_ok() {
+                let _ = std::os::unix::fs::symlink(&package, &real);
+                std::thread::yield_now();
+                let _ = fs::remove_file(&real);
+                let _ = fs::rename(&aside, &real);
+            }
+        }
+    });
+    (stop, handle)
+}
+
 /// What one case did — used to prove the generator isn't vacuous.
 #[derive(Debug, Default, Clone, Copy)]
 struct Outcome {
     granted: bool,
     inside_a_root: bool,
     planted: usize,
+    swapped: bool,
     restores_completed: usize,
 }
 
@@ -652,7 +828,7 @@ fn check(s: &Scenario) -> Result<Outcome, TestCaseError> {
 
     // --- Setup: RestoresDir::new ------------------------------------------
     let pre_setup = snapshot(&b.sandbox);
-    let granted = RestoresDir::new(&b.restores_spelling, &b.watched);
+    let granted = RestoresDir::new(&b.restores_spelling, &b.watched, &b.data);
     let post_setup = snapshot(&b.sandbox);
     for (path, entry) in &pre_setup {
         let after = post_setup.get(path);
@@ -680,55 +856,51 @@ fn check(s: &Scenario) -> Result<Outcome, TestCaseError> {
         return Ok(outcome);
     };
     outcome.granted = true;
-    let r = restores.path();
+    let r = restores.path().to_path_buf();
+    let r_id = same_file::Handle::from_path(&r).unwrap();
     prop_assert!(
-        inside_by_identity(r, &b.sandbox),
+        inside_by_identity(&r, &b.sandbox),
         "Restores escaped the sandbox"
     );
 
     // --- Placement rules (oracle by identity and by on-disk names) --------
     for root in &b.roots {
         prop_assert!(
-            !(inside_by_identity(root, r) && !same(root, r)),
+            !(inside_by_identity(root, &r) && !same(root, &r)),
             "granted Restores {} contains watched root {}",
             r.display(),
             root.display()
         );
-        outcome.inside_a_root |= inside_by_identity(r, root) && !same(root, r);
+        outcome.inside_a_root |= inside_by_identity(&r, root) && !same(root, &r);
     }
-    let canonical = fs::canonicalize(r).unwrap();
-    for a in canonical.ancestors() {
-        prop_assert!(
-            !has_ext(a, &["logicx", "band"]),
-            "granted Restores {} is inside the package {}",
-            r.display(),
-            a.display()
-        );
-        prop_assert!(
-            !a.join(MARKER).is_dir(),
-            "granted Restores {} is inside the Ableton project folder {}",
-            r.display(),
-            a.display()
-        );
-    }
-    if let Some(parent) = canonical.parent() {
-        let next_to_project = fs::read_dir(parent).unwrap().flatten().any(|e| {
-            e.file_type().is_ok_and(|t| t.is_file()) && has_ext(&e.path(), &["als", "flp"])
-        });
-        prop_assert!(
-            !next_to_project,
-            "granted Restores {} sits next to a project file",
-            r.display()
-        );
-    }
+    prop_assert!(
+        !inside_a_project(&r),
+        "granted Restores {} is inside a project",
+        r.display()
+    );
 
     // --- The restores ------------------------------------------------------
     outcome.planted = plant(s, &b, &restores);
+    let moved_away = apply_swap(s, &b, &restores);
+    outcome.swapped = !matches!(s.swap, Swap::None);
+    let restores_parent = r.parent().map(Path::to_path_buf);
+    // Any package the flipping thread aims at must exist before the snapshot.
+    let flip_target = matches!(s.swap, Swap::FlipSymlink).then(|| a_package(&b));
     let before = snapshot(&b.sandbox);
+    #[cfg(unix)]
+    let flipper = flip_target.map(|target| start_flipper(&r, target));
+    #[cfg(not(unix))]
+    let _ = flip_target;
     outcome.restores_completed = run_ops(s, &b, &restores);
+    #[cfg(unix)]
+    if let Some((stop, handle)) = flipper {
+        stop.store(true, Ordering::SeqCst);
+        handle.join().unwrap();
+    }
     let after = snapshot(&b.sandbox);
 
     // 2. Every pre-existing entry is byte-for-byte and metadata-identical.
+    let flipped = matches!(s.swap, Swap::FlipSymlink);
     for (path, entry) in &before {
         let Some(now) = after.get(path) else {
             return Err(TestCaseError::fail(format!(
@@ -736,20 +908,40 @@ fn check(s: &Scenario) -> Result<Outcome, TestCaseError> {
                 path.display()
             )));
         };
-        if same(path, r) {
-            // Adding an entry must change the Restores folder's own mtime/size.
+        let is_restores = same_file::Handle::from_path(path).is_ok_and(|h| h == r_id);
+        let is_flipped_parent = flipped && restores_parent.as_deref() == Some(path.as_path());
+        if is_restores || is_flipped_parent {
+            // Adding an entry must change the Restores folder's own mtime and
+            // size (and the flipping thread changes its parent's).
             prop_assert_eq!(&now.kind, &entry.kind);
             continue;
         }
         prop_assert_eq!(now, entry, "pre-existing {} was modified", path.display());
     }
-    // 3. Everything new is under one new entry directly inside Restores, one
-    //    per completed restore.
+    // 3. Everything new: under one new entry directly inside the real
+    //    Restores folder, one per completed restore, no symlinks, no inode
+    //    shared with anything that existed, never inside a project folder.
+    let old_inodes: BTreeSet<u64> = before
+        .values()
+        .filter(|e| matches!(e.kind, Kind::File(_)) && e.ino != 0)
+        .map(|e| e.ino)
+        .collect();
     let mut tops: BTreeSet<PathBuf> = BTreeSet::new();
-    for path in after.keys().filter(|p| !before.contains_key(*p)) {
-        let top = path
-            .ancestors()
-            .find(|a| a.parent().is_some_and(|parent| same(parent, r)));
+    for (path, entry) in after.iter().filter(|(p, _)| !before.contains_key(*p)) {
+        prop_assert!(
+            !matches!(entry.kind, Kind::Link(_)),
+            "a restore created a symlink: {}",
+            path.display()
+        );
+        prop_assert!(
+            !(matches!(entry.kind, Kind::File(_)) && old_inodes.contains(&entry.ino)),
+            "{} shares an inode with a pre-existing file",
+            path.display()
+        );
+        let top = path.ancestors().find(|a| {
+            a.parent()
+                .is_some_and(|parent| same_file::Handle::from_path(parent).is_ok_and(|h| h == r_id))
+        });
         let Some(top) = top else {
             return Err(TestCaseError::fail(format!(
                 "new entry {} is not inside the Restores folder {}",
@@ -763,7 +955,19 @@ fn check(s: &Scenario) -> Result<Outcome, TestCaseError> {
             path.display(),
             top.display()
         );
+        prop_assert!(
+            !inside_a_project(top.parent().unwrap()),
+            "{} was created while the Restores folder sat inside a project",
+            path.display()
+        );
         tops.insert(top.to_path_buf());
+    }
+    if moved_away {
+        prop_assert_eq!(
+            outcome.restores_completed,
+            0,
+            "a restore completed after Restores moved"
+        );
     }
     prop_assert_eq!(
         tops.len(),
@@ -791,13 +995,14 @@ proptest! {
 
 /// The generator must exercise every side of the law: Restores folders that
 /// are refused and granted, granted *inside* a watched root, with links
-/// planted in them, and restores that really complete.
+/// planted in them, attacked, and restores that really complete.
 #[test]
 fn the_generator_is_not_vacuous() {
     use proptest::strategy::ValueTree;
     use proptest::test_runner::TestRunner;
     let mut runner = TestRunner::deterministic();
-    let (mut granted, mut refused, mut inside, mut planted, mut completed) = (0, 0, 0, 0, 0);
+    let (mut granted, mut refused, mut inside, mut planted, mut swapped, mut completed) =
+        (0, 0, 0, 0, 0, 0);
     for _ in 0..200 {
         let scenario = scenario_strategy().new_tree(&mut runner).unwrap().current();
         let o = check(&scenario).unwrap_or_else(|e| panic!("{e}"));
@@ -808,11 +1013,12 @@ fn the_generator_is_not_vacuous() {
         }
         inside += usize::from(o.inside_a_root);
         planted += usize::from(o.planted > 0);
+        swapped += usize::from(o.granted && o.swapped);
         completed += usize::from(o.restores_completed > 0);
     }
     eprintln!(
         "granted {granted}, refused {refused}, inside a watched root {inside}, \
-         with planted links {planted}, with completed restores {completed} (of 200)"
+         with planted links {planted}, attacked {swapped}, with completed restores {completed} (of 200)"
     );
     assert!(granted >= 20, "only {granted}/200 granted");
     assert!(refused >= 20, "only {refused}/200 refused");
@@ -824,9 +1030,14 @@ fn the_generator_is_not_vacuous() {
         planted >= 10,
         "only {planted}/200 had links planted in Restores"
     );
+    assert!(
+        swapped >= 10,
+        "only {swapped}/200 granted folders were attacked"
+    );
     assert!(completed >= 20, "only {completed}/200 completed a restore");
 }
 
+#[allow(clippy::too_many_arguments)]
 fn scenario(
     dirs: Vec<Vec<usize>>,
     roots: Vec<(usize, Spell, bool)>,
@@ -844,6 +1055,7 @@ fn scenario(
         trailing_separator: false,
         verbatim: false,
         plants: vec![],
+        swap: Swap::None,
         ops,
     }
 }
@@ -856,6 +1068,16 @@ fn named_tricky_cases() {
     let write = Op::Write {
         song: 0,
         ext: Some(1),
+    };
+    let multi_through_plant = Op::Multi {
+        from_root: None,
+        plant_in_staging: Some(0),
+        writes: vec![
+            vec![RelPart::StagingPlant, RelPart::Extra(2)],
+            vec![RelPart::StagingPlant, RelPart::Name(9)],
+        ],
+        removes: vec![vec![RelPart::StagingPlant]],
+        commit: true,
     };
     let mut cases: Vec<(&str, Scenario)> = Vec::new();
 
@@ -897,16 +1119,6 @@ fn named_tricky_cases() {
     );
     cases.push(("Restores inside an Ableton project folder: refused", s));
 
-    let mut s = scenario(
-        vec![vec![10]],
-        vec![(0, Spell::Plain, false)],
-        Start::World,
-        vec![name(10), Step::Fresh(0)],
-        vec![write.clone()],
-    );
-    s.project_files = vec![(0, true)];
-    cases.push(("Restores next to an .flp: refused", s));
-
     let s = scenario(
         vec![vec![0, 5]],
         vec![(0, Spell::Plain, false)],
@@ -922,13 +1134,11 @@ fn named_tricky_cases() {
         Start::Root(0),
         vec![name(8)],
         vec![
-            Op::Write {
-                song: 0,
-                ext: Some(1),
-            },
+            write.clone(),
             Op::Clone { root: 0, song: 0 },
             Op::Multi {
                 from_root: Some(0),
+                plant_in_staging: None,
                 writes: vec![
                     vec![RelPart::Up, RelPart::Extra(2)],
                     vec![RelPart::AbsoluteWatched],
@@ -972,6 +1182,40 @@ fn named_tricky_cases() {
     ));
 
     let mut s = scenario(
+        vec![vec![0, 5, 7], vec![0]],
+        vec![(1, Spell::Plain, true)],
+        Start::Root(0),
+        vec![name(8)],
+        vec![multi_through_plant.clone()],
+    );
+    s.plants = vec![];
+    cases.push((
+        "A symlink planted inside the restore's own staging folder",
+        s,
+    ));
+
+    for swap in [
+        Swap::MoveIntoPackage,
+        Swap::ParentBecomesProject,
+        Swap::FlipSymlink,
+    ] {
+        let mut s = scenario(
+            vec![vec![0, 5, 7], vec![0, 9]],
+            vec![(0, Spell::Plain, false)],
+            Start::World,
+            vec![name(0), name(9), name(8)],
+            vec![
+                write.clone(),
+                Op::Clone { root: 0, song: 0 },
+                multi_through_plant.clone(),
+                write.clone(),
+            ],
+        );
+        s.swap = swap;
+        cases.push(("the Restores folder attacked after it was granted", s));
+    }
+
+    let mut s = scenario(
         vec![vec![3], vec![4]],
         vec![(0, Spell::FlipNorm, false)],
         Start::World,
@@ -1003,9 +1247,56 @@ fn named_tricky_cases() {
 
     for (label, scenario) in cases {
         if let Err(e) = check(&scenario) {
-            panic!("{label}: {e}");
+            panic!("{label} ({:?}): {e}", scenario.swap);
         }
     }
+}
+
+/// Review finding 1, as a deterministic test: flip the Restores path to a
+/// symlink into a package for a while during restores; nothing may appear
+/// inside the package.
+#[cfg(unix)]
+#[test]
+fn flipping_the_restores_path_never_redirects_a_write() {
+    let tmp = tempfile::tempdir().unwrap();
+    let base = fs::canonicalize(tmp.path()).unwrap();
+    let alt = base.join("Music/Logic/Song.logicx/Alternatives/000");
+    fs::create_dir_all(&alt).unwrap();
+    fs::write(alt.join("ProjectData"), b"current").unwrap();
+    let mut roots = WatchedRoots::new();
+    roots
+        .add(&base.join("Music/Logic"), RootKind::Discovery)
+        .unwrap();
+    let restores = RestoresDir::new(&base.join("Restores"), &roots, &base.join("WitData")).unwrap();
+    let package_before = snapshot(&base.join("Music"));
+    let (stop, flipper) = start_flipper(restores.path(), alt.clone());
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let (mut ok, mut tries) = (0, 0);
+    while std::time::Instant::now() < end {
+        tries += 1;
+        if let Ok(dest) = restores.fresh_destination("Race", "d", Some("als")) {
+            ok += usize::from(write_file_in_restores(dest, b"x").is_ok());
+        }
+        if let Ok(mut new) = restores.begin_restore("RaceDir", "d", None) {
+            let _ = new.write_file(Path::new("inner/f"), b"x");
+            ok += usize::from(new.commit().is_ok());
+        }
+    }
+    stop.store(true, Ordering::SeqCst);
+    flipper.join().unwrap();
+    assert_eq!(
+        snapshot(&base.join("Music")),
+        package_before,
+        "nothing changed or appeared inside the package"
+    );
+    let landed = fs::read_dir(restores.path()).unwrap().count();
+    eprintln!(
+        "flip race: {tries} attempts, {ok} completed, {landed} entries in the real Restores folder"
+    );
+    assert!(
+        landed >= ok,
+        "every completed restore is in the real Restores folder"
+    );
 }
 
 /// The refusals the named cases rely on really are refusals.
@@ -1015,9 +1306,10 @@ fn placement_refusals_are_real() {
     let base = fs::canonicalize(dir.path()).unwrap();
     fs::create_dir_all(base.join("Music/Song.logicx")).unwrap();
     fs::create_dir_all(base.join("Live/Set Project").join(MARKER)).unwrap();
-    fs::create_dir_all(base.join("FL")).unwrap();
-    fs::write(base.join("FL/Beat.flp"), b"flp").unwrap();
+    fs::create_dir_all(base.join("FL/Proj")).unwrap();
+    fs::write(base.join("FL/Proj/Proj.flp"), b"flp").unwrap();
     fs::create_dir_all(base.join("Music/Logic")).unwrap();
+    let data = base.join("WitData");
     let mut roots = WatchedRoots::new();
     roots
         .add(&base.join("Music/Logic"), RootKind::Discovery)
@@ -1026,16 +1318,16 @@ fn placement_refusals_are_real() {
         base.join("Music/Song.logicx/R"),
         base.join("Music/SONG.LOGICX/R/"),
         base.join("Live/Set Project/R"),
-        base.join("FL/R"),
+        base.join("FL/Proj/deeper/R"),
         base.join("Music"),
     ] {
         assert!(
-            RestoresDir::new(&bad, &roots).is_err(),
+            RestoresDir::new(&bad, &roots, &data).is_err(),
             "{} should be refused",
             bad.display()
         );
     }
-    RestoresDir::new(&base.join("Music/Logic/Wit Restores"), &roots).unwrap();
+    RestoresDir::new(&base.join("Music/Logic/Wit Restores"), &roots, &data).unwrap();
 }
 
 /// The happy path really writes, and exactly one new entry appears.
@@ -1044,16 +1336,18 @@ fn the_happy_path_really_writes() {
     let dir = tempfile::tempdir().unwrap();
     let base = fs::canonicalize(dir.path()).unwrap();
     fs::create_dir_all(base.join("Music/Logic")).unwrap();
+    let data_dir = tempfile::tempdir().unwrap();
     let mut roots = WatchedRoots::new();
     roots
         .add(&base.join("Music"), RootKind::UserFolder)
         .unwrap();
-    let restores = RestoresDir::new(&base.join("Music/Wit Restores"), &roots).unwrap();
+    let restores =
+        RestoresDir::new(&base.join("Music/Wit Restores"), &roots, data_dir.path()).unwrap();
     let before = snapshot(&base);
     let dest = restores
         .fresh_destination("Song", "2026-09-29", Some("als"))
         .unwrap();
-    let landed = write_file_in_restores(dest, b"bytes").unwrap();
+    let landed = write_file_in_restores(dest, b"bytes").unwrap().path;
     let after = snapshot(&base);
     assert_eq!(fs::read(&landed).unwrap(), b"bytes");
     let new: Vec<&PathBuf> = after.keys().filter(|p| !before.contains_key(*p)).collect();

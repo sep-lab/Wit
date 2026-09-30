@@ -15,6 +15,15 @@
 //! - **Nothing is spawned unless a caller asks** ([`reveal`],
 //!   [`open_with_default_app`]); the child is reaped on a background thread
 //!   so no zombie is left behind.
+//! - **"Open" only opens projects** ([`check_openable`]). `open`,
+//!   `cmd /c start` and `xdg-open` launch *anything* openable — an `.app`,
+//!   `.command`, `.webloc`, `.exe`, `.bat`, `.lnk` or `.desktop` file. So
+//!   Wit opens only what the path **resolves to** (a symlinked `.als`
+//!   pointing at an app is judged as the app): a recognised project
+//!   (`.logicx`/`.band` folders; `.als`, `.flp`, `.rpp` and the other DAW
+//!   formats the watcher knows), a plain folder without an extension, or —
+//!   inside a watched *user-added* folder only — a file with an allow-listed,
+//!   non-executable extension (audio, MIDI, text, PDF, images).
 //!
 //! # Per-OS commands
 //!
@@ -35,11 +44,12 @@
 //! client, and the parent-folder fallback needs none.
 
 use crate::paths;
+use crate::roots::{RootKind, WatchedRoots};
 use crate::TargetOs;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// A command to run, described as data so tests can assert on it.
@@ -108,6 +118,9 @@ pub enum RevealError {
     ForbiddenCharacter(String),
     /// A Windows path that isn't valid Unicode can't be quoted safely.
     NotUnicode,
+    /// Not a project (or allow-listed file in a user folder); Wit won't
+    /// launch it.
+    NotOpenable(String),
     /// The path doesn't exist, or spawning failed.
     Io(io::Error),
 }
@@ -123,6 +136,9 @@ impl fmt::Display for RevealError {
                 )
             }
             RevealError::NotUnicode => write!(f, "refusing a non-Unicode Windows path"),
+            RevealError::NotOpenable(p) => {
+                write!(f, "Wit only opens projects and plain media files: {p:?}")
+            }
             RevealError::Io(e) => write!(f, "{e}"),
         }
     }
@@ -231,11 +247,81 @@ pub fn reveal(path: &Path) -> Result<(), RevealError> {
         .map_err(RevealError::Io)
 }
 
-/// Open an existing `path` with its default application (a project opens in
-/// its DAW). Only ever call this from an explicit user action.
-pub fn open_with_default_app(path: &Path) -> Result<(), RevealError> {
-    std::fs::symlink_metadata(path).map_err(RevealError::Io)?;
-    open_plan(path, TargetOs::current())?
+/// Project formats Wit will open anywhere (files).
+const PROJECT_FILES: &[&str] = &[
+    "als",
+    "flp",
+    "rpp",
+    "bwproject",
+    "ardour",
+    "song",
+    "cpr",
+    "npr",
+    "ptx",
+    "dawproject",
+    "mmpz",
+    "mmp",
+    "rns",
+    "reason",
+    "aup3",
+];
+/// Project packages Wit will open anywhere (folders).
+const PROJECT_FOLDERS: &[&str] = &["logicx", "band"];
+/// Non-executable files Wit will open inside a watched *user-added* folder.
+const GENERIC_OPENABLE: &[&str] = &[
+    "wav", "aif", "aiff", "aifc", "flac", "mp3", "m4a", "aac", "ogg", "opus", "caf", "mid", "midi",
+    "txt", "md", "rtf", "pdf", "png", "jpg", "jpeg",
+];
+
+fn ext_of(path: &Path) -> Option<String> {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+}
+
+/// Decide whether Wit may hand `path` to the OS "open" command, judging what
+/// it **resolves to**. Returns the resolved path, which is what gets opened.
+pub fn check_openable(path: &Path, watched: &WatchedRoots) -> Result<PathBuf, RevealError> {
+    let resolved = std::fs::canonicalize(path).map_err(RevealError::Io)?;
+    let meta = std::fs::metadata(&resolved).map_err(RevealError::Io)?;
+    let ext = ext_of(&resolved);
+    let refuse = || RevealError::NotOpenable(paths::display(&resolved));
+    if meta.is_dir() {
+        return match ext.as_deref() {
+            None => Ok(resolved),
+            Some(e) if PROJECT_FOLDERS.contains(&e) => Ok(resolved),
+            Some(_) => Err(refuse()), // .app, .bundle, .framework, …
+        };
+    }
+    if !meta.is_file() {
+        return Err(refuse());
+    }
+    match ext.as_deref() {
+        Some(e) if PROJECT_FILES.contains(&e) => Ok(resolved),
+        Some(e) if GENERIC_OPENABLE.contains(&e) => {
+            let in_user_folder = watched.iter().any(|r| {
+                r.kind() == RootKind::UserFolder
+                    && paths::is_within_canonical(
+                        &resolved,
+                        r.path(),
+                        paths::CaseSensitivity::Insensitive,
+                    )
+            });
+            if in_user_folder {
+                Ok(resolved)
+            } else {
+                Err(refuse())
+            }
+        }
+        _ => Err(refuse()),
+    }
+}
+
+/// Open an existing project with its default application (its DAW), after
+/// [`check_openable`]. Only ever call this from an explicit user action.
+pub fn open_with_default_app(path: &Path, watched: &WatchedRoots) -> Result<(), RevealError> {
+    let resolved = check_openable(path, watched)?;
+    open_plan(&resolved, TargetOs::current())?
         .spawn()
         .map_err(RevealError::Io)
 }
@@ -360,8 +446,77 @@ mod tests {
             Err(RevealError::Io(_))
         ));
         assert!(matches!(
-            open_with_default_app(&dir.path().join("missing")),
+            open_with_default_app(&dir.path().join("missing"), &WatchedRoots::new()),
             Err(RevealError::Io(_))
         ));
+    }
+
+    #[test]
+    fn only_projects_and_allow_listed_files_in_user_folders_are_openable() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = std::fs::canonicalize(dir.path()).unwrap();
+        let user = base.join("user");
+        let other = base.join("other");
+        for d in [&user, &other] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let mut roots = WatchedRoots::new();
+        roots.add(&user, RootKind::UserFolder).unwrap();
+        let file = |p: &Path| {
+            std::fs::write(p, b"x").unwrap();
+            p.to_path_buf()
+        };
+        let dirp = |p: &Path| {
+            std::fs::create_dir_all(p).unwrap();
+            p.to_path_buf()
+        };
+        // Projects: anywhere.
+        for ok in [
+            file(&other.join("Set.als")),
+            file(&other.join("Beat.FLP")),
+            file(&other.join("song.rpp")),
+            dirp(&other.join("Song.logicx")),
+            dirp(&other.join("plain folder")),
+        ] {
+            assert!(check_openable(&ok, &roots).is_ok(), "{}", ok.display());
+        }
+        // Allow-listed media: only inside a user folder.
+        assert!(check_openable(&file(&user.join("take.wav")), &roots).is_ok());
+        assert!(check_openable(&file(&other.join("take.wav")), &roots).is_err());
+        // Anything launchable: never.
+        for bad in [
+            dirp(&other.join("Evil.app")),
+            file(&user.join("run.command")),
+            file(&user.join("link.webloc")),
+            file(&user.join("setup.exe")),
+            file(&user.join("x.bat")),
+            file(&user.join("x.lnk")),
+            file(&user.join("x.desktop")),
+            file(&user.join("script.sh")),
+            file(&user.join("noext")),
+        ] {
+            assert!(
+                matches!(
+                    check_openable(&bad, &roots),
+                    Err(RevealError::NotOpenable(_))
+                ),
+                "{}",
+                bad.display()
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_project_name_symlinked_to_an_app_is_judged_as_the_app() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir_all(base.join("Evil.app")).unwrap();
+        std::os::unix::fs::symlink(base.join("Evil.app"), base.join("Song.logicx")).unwrap();
+        std::fs::write(base.join("run.command"), b"#!/bin/sh").unwrap();
+        std::os::unix::fs::symlink(base.join("run.command"), base.join("Set.als")).unwrap();
+        let roots = WatchedRoots::new();
+        assert!(check_openable(&base.join("Song.logicx"), &roots).is_err());
+        assert!(check_openable(&base.join("Set.als"), &roots).is_err());
     }
 }

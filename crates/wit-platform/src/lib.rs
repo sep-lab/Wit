@@ -37,7 +37,9 @@
 //!   anywhere. (Wit's own data dir is written by `wit-index`, not by this
 //!   crate.)
 //! - **Write anywhere but one new entry directly inside a validated
-//!   Restores folder.**
+//!   Restores folder** — through a pinned directory handle, so swapping the
+//!   folder's path for a symlink mid-restore can't redirect a write — plus
+//!   the staging journal in Wit's own data folder.
 //! - **Open a source file with write access.** Clone sources are opened
 //!   read-only (or cloned by the kernel with `clonefile`/`FICLONE`/
 //!   `FSCTL_DUPLICATE_EXTENTS`, which never modifies the source).
@@ -48,16 +50,21 @@
 //!   only when complete; a failed or abandoned copy removes its staging dir.
 //! - **Delete anything except what the current restore created.** The only
 //!   removal APIs operate inside the staging folder of the restore in
-//!   progress; even a crashed earlier restore's staging folder is left
-//!   alone.
-//! - **Reproduce a symlink in a copy.** A symlink inside a project could point
-//!   back into the original project; a DAW opening the copy would then write
-//!   through it. Symlinks are skipped and reported instead.
+//!   progress; a crashed earlier restore's staging folder is removed only on
+//!   an explicit call, and only if the journal proves it is Wit's own and
+//!   unchanged.
+//! - **Put a symlink or a shared inode in a copy.** A symlink inside a
+//!   project could point back into the original; a DAW opening the copy
+//!   would then write through it. Symlinks are skipped and reported, and a
+//!   restore whose staging folder was tampered with (a planted symlink or
+//!   hard link) is refused at commit.
 //! - **Run a shell over untrusted text.** Reveal/open commands are built as
 //!   argv with absolute paths only; the one Windows `cmd /c start` form uses
 //!   explicit quoting and refuses characters `cmd` would expand.
-//! - **Launch a DAW on its own.** "Open with the DAW" runs only when a caller
-//!   asks for it (a user click).
+//! - **Launch a DAW on its own, or launch anything but a project.** "Open
+//!   with the DAW" runs only when a caller asks (a user click), and only for
+//!   recognised project types or allow-listed media in the user's own
+//!   folders — never an `.app`, `.command`, `.exe`, `.lnk` or `.desktop`.
 //! - **Touch the network or send telemetry.** There is no network code in
 //!   this crate, and none of its dependencies are network clients.
 //!

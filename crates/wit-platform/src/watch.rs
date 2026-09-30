@@ -66,21 +66,29 @@
 //!   rename-into-place, backup rotation) on the real OS watcher.
 //! - Two saves within one mtime tick that leave identical sizes (possible
 //!   on HFS+'s 1 s or FAT's 2 s mtime) are reported once.
-//! - A settled project counts as a save only if something was written (see
-//!   [`Debouncer::poll`]). A project *moved or copied in* with its old
-//!   modification times preserved is therefore not reported as a save (it
-//!   isn't one); discovery finds it. A file server whose clock runs more
-//!   than ~30 s behind could make a real save look old and be missed.
+//! - A settled project is reported iff its fingerprint (size, mtime, and a
+//!   change stamp: inode + ctime on Unix, creation time on Windows) differs
+//!   from its **baseline** — the last one known, taken by a scan of every
+//!   root when the watcher starts, then updated on each report. So a change
+//!   is reported *whatever the files' ages* (an atomic replace by an old
+//!   version, `cp -p`, `rsync -a`, unzip, a restore preserving mtimes), and
+//!   an event that changed nothing (APFS reporting a clone's *source*,
+//!   measured) is not. Events that arrive during the start-up scan make
+//!   their project's baseline untrusted, so those are reported on settle.
+//! - On Windows the change stamp is the creation time, so an in-place
+//!   rewrite that keeps both size and mtime is not seen there.
 //! - On Linux, reads are invisible only because opens/reads are filtered
 //!   ([`is_content_event`]); on macOS, `stat`/`read_dir`/`read` produce no
-//!   FSEvents at all, but an APFS clone of a watched file does (measured) —
-//!   the "something was written" rule is what keeps a restore from reporting
-//!   its source as saved.
+//!   FSEvents at all.
+//! - Memory is bounded: at most [`MAX_BASELINES`] fingerprints are kept and
+//!   the start-up scan visits at most [`MAX_SCAN_ENTRIES`] entries; past
+//!   either, a project's next change is reported even if it changed
+//!   nothing (never the reverse).
 //! - If the OS drops events (inotify queue overflow, FSEvents "must
 //!   rescan"), a [`WatchEvent::NeedsRescan`] is sent for each root; the
 //!   caller should rescan with discovery.
 
-use crate::clone::{CloneError, RestoresDir, STAGING_PREFIX};
+use crate::clone::{CloneError, FileId, RestoresDir, STAGING_PREFIX};
 use crate::paths::{self, CaseSensitivity};
 use crate::roots::{RootError, RootKind, WatchedRoot, WatchedRoots};
 use std::collections::{BTreeMap, BTreeSet};
@@ -332,13 +340,57 @@ pub fn is_content_event(kind: &notify::EventKind) -> bool {
     }
 }
 
-/// `(relative path, size, mtime)` of every relevant file of a project.
-pub type Fingerprint = Vec<(PathBuf, u64, Option<SystemTime>)>;
+/// What identifies one version of a file, cheaply: size, mtime, and a
+/// change stamp the writer can't forge — `(inode, ctime)` on Unix (an
+/// atomic replace gets a new inode; any write or `utimes` bumps ctime),
+/// `(0, creation time)` on Windows (a replace-by-rename brings the new
+/// file's creation time).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FileStamp {
+    pub len: u64,
+    pub modified: Option<SystemTime>,
+    pub change: (u64, i64),
+}
+
+impl FileStamp {
+    fn of(meta: &std::fs::Metadata) -> FileStamp {
+        FileStamp {
+            len: meta.len(),
+            modified: meta.modified().ok(),
+            change: change_stamp(meta),
+        }
+    }
+}
+
+#[cfg(unix)]
+fn change_stamp(meta: &std::fs::Metadata) -> (u64, i64) {
+    use std::os::unix::fs::MetadataExt;
+    (
+        meta.ino(),
+        meta.ctime()
+            .saturating_mul(1_000_000_000)
+            .saturating_add(meta.ctime_nsec()),
+    )
+}
+
+#[cfg(windows)]
+fn change_stamp(meta: &std::fs::Metadata) -> (u64, i64) {
+    use std::os::windows::fs::MetadataExt;
+    (0, meta.creation_time() as i64)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn change_stamp(_meta: &std::fs::Metadata) -> (u64, i64) {
+    (0, 0)
+}
+
+/// `(relative path, stamp)` of every relevant file of a project, sorted.
+pub type Fingerprint = Vec<(PathBuf, FileStamp)>;
 
 fn stat_into(path: &Path, rel: PathBuf, out: &mut Fingerprint) {
     if let Ok(m) = std::fs::symlink_metadata(path) {
         if m.is_file() {
-            out.push((rel, m.len(), m.modified().ok()));
+            out.push((rel, FileStamp::of(&m)));
         }
     }
 }
@@ -393,7 +445,7 @@ pub fn fingerprint(project: &ProjectRoot) -> Option<Fingerprint> {
             if !meta.is_file() {
                 return None;
             }
-            fp.push((PathBuf::new(), meta.len(), meta.modified().ok()));
+            fp.push((PathBuf::new(), FileStamp::of(&meta)));
         }
     }
     fp.sort();
@@ -403,25 +455,15 @@ pub fn fingerprint(project: &ProjectRoot) -> Option<Fingerprint> {
 #[derive(Debug)]
 struct Pending {
     last_event: Instant,
-    /// Wall-clock time of the first raw event (for the mtime recency test).
-    first_event_wall: SystemTime,
-    /// The fingerprint at the first poll after the first event.
-    first_fp: Option<Option<Fingerprint>>,
     fp: Option<Option<Fingerprint>>,
     fp_since: Instant,
 }
 
-/// How far before the first raw event a relevant file's mtime may lie and
-/// still count as "written by this save". Covers event-delivery latency and
-/// coarse mtimes (FAT: 2 s); added to the settle window.
-pub const RECENT_WRITE_SLACK: Duration = Duration::from_secs(30);
-
-/// Did anything in `fp` get written at or after `threshold`? A missing mtime
-/// counts as yes (conservative: report rather than miss a save).
-fn written_since(fp: &Fingerprint, threshold: SystemTime) -> bool {
-    fp.iter()
-        .any(|(_, _, mtime)| mtime.is_none_or(|m| m >= threshold))
-}
+/// Most projects whose last-known fingerprint is remembered. Past this, the
+/// oldest-keyed entries are forgotten — a forgotten project's next event is
+/// then reported even if nothing changed (never the reverse), so the bound
+/// can only cost a spurious event, never lost history.
+pub const MAX_BASELINES: usize = 100_000;
 
 /// The write-stability state machine, separated from the OS watcher so it
 /// can be tested with a fake clock and scripted fingerprints.
@@ -429,7 +471,9 @@ fn written_since(fp: &Fingerprint, threshold: SystemTime) -> bool {
 pub struct Debouncer {
     settle: Duration,
     pending: BTreeMap<ProjectRoot, Pending>,
-    last_emitted: BTreeMap<PathBuf, Fingerprint>,
+    /// The last fingerprint known for each project: from the scan at watch
+    /// start, or the last one reported.
+    baselines: BTreeMap<PathBuf, Fingerprint>,
 }
 
 impl Debouncer {
@@ -437,20 +481,30 @@ impl Debouncer {
         Debouncer {
             settle,
             pending: BTreeMap::new(),
-            last_emitted: BTreeMap::new(),
+            baselines: BTreeMap::new(),
         }
     }
 
-    /// A relevant raw event for `project` arrived at `now` (`wall` is the
-    /// same moment on the wall clock, for comparing against file mtimes).
-    pub fn observe(&mut self, project: ProjectRoot, now: Instant, wall: SystemTime) {
+    /// Record what `path` looked like before any event (the watch-start scan).
+    pub fn set_baseline(&mut self, path: PathBuf, fp: Fingerprint) {
+        self.baselines.insert(path, fp);
+        while self.baselines.len() > MAX_BASELINES {
+            self.baselines.pop_first();
+        }
+    }
+
+    /// Forget what `path` looked like, so its next settle is reported.
+    pub fn forget(&mut self, path: &Path) {
+        self.baselines.remove(path);
+    }
+
+    /// A relevant raw event for `project` arrived at `now`.
+    pub fn observe(&mut self, project: ProjectRoot, now: Instant) {
         self.pending
             .entry(project)
             .and_modify(|p| p.last_event = now)
             .or_insert(Pending {
                 last_event: now,
-                first_event_wall: wall,
-                first_fp: None,
                 fp: None,
                 fp_since: now,
             });
@@ -458,16 +512,16 @@ impl Debouncer {
 
     /// Re-stat every pending project and return the ones that have settled:
     /// no raw event **and** an unchanged fingerprint for the whole settle
-    /// window. A settled project is reported only if it was really
-    /// *written*: its fingerprint moved while pending, or one of its
-    /// relevant files has an mtime no older than the first event (minus the
-    /// settle window and [`RECENT_WRITE_SLACK`]) — the second clause catches
-    /// an atomic save that finished before the first poll. Events that
-    /// changed nothing are dropped: on APFS, cloning a watched file (which a
-    /// restore does) makes FSEvents report the *source* as created and
-    /// modified although its bytes and mtime are untouched (measured). A
-    /// project that vanished is dropped; one whose settled fingerprint
-    /// equals the last one emitted (a late duplicate event) is dropped too.
+    /// window. A settled project is reported iff its fingerprint differs
+    /// from its baseline (the last one known) — **whatever the files'
+    /// ages**: an atomic replace by an old version, `cp -p`, `rsync -a`,
+    /// unzip, a Finder copy-replace, or a restore that preserves mtimes all
+    /// change size, inode or ctime and are reported. Events that changed
+    /// nothing are dropped: on APFS, cloning a watched file (which a restore
+    /// does) makes FSEvents report the *source* as created and modified,
+    /// but its size, inode, mtime and ctime are untouched (measured), so its
+    /// fingerprint equals its baseline. A project with no baseline (new, or
+    /// forgotten) is reported. A project that vanished is dropped.
     pub fn poll(
         &mut self,
         now: Instant,
@@ -477,9 +531,6 @@ impl Debouncer {
         let mut done = Vec::new();
         for (project, pending) in self.pending.iter_mut() {
             let fp = stat(project);
-            if pending.first_fp.is_none() {
-                pending.first_fp = Some(fp.clone());
-            }
             if pending.fp.as_ref() != Some(&fp) {
                 pending.fp = Some(fp);
                 pending.fp_since = now;
@@ -494,19 +545,14 @@ impl Debouncer {
             let Some(pending) = self.pending.remove(&project) else {
                 continue;
             };
-            let Some(Some(fp)) = pending.fp else { continue };
-            if self.last_emitted.get(&project.path) == Some(&fp) {
+            let Some(Some(fp)) = pending.fp else {
+                self.baselines.remove(&project.path);
+                continue;
+            };
+            if self.baselines.get(&project.path) == Some(&fp) {
                 continue;
             }
-            let moved = pending.first_fp.as_ref() != Some(&Some(fp.clone()));
-            let threshold = pending
-                .first_event_wall
-                .checked_sub(self.settle + RECENT_WRITE_SLACK)
-                .unwrap_or(SystemTime::UNIX_EPOCH);
-            if !moved && !written_since(&fp, threshold) {
-                continue;
-            }
-            self.last_emitted.insert(project.path.clone(), fp);
+            self.set_baseline(project.path.clone(), fp);
             settled.push(project);
         }
         settled
@@ -515,6 +561,65 @@ impl Debouncer {
     /// Whether anything is waiting to settle.
     pub fn is_idle(&self) -> bool {
         self.pending.is_empty()
+    }
+}
+
+/// Most filesystem entries the watch-start baseline scan visits; past this,
+/// remaining projects simply have no baseline (their first event is
+/// reported — conservative).
+pub const MAX_SCAN_ENTRIES: usize = 200_000;
+const MAX_SCAN_DEPTH: usize = 32;
+
+/// Walk every outermost root and fingerprint each project found, so a
+/// later event can be compared with what was there before it.
+fn scan_baselines(config: &WatchConfig, debouncer: &mut Debouncer, stop: &AtomicBool) {
+    let exists = |p: &Path| p.exists();
+    let mut visited = 0usize;
+    let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut stack: Vec<(PathBuf, usize)> = config
+        .roots
+        .outermost()
+        .iter()
+        .map(|r| (r.path().to_path_buf(), 0))
+        .collect();
+    while let Some((dir, depth)) = stack.pop() {
+        if stop.load(Ordering::Relaxed) || visited >= MAX_SCAN_ENTRIES {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            visited += 1;
+            let path = entry.path();
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_symlink() || config.is_ignored(&path) {
+                continue;
+            }
+            let Some(root) = config.roots.root_for(&path) else {
+                continue;
+            };
+            let is_package = kind.is_dir()
+                && path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                    e.eq_ignore_ascii_case("logicx") || e.eq_ignore_ascii_case("band")
+                });
+            if kind.is_dir() && !is_package {
+                let hidden = entry.file_name().to_string_lossy().starts_with('.');
+                if !hidden && depth < MAX_SCAN_DEPTH {
+                    stack.push((path, depth + 1));
+                }
+                continue;
+            }
+            if let Some(project) = classify(&path, root, &exists) {
+                if seen.insert(project.path.clone()) {
+                    if let Some(fp) = fingerprint(&project) {
+                        debouncer.set_baseline(project.path, fp);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -569,27 +674,37 @@ pub struct WatchConfig {
 }
 
 impl WatchConfig {
-    /// Watch `roots` **plus the Restores folder** (added as a user folder,
-    /// so a restored copy of any format keeps its history). Fails if a root
-    /// in `roots` sits inside the Restores folder or the Restores folder has
-    /// ended up inside a project — so no root set that breaks ADR-0007's
-    /// placement rules is ever watched.
+    /// Watch `roots` **plus the Restores folder**, never Wit's own data
+    /// folder (both taken from `restores`, so neither can be forgotten).
+    ///
+    /// The Restores folder is added as a user folder (so a restored copy of
+    /// any format keeps its history) — unless it already *is* one of the
+    /// roots, which then keeps its own kind (a discovery root is not widened
+    /// to the generic tier). Fails if a root in `roots` sits inside the
+    /// Restores folder or the Restores folder has ended up inside a project —
+    /// so no root set that breaks ADR-0007's placement rules is ever watched.
     pub fn new(mut roots: WatchedRoots, restores: &RestoresDir) -> Result<WatchConfig, WatchError> {
         restores
             .check_against(&roots)
             .map_err(WatchError::Restores)?;
         restores.revalidate().map_err(WatchError::Restores)?;
-        roots
-            .add(restores.path(), RootKind::UserFolder)
-            .map_err(WatchError::Root)?;
+        let restores_id = FileId::of_path(restores.path()).ok();
+        let already_a_root = roots
+            .iter()
+            .any(|r| restores_id.is_some() && FileId::of_path(r.path()).ok() == restores_id);
+        if !already_a_root {
+            roots
+                .add(restores.path(), RootKind::UserFolder)
+                .map_err(WatchError::Root)?;
+        }
         Ok(WatchConfig {
             roots,
-            ignore: Vec::new(),
+            ignore: vec![restores.data_dir().to_path_buf()],
             settle: DEFAULT_SETTLE,
         })
     }
 
-    /// Also ignore everything under `dir` (Wit's own data dir).
+    /// Also ignore everything under `dir`.
     pub fn ignore(mut self, dir: &Path) -> WatchConfig {
         if let Ok(c) = paths::canonicalize_lenient(dir) {
             self.ignore.push(c);
@@ -601,6 +716,12 @@ impl WatchConfig {
     pub fn settle(mut self, settle: Duration) -> WatchConfig {
         self.settle = settle;
         self
+    }
+
+    fn is_ignored(&self, path: &Path) -> bool {
+        self.ignore
+            .iter()
+            .any(|dir| paths::is_within_canonical(path, dir, CaseSensitivity::Insensitive))
     }
 }
 
@@ -619,7 +740,9 @@ impl fmt::Debug for ProjectWatcher {
 }
 
 impl ProjectWatcher {
-    /// Start watching every outermost root recursively.
+    /// Start watching every outermost root recursively. The OS watch is
+    /// registered first; the thread then fingerprints every existing project
+    /// (the baseline scan) before reporting anything.
     pub fn start(config: WatchConfig) -> Result<ProjectWatcher, WatchError> {
         use notify::Watcher;
         if config.roots.is_empty() {
@@ -683,6 +806,46 @@ impl Drop for ProjectWatcher {
     }
 }
 
+/// Feed one raw notify event to the debouncer. `fresh` marks events that
+/// arrived while the baseline scan ran: their projects' baselines may
+/// already include the change, so they are forgotten (reported on settle).
+fn handle_event(
+    config: &WatchConfig,
+    debouncer: &mut Debouncer,
+    rescan: &mut BTreeSet<PathBuf>,
+    event: notify::Event,
+    now: Instant,
+    during_scan: bool,
+) {
+    let exists = |p: &Path| p.exists();
+    if event.need_rescan() {
+        rescan.extend(
+            config
+                .roots
+                .outermost()
+                .iter()
+                .map(|r| r.path().to_path_buf()),
+        );
+    }
+    if !is_content_event(&event.kind) {
+        return;
+    }
+    for path in &event.paths {
+        if config.is_ignored(path) {
+            continue;
+        }
+        let Some(root) = config.roots.root_for(path) else {
+            continue;
+        };
+        if let Some(project) = classify(path, root, &exists) {
+            if during_scan {
+                debouncer.forget(&project.path);
+            }
+            debouncer.observe(project, now);
+        }
+    }
+}
+
 fn run_loop(
     config: WatchConfig,
     raw: Receiver<notify::Result<notify::Event>>,
@@ -690,59 +853,36 @@ fn run_loop(
     stop: Arc<AtomicBool>,
 ) {
     let mut debouncer = Debouncer::new(config.settle);
-    let mut roots_of: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
-    let exists = |p: &Path| p.exists();
+    scan_baselines(&config, &mut debouncer, &stop);
+    let mut first_pass = true;
     loop {
         if stop.load(Ordering::SeqCst) {
             return;
         }
-        let first = match raw.recv_timeout(TICK) {
-            Ok(e) => Some(e),
-            Err(RecvTimeoutError::Timeout) => None,
-            Err(RecvTimeoutError::Disconnected) => return,
+        let first = if first_pass {
+            None
+        } else {
+            match raw.recv_timeout(TICK) {
+                Ok(e) => Some(e),
+                Err(RecvTimeoutError::Timeout) => None,
+                Err(RecvTimeoutError::Disconnected) => return,
+            }
         };
         let now = Instant::now();
-        let wall = SystemTime::now();
         let mut rescan: BTreeSet<PathBuf> = BTreeSet::new();
         for raw_event in first.into_iter().chain(raw.try_iter()) {
-            let event = match raw_event {
-                Ok(e) => e,
+            match raw_event {
+                Ok(event) => {
+                    handle_event(&config, &mut debouncer, &mut rescan, event, now, first_pass)
+                }
                 Err(e) => {
                     if out.send(WatchEvent::Error(e.to_string())).is_err() {
                         return;
                     }
-                    continue;
-                }
-            };
-            if event.need_rescan() {
-                rescan.extend(
-                    config
-                        .roots
-                        .outermost()
-                        .iter()
-                        .map(|r| r.path().to_path_buf()),
-                );
-            }
-            if !is_content_event(&event.kind) {
-                continue;
-            }
-            for path in &event.paths {
-                let ignored = config
-                    .ignore
-                    .iter()
-                    .any(|dir| paths::is_within_canonical(path, dir, CaseSensitivity::Insensitive));
-                if ignored {
-                    continue;
-                }
-                let Some(root) = config.roots.root_for(path) else {
-                    continue;
-                };
-                if let Some(project) = classify(path, root, &exists) {
-                    roots_of.insert(project.path.clone(), root.path().to_path_buf());
-                    debouncer.observe(project, now, wall);
                 }
             }
         }
+        first_pass = false;
         for root in rescan {
             if out.send(WatchEvent::NeedsRescan { root }).is_err() {
                 return;
@@ -752,7 +892,11 @@ fn run_loop(
             continue;
         }
         for project in debouncer.poll(Instant::now(), fingerprint) {
-            let root = roots_of.get(&project.path).cloned().unwrap_or_default();
+            let root = config
+                .roots
+                .root_for(&project.path)
+                .map(|r| r.path().to_path_buf())
+                .unwrap_or_default();
             let event = WatchEvent::Settled {
                 project,
                 root,
@@ -978,8 +1122,16 @@ mod tests {
         t0 + Duration::from_millis(n)
     }
 
+    fn stamp(len: u64, change: i64) -> FileStamp {
+        FileStamp {
+            len,
+            modified: None,
+            change: (1, change),
+        }
+    }
+
     fn fp(size: u64) -> Option<Fingerprint> {
-        Some(vec![(PathBuf::new(), size, None)])
+        Some(vec![(PathBuf::new(), stamp(size, 0))])
     }
 
     #[test]
@@ -995,7 +1147,7 @@ mod tests {
         let mut out = Vec::new();
         for step in 0..=6 {
             size += 10;
-            d.observe(p.clone(), ms(t0, step * 150), SystemTime::now());
+            d.observe(p.clone(), ms(t0, step * 150));
             out.extend(d.poll(ms(t0, step * 150), |_| fp(size)));
         }
         assert!(out.is_empty(), "nothing settles mid-save");
@@ -1004,11 +1156,11 @@ mod tests {
         assert_eq!(d.poll(ms(t0, 1_400), |_| fp(size)), vec![p.clone()]);
         assert!(d.is_idle());
         // A late duplicate event with an identical fingerprint is swallowed.
-        d.observe(p.clone(), ms(t0, 1_500), SystemTime::now());
+        d.observe(p.clone(), ms(t0, 1_500));
         assert!(d.poll(ms(t0, 1_500), |_| fp(size)).is_empty());
         assert!(d.poll(ms(t0, 2_100), |_| fp(size)).is_empty());
         // The next real save emits again.
-        d.observe(p.clone(), ms(t0, 3_000), SystemTime::now());
+        d.observe(p.clone(), ms(t0, 3_000));
         assert!(d.poll(ms(t0, 3_000), |_| fp(size + 1)).is_empty());
         assert_eq!(d.poll(ms(t0, 3_600), |_| fp(size + 1)), vec![p]);
     }
@@ -1021,7 +1173,7 @@ mod tests {
             kind: ProjectKind::Ableton,
         };
         let mut d = Debouncer::new(Duration::from_millis(500));
-        d.observe(p.clone(), t0, SystemTime::now());
+        d.observe(p.clone(), t0);
         assert!(d.poll(t0, |_| fp(1)).is_empty());
         // No events, but the size keeps moving (coalesced/lost events).
         assert!(d.poll(ms(t0, 600), |_| fp(2)).is_empty());
@@ -1029,40 +1181,97 @@ mod tests {
         assert_eq!(d.poll(ms(t0, 1_100), |_| fp(2)), vec![p]);
     }
 
-    fn fp_at(size: u64, mtime: SystemTime) -> Option<Fingerprint> {
-        Some(vec![(PathBuf::new(), size, Some(mtime))])
-    }
-
     #[test]
     fn an_event_that_changed_nothing_is_not_a_save() {
         // e.g. APFS reporting a clone's *source* as created + modified.
         let t0 = Instant::now();
-        let wall = SystemTime::now();
-        let old = wall - Duration::from_secs(3_600);
         let p = ProjectRoot {
             path: "/x/a.logicx".into(),
             kind: ProjectKind::Logic,
         };
         let mut d = Debouncer::new(Duration::from_millis(500));
-        d.observe(p.clone(), t0, wall);
-        assert!(d.poll(t0, |_| fp_at(7, old)).is_empty());
-        assert!(d.poll(ms(t0, 600), |_| fp_at(7, old)).is_empty());
-        assert!(d.is_idle(), "settled, and dropped as a non-save");
+        d.set_baseline(p.path.clone(), fp(7).unwrap());
+        d.observe(p.clone(), t0);
+        assert!(d.poll(t0, |_| fp(7)).is_empty());
+        assert!(d.poll(ms(t0, 600), |_| fp(7)).is_empty());
+        assert!(d.is_idle(), "settled, and dropped as unchanged");
     }
 
     #[test]
-    fn an_atomic_save_that_finished_before_the_first_poll_still_counts() {
+    fn a_change_is_reported_whatever_the_age_of_its_files() {
+        // An atomic replace by an older version: same mtime, different
+        // size/inode/ctime — the "±30 s" rule used to drop this.
         let t0 = Instant::now();
-        let wall = SystemTime::now();
         let p = ProjectRoot {
             path: "/x/a.als".into(),
             kind: ProjectKind::Ableton,
         };
+        let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let before = vec![(
+            PathBuf::new(),
+            FileStamp {
+                len: 7,
+                modified: Some(old),
+                change: (10, 1),
+            },
+        )];
+        let after = vec![(
+            PathBuf::new(),
+            FileStamp {
+                len: 9,
+                modified: Some(old),
+                change: (11, 2),
+            },
+        )];
         let mut d = Debouncer::new(Duration::from_millis(500));
-        d.observe(p.clone(), t0, wall);
-        // The fingerprint never moves while pending, but the file is fresh.
-        assert!(d.poll(t0, |_| fp_at(7, wall)).is_empty());
-        assert_eq!(d.poll(ms(t0, 600), |_| fp_at(7, wall)), vec![p]);
+        d.set_baseline(p.path.clone(), before);
+        d.observe(p.clone(), t0);
+        assert!(d.poll(t0, |_| Some(after.clone())).is_empty());
+        assert_eq!(
+            d.poll(ms(t0, 600), |_| Some(after.clone())),
+            vec![p.clone()]
+        );
+        // Same bytes, same size, same mtime, but rewritten in place (ctime moved).
+        let rewritten = vec![(
+            PathBuf::new(),
+            FileStamp {
+                len: 9,
+                modified: Some(old),
+                change: (11, 3),
+            },
+        )];
+        d.observe(p.clone(), ms(t0, 1_000));
+        assert!(d
+            .poll(ms(t0, 1_000), |_| Some(rewritten.clone()))
+            .is_empty());
+        assert_eq!(d.poll(ms(t0, 1_600), |_| Some(rewritten.clone())), vec![p]);
+    }
+
+    #[test]
+    fn a_project_without_a_baseline_is_reported() {
+        let t0 = Instant::now();
+        let p = ProjectRoot {
+            path: "/x/new.als".into(),
+            kind: ProjectKind::Ableton,
+        };
+        let mut d = Debouncer::new(Duration::from_millis(500));
+        d.observe(p.clone(), t0);
+        assert!(d.poll(t0, |_| fp(1)).is_empty());
+        assert_eq!(d.poll(ms(t0, 600), |_| fp(1)), vec![p.clone()]);
+        // Forgetting a baseline re-arms reporting even for no change.
+        d.forget(&p.path);
+        d.observe(p.clone(), ms(t0, 1_000));
+        assert!(d.poll(ms(t0, 1_000), |_| fp(1)).is_empty());
+        assert_eq!(d.poll(ms(t0, 1_600), |_| fp(1)), vec![p]);
+    }
+
+    #[test]
+    fn baselines_are_bounded() {
+        let mut d = Debouncer::new(Duration::from_millis(500));
+        for i in 0..(MAX_BASELINES + 10) {
+            d.set_baseline(PathBuf::from(format!("/x/{i:07}.als")), fp(1).unwrap());
+        }
+        assert_eq!(d.baselines.len(), MAX_BASELINES);
     }
 
     #[test]
@@ -1073,7 +1282,7 @@ mod tests {
             kind: ProjectKind::Ableton,
         };
         let mut d = Debouncer::new(Duration::from_millis(100));
-        d.observe(p, t0, SystemTime::now());
+        d.observe(p, t0);
         assert!(d.poll(t0, |_| None).is_empty());
         assert!(d.poll(ms(t0, 200), |_| None).is_empty());
         assert!(d.is_idle());
@@ -1127,11 +1336,13 @@ mod tests {
         roots
             .add(&music.join("Logic"), RootKind::Discovery)
             .unwrap();
-        let restores = RestoresDir::new(&music.join("Wit Restores"), &roots).unwrap();
-        // The Restores folder becomes a watched root of its own ...
+        let data = dir.path().join("WitData");
+        let restores = RestoresDir::new(&music.join("Wit Restores"), &roots, &data).unwrap();
+        // The Restores folder becomes a watched root of its own, and Wit's
+        // data folder is ignored by construction ...
         let config = WatchConfig::new(roots.clone(), &restores).unwrap();
         assert!(config.roots.iter().any(|r| r.path() == restores.path()));
-        assert!(config.ignore.is_empty());
+        assert_eq!(config.ignore, vec![restores.data_dir().to_path_buf()]);
         // ... a root around it (the user watching ~/Music) is fine ...
         let mut wider = roots.clone();
         wider.add(&music, RootKind::UserFolder).unwrap();
@@ -1145,5 +1356,22 @@ mod tests {
             WatchConfig::new(inside, &restores),
             Err(WatchError::Restores(_))
         ));
+    }
+
+    #[test]
+    fn a_restores_folder_that_is_a_discovery_root_keeps_its_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let logic = dir.path().join("Music/Logic");
+        std::fs::create_dir_all(&logic).unwrap();
+        let mut roots = WatchedRoots::new();
+        roots.add(&logic, RootKind::Discovery).unwrap();
+        let restores = RestoresDir::new(&logic, &roots, &dir.path().join("WitData")).unwrap();
+        let config = WatchConfig::new(roots, &restores).unwrap();
+        assert_eq!(config.roots.len(), 1);
+        assert_eq!(
+            config.roots.iter().next().unwrap().kind(),
+            RootKind::Discovery,
+            "not widened to the generic tier"
+        );
     }
 }
