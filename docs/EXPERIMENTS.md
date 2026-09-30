@@ -622,15 +622,17 @@ walks every consecutive pair with `wit_logic::walk` and reports, per pair:
 census tag or added/removed extracted name, or a tempo change; `0` exactly when the verdict
 is `NoStructuralChange`), and raw byte identity.
 
-**Follow-up correction (found in review, PLAN-V2 Logic lane).** `logic_report` originally
-built each alternative's chain in `Project File Backups/00`–`09` slot-name order, which is
-a directory listing, not a save order — the slots are a ring, so any project old enough to
-have filled all 10 once (every real project long-lived enough to matter) has its pairing
-mixed up around the wrap. The fix orders by file modification time instead (tie-broken by
-slot name); see `crates/wit-index/src/discover.rs`'s `sort_by_save_time` and
-`LogicAlternative::backups`'s doc comment. **The 33.0%/67.0% split and the distribution
-below predate that fix and need to be re-measured** against the real library before being
-cited again — the reproduction command is unchanged.
+**Follow-up correction (found in review, PLAN-V2 Logic lane, 2026-09-29).** `logic_report`
+originally built each alternative's chain in `Project File Backups/00`–`09` slot-name
+order, which is a directory listing, not a save order — the slots are a ring, so a project
+old enough to have wrapped once has its pairing mixed up around the wrap. **Measured**
+against a real library: 4 of 28 alternatives had backups out of slot order, and re-pairing
+by file modification time instead of slot name changed the count of pairs with no visible
+structural change from 49 to 51 of 164 total. The fix orders by file modification time
+instead (tie-broken by slot name); see `crates/wit-index/src/discover.rs`'s
+`sort_by_save_time` and `LogicAlternative::backups`'s doc comment. **The 33.0%/67.0% split
+and the distribution below predate that fix and need to be re-measured** against the real
+library before being cited again — the reproduction command is unchanged.
 
 **Result — measured, n = 32 projects, 2026-08-16.**
 

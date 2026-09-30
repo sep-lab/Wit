@@ -275,24 +275,20 @@
                     },
                     {
                       "kind": "plain",
-                      "text": "' on "
-                    },
-                    {
-                      "kind": "track",
-                      "text": "track 1"
+                      "text": "' on track 1"
                     }
                   ],
-                  "track": "track 1",
+                  "track": null,
                   "lane": null,
                   "place": {
                     "kind": "bars",
                     "start": 5.0,
                     "end": null,
-                    "approximate": false,
+                    "approximate": true,
                     "section": null
                   },
-                  "place_label": "bar 5",
-                  "confidence": "exact",
+                  "place_label": "about bar 5",
+                  "confidence": "approximate",
                   "tier": "structure"
                 }
               ],
@@ -480,24 +476,20 @@
                     },
                     {
                       "kind": "plain",
-                      "text": "' on "
-                    },
-                    {
-                      "kind": "track",
-                      "text": "track 1"
+                      "text": "' on track 1"
                     }
                   ],
-                  "track": "track 1",
+                  "track": null,
                   "lane": null,
                   "place": {
                     "kind": "bars",
                     "start": 9.0,
                     "end": null,
-                    "approximate": false,
+                    "approximate": true,
                     "section": null
                   },
-                  "place_label": "bar 9",
-                  "confidence": "exact",
+                  "place_label": "about bar 9",
+                  "confidence": "approximate",
                   "tier": "structure"
                 },
                 {
@@ -673,24 +665,20 @@
                     },
                     {
                       "kind": "plain",
-                      "text": "' on "
-                    },
-                    {
-                      "kind": "track",
-                      "text": "track 1"
+                      "text": "' on track 1"
                     }
                   ],
-                  "track": "track 1",
+                  "track": null,
                   "lane": null,
                   "place": {
                     "kind": "bars",
                     "start": 13.0,
                     "end": null,
-                    "approximate": false,
+                    "approximate": true,
                     "section": null
                   },
-                  "place_label": "bar 13",
-                  "confidence": "exact",
+                  "place_label": "about bar 13",
+                  "confidence": "approximate",
                   "tier": "structure"
                 }
               ],
@@ -824,24 +812,20 @@
               },
               {
                 "kind": "plain",
-                "text": "' on "
-              },
-              {
-                "kind": "track",
-                "text": "track 1"
+                "text": "' on track 1"
               }
             ],
-            "track": "track 1",
+            "track": null,
             "lane": null,
             "place": {
               "kind": "bars",
               "start": 5.0,
               "end": null,
-              "approximate": false,
+              "approximate": true,
               "section": null
             },
-            "place_label": "bar 5",
-            "confidence": "exact",
+            "place_label": "about bar 5",
+            "confidence": "approximate",
             "tier": "structure"
           },
           {
@@ -858,24 +842,20 @@
               },
               {
                 "kind": "plain",
-                "text": "' on "
-              },
-              {
-                "kind": "track",
-                "text": "track 1"
+                "text": "' on track 1"
               }
             ],
-            "track": "track 1",
+            "track": null,
             "lane": null,
             "place": {
               "kind": "bars",
               "start": 9.0,
               "end": null,
-              "approximate": false,
+              "approximate": true,
               "section": null
             },
-            "place_label": "bar 9",
-            "confidence": "exact",
+            "place_label": "about bar 9",
+            "confidence": "approximate",
             "tier": "structure"
           },
           {
@@ -892,24 +872,20 @@
               },
               {
                 "kind": "plain",
-                "text": "' on "
-              },
-              {
-                "kind": "track",
-                "text": "track 1"
+                "text": "' on track 1"
               }
             ],
-            "track": "track 1",
+            "track": null,
             "lane": null,
             "place": {
               "kind": "bars",
               "start": 13.0,
               "end": null,
-              "approximate": false,
+              "approximate": true,
               "section": null
             },
-            "place_label": "bar 13",
-            "confidence": "exact",
+            "place_label": "about bar 13",
+            "confidence": "approximate",
             "tier": "structure"
           },
           {
@@ -1047,24 +1023,20 @@
                     },
                     {
                       "kind": "plain",
-                      "text": "' on "
-                    },
-                    {
-                      "kind": "track",
-                      "text": "track 1"
+                      "text": "' on track 1"
                     }
                   ],
-                  "track": "track 1",
+                  "track": null,
                   "lane": null,
                   "place": {
                     "kind": "bars",
                     "start": 5.0,
                     "end": null,
-                    "approximate": false,
+                    "approximate": true,
                     "section": null
                   },
-                  "place_label": "bar 5",
-                  "confidence": "exact",
+                  "place_label": "about bar 5",
+                  "confidence": "approximate",
                   "tier": "structure"
                 }
               ],
@@ -1102,24 +1074,20 @@
               },
               {
                 "kind": "plain",
-                "text": "' on "
-              },
-              {
-                "kind": "track",
-                "text": "track 1"
+                "text": "' on track 1"
               }
             ],
-            "track": "track 1",
+            "track": null,
             "lane": null,
             "place": {
               "kind": "bars",
               "start": 5.0,
               "end": null,
-              "approximate": false,
+              "approximate": true,
               "section": null
             },
-            "place_label": "bar 5",
-            "confidence": "exact",
+            "place_label": "about bar 5",
+            "confidence": "approximate",
             "tier": "structure"
           }
         ],
@@ -1266,24 +1234,20 @@
                     },
                     {
                       "kind": "plain",
-                      "text": "' on "
-                    },
-                    {
-                      "kind": "track",
-                      "text": "track 1"
+                      "text": "' on track 1"
                     }
                   ],
-                  "track": "track 1",
+                  "track": null,
                   "lane": null,
                   "place": {
                     "kind": "bars",
                     "start": 5.0,
                     "end": null,
-                    "approximate": false,
+                    "approximate": true,
                     "section": null
                   },
-                  "place_label": "bar 5",
-                  "confidence": "exact",
+                  "place_label": "about bar 5",
+                  "confidence": "approximate",
                   "tier": "structure"
                 }
               ],
@@ -1435,24 +1399,20 @@
               },
               {
                 "kind": "plain",
-                "text": "' on "
-              },
-              {
-                "kind": "track",
-                "text": "track 1"
+                "text": "' on track 1"
               }
             ],
-            "track": "track 1",
+            "track": null,
             "lane": null,
             "place": {
               "kind": "bars",
               "start": 5.0,
               "end": null,
-              "approximate": false,
+              "approximate": true,
               "section": null
             },
-            "place_label": "bar 5",
-            "confidence": "exact",
+            "place_label": "about bar 5",
+            "confidence": "approximate",
             "tier": "structure"
           }
         ],

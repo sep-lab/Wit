@@ -366,7 +366,7 @@ mod tests {
         assert_eq!(changes.len(), 1);
         assert!(matches!(
             &changes[0],
-            wit_logic::PlacementChange::Added { label, .. } if label == "Chorus Rhodes"
+            wit_logic::PlacementChange::Added { subject, .. } if subject.stem == "Chorus Rhodes"
         ));
     }
 

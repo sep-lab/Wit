@@ -18,6 +18,19 @@ fn project_path() -> Option<PathBuf> {
     std::env::var_os("WIT_LOGIC_PROJECT").map(PathBuf::from)
 }
 
+fn mtime_or_epoch(path: &Path) -> std::time::SystemTime {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+}
+
+/// The alternative's backups plus its current save, in real chronological
+/// (mtime) order — never slot-name order. `Project File Backups/00`–`09`
+/// is a ring (`wit_index::discover`'s `LogicAlternative::backups` doc),
+/// so a project old enough to have wrapped once has slot order disagree
+/// with save order; sorting by slot name here (as an earlier version of
+/// this function did) would print pairs out of order for exactly the
+/// projects this diagnostic matters most for.
 fn backup_chain(bundle: &Path) -> Vec<PathBuf> {
     let mut chain = Vec::new();
     let current = bundle.join("Alternatives/000/ProjectData");
@@ -36,6 +49,11 @@ fn backup_chain(bundle: &Path) -> Vec<PathBuf> {
     if current.exists() {
         chain.push(current);
     }
+    chain.sort_by(|a, b| {
+        mtime_or_epoch(a)
+            .cmp(&mtime_or_epoch(b))
+            .then_with(|| a.cmp(b))
+    });
     chain
 }
 

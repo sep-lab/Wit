@@ -613,15 +613,21 @@ fn logic_ticks_per_bar(meta: Option<&wit_logic::ProjectMetadata>) -> Option<f64>
 /// A placement's raw tick position, converted to a bar using the project's
 /// *actual* time signature when Wit has one — `wit_logic::regions`
 /// deliberately stays at a fixed 4/4 (see that module's doc), so this
-/// honest conversion is `wit-story`'s job. Approximate ("about bar N") when
-/// the time signature isn't known: Wit falls back to
-/// `wit_logic::TICKS_PER_BAR`'s own 4/4 assumption, but says so.
+/// honest conversion is `wit-story`'s job.
+///
+/// **Always "about", never "exact".** Even when both saves agree on the
+/// project's *current* time signature, Wit never reads Logic's tempo/meter
+/// *map* — there is no way to rule out a signature change somewhere between
+/// the region-time origin and this position, only to know what the project
+/// states *now*. `docs/FORMATS.md`'s own "WHAT THIS DOES NOT HANDLE" note
+/// on tempo/meter maps is exactly this gap. So this always marks the
+/// result approximate; only the *number* gets more accurate when Wit knows
+/// the real signature (falling back to `wit_logic::TICKS_PER_BAR`'s 4/4
+/// assumption when it doesn't).
 fn logic_bar_pos(position: u32, ticks_per_bar: Option<f64>) -> BarPos {
     let tick = position.saturating_sub(wit_logic::REGION_TIME_ORIGIN) as f64;
-    match ticks_per_bar {
-        Some(tpb) => BarPos::exact(tick / tpb + 1.0),
-        None => BarPos::about(tick / wit_logic::TICKS_PER_BAR as f64 + 1.0),
-    }
+    let tpb = ticks_per_bar.unwrap_or(wit_logic::TICKS_PER_BAR as f64);
+    BarPos::about(tick / tpb + 1.0)
 }
 
 /// Logic at the Structure tier: tempo, names in the track list, plist facts
@@ -707,13 +713,22 @@ fn logic_sentences(
                 ));
             }
         }
-        let key_a = logic_key_label(ma);
-        let key_b = logic_key_label(mb);
-        if key_a != key_b {
+        // A save missing only `SongGenderKey` (mode) while the key letter
+        // itself is unchanged must not read as a key change: comparing the
+        // *labels* ("C" vs "C major") would report one purely because one
+        // side didn't state a mode, not because anything really changed.
+        // Only report when the key itself differs, or when both sides
+        // state a mode and those modes differ.
+        let key_changed = if ma.key != mb.key {
+            true
+        } else {
+            matches!((&ma.mode, &mb.mode), (Some(x), Some(y)) if x != y)
+        };
+        if key_changed {
             out.push(sentence(
                 &ChangeRecord::KeyChanged {
-                    from: key_a,
-                    to: key_b,
+                    from: logic_key_label(ma),
+                    to: logic_key_label(mb),
                 },
                 &ctx,
             ));
@@ -738,49 +753,100 @@ fn logic_sentences(
     }
 
     // Regions on the timeline: the placement-level diff from `regions.rs`,
-    // exact wherever it decodes cleanly on both sides. Bars use the
-    // project's own time signature (from `meta_b`, the newer save's own
-    // statement) when Wit has one; otherwise the position is "about". A
-    // family holding more than one region object is named honestly
-    // ("Stem (one of N copies)") rather than guessing which copy moved —
-    // see `wit_logic::regions`' module doc. When either side fails to parse
-    // (a shape this port doesn't handle), Wit says nothing about regions for
-    // this pair rather than falling back to a guess.
-    let ticks_per_bar = logic_ticks_per_bar(meta_b.as_ref());
+    // exact wherever it decodes cleanly on both sides. Bars use each side's
+    // *own* time signature (the old save's for a removed/from position,
+    // the new save's for an added/to position — a project that changed
+    // meter between the two must not have its old positions read through
+    // the new meter) when Wit has one; every position is still marked
+    // "about" regardless (see `logic_bar_pos`). A family holding more than
+    // one region object is named the way the frozen script's own
+    // `family_subject` does ("a 'stem' region"), never a copy count, and a
+    // family with no region object at all (measured on GarageBand, which
+    // writes no `gRuA` records) is dropped rather than shown as Wit's own
+    // `"<unresolved family N>"` placeholder — see `wit_logic::regions`'
+    // `RegionSubject` doc. When either side fails to parse (a shape this
+    // port doesn't handle), Wit says nothing about regions for this pair
+    // rather than falling back to a guess.
+    let ticks_per_bar_a = logic_ticks_per_bar(meta_a.as_ref());
+    let ticks_per_bar_b = logic_ticks_per_bar(meta_b.as_ref());
     if let (Ok(song_a), Ok(song_b)) = (
         wit_logic::parse_regions_bytes(bytes_a),
         wit_logic::parse_regions_bytes(bytes_b),
     ) {
         for change in wit_logic::diff_placements(&song_a, &song_b) {
-            let record = match change {
-                wit_logic::PlacementChange::Moved { label, from, to } => {
-                    ChangeRecord::RegionMoved {
-                        track: Some(format!("track {}", to.0)),
-                        name: label,
-                        from: logic_bar_pos(from.1, ticks_per_bar),
-                        to: logic_bar_pos(to.1, ticks_per_bar),
+            match change {
+                wit_logic::PlacementChange::Moved { subject, from, to } => {
+                    if !subject.resolved {
+                        continue;
+                    }
+                    let from_bar = logic_bar_pos(from.1, ticks_per_bar_a);
+                    let to_bar = logic_bar_pos(to.1, ticks_per_bar_b);
+                    if from.0 == to.0 {
+                        out.push(crate::sentence::logic_region_moved(
+                            &subject.stem,
+                            subject.ambiguous,
+                            to.0,
+                            from_bar,
+                            to_bar,
+                            facts.tier,
+                        ));
+                    } else {
+                        // `RegionMoved` has one `track` field — it cannot
+                        // honestly say "moved from track 3 to track 5" (the
+                        // frozen script's own cross-track wording names
+                        // both). Reported as a removal from the old track
+                        // plus an addition on the new one instead of
+                        // silently dropping the old track, matching the
+                        // subject already resolved for the move.
+                        out.push(crate::sentence::logic_region_removed(
+                            &subject.stem,
+                            subject.ambiguous,
+                            from.0,
+                            from_bar,
+                            facts.tier,
+                        ));
+                        out.push(crate::sentence::logic_region_added(
+                            &subject.stem,
+                            subject.ambiguous,
+                            to.0,
+                            to_bar,
+                            facts.tier,
+                        ));
                     }
                 }
                 wit_logic::PlacementChange::Added {
-                    label,
+                    subject,
                     track,
                     position,
-                } => ChangeRecord::RegionAdded {
-                    track: Some(format!("track {track}")),
-                    name: label,
-                    at: Some(logic_bar_pos(position, ticks_per_bar)),
-                },
+                } => {
+                    if !subject.resolved {
+                        continue;
+                    }
+                    out.push(crate::sentence::logic_region_added(
+                        &subject.stem,
+                        subject.ambiguous,
+                        track,
+                        logic_bar_pos(position, ticks_per_bar_b),
+                        facts.tier,
+                    ));
+                }
                 wit_logic::PlacementChange::Removed {
-                    label,
+                    subject,
                     track,
                     position,
-                } => ChangeRecord::RegionRemoved {
-                    track: Some(format!("track {track}")),
-                    name: label,
-                    at: Some(logic_bar_pos(position, ticks_per_bar)),
-                },
-            };
-            out.push(sentence(&record, &ctx));
+                } => {
+                    if !subject.resolved {
+                        continue;
+                    }
+                    out.push(crate::sentence::logic_region_removed(
+                        &subject.stem,
+                        subject.ambiguous,
+                        track,
+                        logic_bar_pos(position, ticks_per_bar_a),
+                        facts.tier,
+                    ));
+                }
+            }
         }
     }
 
@@ -857,15 +923,20 @@ fn assemble(meta: StoryMeta, saves: Vec<Save>, read: fn(&Path) -> Reading, clock
 
     for (i, save) in saves.iter().enumerate() {
         let reading = read(&save.path);
+        // Direct assignment, never `.or(last_key)`: once this save's
+        // `MetaData.plist` has actually been read, `None` here means the
+        // project states no key *now* — a real "cleared" fact the header
+        // must show, not something to paper over with a stale earlier
+        // value while the timeline itself says "Cleared the key". Only
+        // skip the update entirely (falling through to whatever the last
+        // Logic-metadata-bearing save left behind) when this save has no
+        // metadata to read at all — found in review.
         if let Some(meta) = reading.logic_metadata() {
-            last_key = logic_key_label(meta).or(last_key);
-            last_time_sig = meta
-                .time_signature
-                .map(|ts| ModelTimeSignature {
-                    numerator: ts.numerator,
-                    denominator: ts.denominator,
-                })
-                .or(last_time_sig);
+            last_key = logic_key_label(meta);
+            last_time_sig = meta.time_signature.map(|ts| ModelTimeSignature {
+                numerator: ts.numerator,
+                denominator: ts.denominator,
+            });
         }
         if first.is_none() {
             if let Reading::Ableton { model, .. } = &reading {
@@ -1425,5 +1496,329 @@ mod tests {
             kept_label(3, 2, "GarageBand", None, 1),
             "3 moments kept · GarageBand keeps no backups"
         );
+    }
+}
+
+#[cfg(test)]
+mod logic_tests {
+    use super::*;
+
+    // A minimal, valid, empty `ProjectData` — root header only, no
+    // records. Enough for `wit_logic::parse_regions_bytes` to succeed with
+    // an empty `Song`, so the region-diff block below contributes nothing
+    // and a test can isolate the plist-derived-facts sentences it cares
+    // about.
+    fn minimal_project_data() -> Vec<u8> {
+        let mut out = vec![0u8; 0x18];
+        out[0..4].copy_from_slice(&[0x23, 0x47, 0xC0, 0xAB]);
+        out[4..6].copy_from_slice(&[0xd0, 0x09]);
+        out
+    }
+
+    fn meta(
+        tracks: u32,
+        key: Option<&str>,
+        mode: Option<&str>,
+        numerator: u16,
+        denominator: u16,
+    ) -> wit_logic::ProjectMetadata {
+        wit_logic::ProjectMetadata {
+            number_of_tracks: Some(tracks),
+            key: key.map(String::from),
+            mode: mode.map(String::from),
+            time_signature: Some(wit_logic::MetadataTimeSignature {
+                numerator,
+                denominator,
+            }),
+            sample_rate: Some(48_000),
+            bpm: Some(120.0),
+            audio_files: vec![],
+        }
+    }
+
+    fn logic_facts() -> DawFacts {
+        DawFacts::logic(wit_index::LogicKind::Logic)
+    }
+
+    fn sentences_between(
+        meta_a: wit_logic::ProjectMetadata,
+        meta_b: wit_logic::ProjectMetadata,
+        bytes_a: &[u8],
+        bytes_b: &[u8],
+    ) -> Vec<Sentence> {
+        logic_sentences(
+            &wit_logic::Extracted::default(),
+            &wit_logic::Extracted::default(),
+            &Some(meta_a),
+            &Some(meta_b),
+            bytes_a,
+            bytes_b,
+            &logic_facts(),
+            &mut NameRoots::default(),
+        )
+    }
+
+    #[test]
+    fn a_track_count_change_is_reported() {
+        let empty = minimal_project_data();
+        let sentences = sentences_between(
+            meta(2, Some("C"), Some("major"), 4, 4),
+            meta(3, Some("C"), Some("major"), 4, 4),
+            &empty,
+            &empty,
+        );
+        assert!(
+            sentences.iter().any(|s| s.text == "Track count 2 → 3"),
+            "{sentences:?}"
+        );
+    }
+
+    #[test]
+    fn a_key_and_mode_change_is_reported() {
+        let empty = minimal_project_data();
+        let sentences = sentences_between(
+            meta(2, Some("C"), Some("major"), 4, 4),
+            meta(2, Some("C"), Some("minor"), 4, 4),
+            &empty,
+            &empty,
+        );
+        assert!(
+            sentences.iter().any(|s| s.text == "Key C major → C minor"),
+            "{sentences:?}"
+        );
+    }
+
+    /// Found in review: comparing the combined "C"/"C major" labels
+    /// directly reported a change whenever one side simply didn't state a
+    /// mode, even though the key itself never changed.
+    #[test]
+    fn a_missing_mode_alone_is_not_reported_as_a_key_change() {
+        let empty = minimal_project_data();
+        let sentences = sentences_between(
+            meta(2, Some("C"), None, 4, 4),
+            meta(2, Some("C"), Some("major"), 4, 4),
+            &empty,
+            &empty,
+        );
+        assert!(
+            !sentences.iter().any(|s| s.icon == Icon::Key),
+            "{sentences:?}"
+        );
+    }
+
+    #[test]
+    fn a_key_actually_clearing_is_still_reported_even_with_no_mode_on_either_side() {
+        let empty = minimal_project_data();
+        let sentences = sentences_between(
+            meta(2, Some("C"), None, 4, 4),
+            meta(2, None, None, 4, 4),
+            &empty,
+            &empty,
+        );
+        assert!(
+            sentences.iter().any(|s| s.icon == Icon::Key),
+            "{sentences:?}"
+        );
+    }
+
+    #[test]
+    fn a_time_signature_change_is_reported() {
+        let empty = minimal_project_data();
+        let sentences = sentences_between(
+            meta(2, Some("C"), Some("major"), 4, 4),
+            meta(2, Some("C"), Some("major"), 3, 4),
+            &empty,
+            &empty,
+        );
+        assert!(
+            sentences
+                .iter()
+                .any(|s| s.text == "Time signature 4/4 → 3/4"),
+            "{sentences:?}"
+        );
+    }
+
+    #[test]
+    fn logic_bar_positions_are_always_about_never_exact() {
+        let known = logic_bar_pos(wit_logic::REGION_TIME_ORIGIN, Some(3840.0));
+        assert!(known.approximate, "a known time signature must still hedge");
+        let unknown = logic_bar_pos(wit_logic::REGION_TIME_ORIGIN, None);
+        assert!(unknown.approximate);
+    }
+
+    // ---------------------------------------------------------------- //
+    // region placement bytes — a minimal local builder, since
+    // `wit-demo`'s own generator always places on track 1 and the
+    // cross-track test below specifically needs two different tracks.
+    // ---------------------------------------------------------------- //
+
+    fn record_with_idx(tag: &[u8; 4], idx: u32, payload: &[u8]) -> Vec<u8> {
+        let mut out = vec![0u8; 0x24];
+        out[0..4].copy_from_slice(tag);
+        out[0x08..0x0C].copy_from_slice(&idx.to_le_bytes());
+        out[0x1C..0x20].copy_from_slice(&(payload.len() as u32).to_le_bytes());
+        out.extend_from_slice(payload);
+        out
+    }
+
+    fn grua_payload(name: &str, length_frames: u32, uuid: [u8; 16]) -> Vec<u8> {
+        const NAME_LEN_OFF: usize = 0x4A;
+        const NAME_OFF: usize = 0x4C;
+        const LENGTH_OFF: usize = 0x16;
+        const UUID_OFF_IN_SUFFIX: usize = 0x56;
+        const FIXED_SUFFIX_LEN: usize = 133;
+        let raw = name.as_bytes();
+        let padded = raw.len() + (raw.len() & 1);
+        let name_end = NAME_OFF + padded;
+        let uuid_at = name_end + UUID_OFF_IN_SUFFIX;
+        let mut p = vec![0u8; name_end + FIXED_SUFFIX_LEN];
+        p[LENGTH_OFF..LENGTH_OFF + 4].copy_from_slice(&length_frames.to_le_bytes());
+        p[NAME_LEN_OFF..NAME_LEN_OFF + 2].copy_from_slice(&(raw.len() as u16).to_le_bytes());
+        p[NAME_OFF..NAME_OFF + raw.len()].copy_from_slice(raw);
+        p[uuid_at..uuid_at + 16].copy_from_slice(&uuid);
+        p
+    }
+
+    fn placement_group(track: u8, position: u32, family: u32, event_id: u32) -> [u8; 48] {
+        let mut g = [0u8; 48];
+        g[0..4].copy_from_slice(&[0x24, 0, 0, 0]);
+        g[0x04..0x08].copy_from_slice(&position.to_le_bytes());
+        g[0x10..0x14].copy_from_slice(&event_id.to_le_bytes());
+        g[0x14] = track;
+        g[0x10 + 7] = 0x89;
+        g[0x20 + 7] = 0xBC;
+        g[0x2C..0x30].copy_from_slice(&(family * 4).to_le_bytes());
+        g
+    }
+
+    fn project_data_with_one_region(name: &str, family: u32, track: u8, position: u32) -> Vec<u8> {
+        let mut body = record_with_idx(
+            b"gRuA",
+            family << 18,
+            &grua_payload(name, 100_000, [1u8; 16]),
+        );
+        body.extend_from_slice(&record_with_idx(
+            b"qSvE",
+            0,
+            &placement_group(track, position, family, 1),
+        ));
+        let mut out = vec![0u8; 0x18];
+        out[0..4].copy_from_slice(&[0x23, 0x47, 0xC0, 0xAB]);
+        out[4..6].copy_from_slice(&[0xd0, 0x09]);
+        out[0x10..0x14].copy_from_slice(&(body.len() as u32).to_le_bytes());
+        out.extend_from_slice(&body);
+        out
+    }
+
+    /// Found in review: `RegionMoved` has one `track` field, so rendering a
+    /// cross-track move through it silently dropped the *old* track,
+    /// reading as a same-track, zero-distance move ("moved on track 5, 0
+    /// bars later"). It must instead read as a removal from the old track
+    /// and an addition on the new one.
+    #[test]
+    fn a_cross_track_move_is_a_removal_and_an_addition_not_a_no_op() {
+        let a = project_data_with_one_region("Kick", 2, 3, wit_logic::REGION_TIME_ORIGIN);
+        let b = project_data_with_one_region(
+            "Kick",
+            2,
+            5,
+            wit_logic::REGION_TIME_ORIGIN + wit_logic::TICKS_PER_BAR,
+        );
+        let sentences = sentences_between(
+            meta(2, Some("C"), Some("major"), 4, 4),
+            meta(2, Some("C"), Some("major"), 4, 4),
+            &a,
+            &b,
+        );
+        assert!(
+            !sentences.iter().any(|s| s.icon == Icon::Move),
+            "a cross-track move must never render as Moved: {sentences:?}"
+        );
+        let removed = sentences.iter().any(|s| {
+            s.icon == Icon::Remove && s.text.contains("Kick") && s.text.contains("track 3")
+        });
+        let added = sentences
+            .iter()
+            .any(|s| s.icon == Icon::Add && s.text.contains("Kick") && s.text.contains("track 5"));
+        assert!(removed, "expected a removal from track 3: {sentences:?}");
+        assert!(added, "expected an addition on track 5: {sentences:?}");
+    }
+
+    #[test]
+    fn a_same_track_move_is_still_reported_as_moved() {
+        let a = project_data_with_one_region("Kick", 2, 3, wit_logic::REGION_TIME_ORIGIN);
+        let b = project_data_with_one_region(
+            "Kick",
+            2,
+            3,
+            wit_logic::REGION_TIME_ORIGIN + wit_logic::TICKS_PER_BAR,
+        );
+        let sentences = sentences_between(
+            meta(2, Some("C"), Some("major"), 4, 4),
+            meta(2, Some("C"), Some("major"), 4, 4),
+            &a,
+            &b,
+        );
+        assert!(
+            sentences.iter().any(|s| s.icon == Icon::Move
+                && s.text.contains("Kick")
+                && s.text.contains("track 3")),
+            "{sentences:?}"
+        );
+    }
+
+    // ---------------------------------------------------------------- //
+    // the newer-Logic-than-verified capability note
+    // ---------------------------------------------------------------- //
+
+    fn write_project_information(bundle: &Path, last_saved_from: &str) {
+        let resources = bundle.join("Resources");
+        std::fs::create_dir_all(&resources).unwrap();
+        let mut dict = plist::Dictionary::new();
+        dict.insert(
+            "LastSavedFrom".into(),
+            plist::Value::String(last_saved_from.to_string()),
+        );
+        plist::Value::Dictionary(dict)
+            .to_writer_binary(
+                std::fs::File::create(resources.join("ProjectInformation.plist")).unwrap(),
+            )
+            .unwrap();
+    }
+
+    fn bare_logic_project(bundle_path: PathBuf) -> LogicProject {
+        LogicProject {
+            name: "Song".to_string(),
+            bundle_path,
+            kind: wit_index::LogicKind::Logic,
+            alternatives: vec![],
+        }
+    }
+
+    #[test]
+    fn a_newer_logic_version_gets_a_capability_note() {
+        let dir = tempfile::tempdir().unwrap();
+        let bundle = dir.path().join("Song.logicx");
+        write_project_information(&bundle, "Logic Pro Creator Studio 13.0 (7000)");
+        let project = bare_logic_project(bundle);
+        assert!(newer_logic_warning(&project).is_some());
+    }
+
+    #[test]
+    fn a_known_logic_version_gets_no_note() {
+        let dir = tempfile::tempdir().unwrap();
+        let bundle = dir.path().join("Song.logicx");
+        write_project_information(&bundle, "Logic Pro Creator Studio 12.2 (6644)");
+        let project = bare_logic_project(bundle);
+        assert!(newer_logic_warning(&project).is_none());
+    }
+
+    #[test]
+    fn a_missing_project_information_plist_gets_no_note_not_a_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        let bundle = dir.path().join("Song.logicx");
+        std::fs::create_dir_all(&bundle).unwrap();
+        let project = bare_logic_project(bundle);
+        assert!(newer_logic_warning(&project).is_none());
     }
 }

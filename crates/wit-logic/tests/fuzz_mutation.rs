@@ -62,4 +62,24 @@ proptest! {
     fn arbitrary_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..4096)) {
         let _ = wit_logic::walk(&bytes);
     }
+
+    /// `metadata.rs` and `regions.rs` (new this lane) get the same
+    /// never-panics property as the container walker above — untrusted
+    /// input either decodes or returns a typed error, on arbitrary bytes
+    /// that were never shaped to look like a plist or a `ProjectData`
+    /// record at all.
+    #[test]
+    fn arbitrary_bytes_never_panic_metadata_plist(bytes in prop::collection::vec(any::<u8>(), 0..4096)) {
+        let _ = wit_logic::read_metadata_plist_bytes(&bytes);
+    }
+
+    #[test]
+    fn arbitrary_bytes_never_panic_project_information(bytes in prop::collection::vec(any::<u8>(), 0..4096)) {
+        let _ = wit_logic::read_project_information_bytes(&bytes);
+    }
+
+    #[test]
+    fn arbitrary_bytes_never_panic_region_parse(bytes in prop::collection::vec(any::<u8>(), 0..4096)) {
+        let _ = wit_logic::parse_regions_bytes(&bytes);
+    }
 }

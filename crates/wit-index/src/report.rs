@@ -5,9 +5,12 @@
 //! [`discover::sort_by_save_time`], not [`LogicAlternative`]'s own
 //! slot-name field order: the `Project File Backups/00`–`09` slots are a
 //! ring, so on a project old enough to have wrapped once, slot order and
-//! save order disagree. (Found in review: an earlier version of this
-//! function paired backups in slot order and so mis-paired a wrapped
-//! chain — every real project old enough to fill all 10 slots has one.)
+//! save order disagree — **measured** against a real library (found in
+//! review, 2026-09-29): 4 of 28 alternatives had backups out of slot
+//! order, and pairing by mtime instead of slot name changed the count of
+//! pairs with no visible structural change from 49 to 51 of 164 total.
+//! (An earlier version of this function paired backups in slot order and
+//! so mis-paired those wrapped chains.)
 //! — compares every consecutive pair at `wit-logic`'s Structure honesty
 //! tier, and reports the three statistics the issue asks for:
 //!

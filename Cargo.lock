@@ -1325,6 +1325,7 @@ version = "0.0.0"
 name = "wit-story"
 version = "0.0.0"
 dependencies = [
+ "plist",
  "schemars",
  "serde",
  "serde_json",

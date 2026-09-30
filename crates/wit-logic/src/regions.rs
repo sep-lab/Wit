@@ -19,23 +19,34 @@
 //! **What this module does not do**, matching the frozen script's own
 //! stated limits (`experiments/logic_region_map.py`'s module docstring):
 //! - **Which copy.** A placement links to a region *family* (one source
-//!   file), not to an individual region record. [`family_label`] says "one
-//!   of N copies" rather than naming one, honestly, whenever a family holds
-//!   more than one region object.
+//!   file), not to an individual region record. [`family_label`] (a
+//!   diagnostic label, matching the frozen script's own report format)
+//!   says "one of N copies" honestly rather than naming one, whenever a
+//!   family holds more than one region object; [`diff_placements`] instead
+//!   returns a [`RegionSubject`] with `stem`/`resolved`/`ambiguous` kept
+//!   apart, so a caller can phrase the hedge in its own words (`wit-story`
+//!   says "a 'stem' region", never a copy count — see that type's doc for
+//!   why).
 //! - **The UUID-keyed region-table diff** (rename/resize, present/absent by
 //!   UUID) that the Python script's `report_diff` also computes. Only the
 //!   placement diff ([`diff_placements`]) is ported, because that is what
 //!   `wit-story`'s region wiring needs (region *added/removed/moved on the
 //!   timeline*); the region-table diff has no [`wit_model::ChangeRecord`]
 //!   this wave adds a variant for.
-//! - **MIDI regions, pre-roll, a mid-song meter or tempo map, or a
-//!   structural head-byte collision filter.** The frozen script counts a
-//!   nonzero placement-head byte `+7` as a rejected marker collision by
-//!   track/position range alone; `docs/FORMATS.md` explicitly says the
-//!   `0x00`/`0x89`/`0xbc` unit-type filter is unmeasured library-wide and
-//!   "a filter that drops a genuine placement is worse than a collision the
-//!   track and range checks already reject" — this port makes the same
-//!   choice and does not add that filter.
+//! - **MIDI regions, pre-roll, or a mid-song meter or tempo map.**
+//! - **A structural head-byte collision filter.** `docs/FORMATS.md` (after
+//!   the 2026-08-16 library rescan, #57) reports that checking placement
+//!   head byte `+7 == 0x00` would separate every one of the library's
+//!   9,142 accepted placements from every one of its 346 rejects, with no
+//!   bar bound needed — the evidence for adding this filter is stronger
+//!   than the frozen script itself acts on. This port still doesn't add
+//!   it: it matches the frozen script's own four `REJECT_REASONS`
+//!   (`truncated`/`track_zero`/`before_origin`/`beyond_max_bar`) exactly,
+//!   by deliberate choice, rather than porting the *script's* behavior on
+//!   three of them and independently improving on the fourth — a fifth
+//!   filter the spec itself doesn't implement is a product decision for a
+//!   future change to make on purpose, not something to smuggle in while
+//!   porting.
 //! - Bar arithmetic here is **tick space only** ([`Placement::tick`]), at the
 //!   frozen script's own fixed 4/4 assumption where a bar number is needed
 //!   ([`Placement::bar_at_4_4`], [`format_bar`]) — exactly what the script's
@@ -268,7 +279,13 @@ pub fn parse_region(data: &[u8], record: &Record<'_>) -> Option<Region> {
 
     let raw_name = data.get(base + REGION_NAME_OFFSET..base + REGION_NAME_OFFSET + name_len)?;
     let name = std::str::from_utf8(raw_name).ok()?;
-    if name.chars().any(|c| c.is_control()) {
+    // The frozen script rejects `ord(ch) < 0x20` only (C0 controls) — never
+    // DEL (U+007F) or a C1 control (U+0080–U+009F), which Rust's own
+    // `char::is_control` *does* reject (found in review: this divergence
+    // alone made a meaningful share of a 2,000-random-container decode
+    // check disagree with the Python spec). `< '\u{20}'` is the literal,
+    // exact port.
+    if name.chars().any(|c| c < '\u{20}') {
         return None;
     }
 
@@ -434,6 +451,15 @@ pub fn parse(data: &[u8], records: &[Record<'_>]) -> Result<Song, RegionMapError
 /// see [`crate::WalkError`] for the container-framing errors this can
 /// surface before region parsing even starts.
 pub fn parse_bytes(data: &[u8]) -> Result<Song, RegionParseError> {
+    // `walk_records` assumes its caller already validated the root header
+    // (in particular that `data.len() >= ROOT_HEADER_LEN`, exactly what
+    // `parse_root_header` checks) — the same order `crate::walk` uses.
+    // Skipping this step is a real bug, not a defensive nicety: on an empty
+    // or too-short `data`, `walk_records` alone trips its own internal
+    // `debug_assert_eq!(pos, data.len())` (found by
+    // `arbitrary_bytes_never_panic_region_parse`'s proptest, minimal
+    // failing input `[]`).
+    crate::frame::parse_root_header(data).map_err(RegionParseError::Container)?;
     let records = crate::frame::walk_records(data).map_err(RegionParseError::Container)?;
     parse(data, &records).map_err(RegionParseError::Regions)
 }
@@ -473,21 +499,64 @@ pub fn family_name(song: &Song, family: u32) -> (String, usize) {
     let mut names: Vec<&str> = regions.iter().map(|r| r.name.as_str()).collect();
     names.sort();
     names.dedup();
+    // The frozen script's tie-break is `len(n)` — Python's `len()` on a
+    // `str` counts *characters*, not UTF-8 bytes. `n.len()` here is a byte
+    // count, so a multi-byte name (a Persian one, e.g. — Unicode track and
+    // region names are expected input, not an edge case) can be judged
+    // "longer" than a same-or-fewer-character ASCII name purely because it
+    // takes more bytes to encode, picking the wrong stem.
     let stem = names
         .into_iter()
-        .min_by_key(|n| (n.len(), *n))
+        .min_by_key(|n| (n.chars().count(), *n))
         .unwrap_or_default();
     (stem.to_string(), regions.len())
 }
 
 /// How a change honestly names a family: the stem, or the stem plus how
 /// many copies it has when which one is on the timeline is not decodable.
+/// A diagnostic/map-report label — matches the frozen script's own
+/// `family_label`. [`diff_placements`] uses [`RegionSubject`] instead,
+/// which keeps `stem`/`resolved`/`ambiguous` separate so a caller can
+/// decide how (or whether) to say so, rather than a single pre-formatted
+/// string.
 pub fn family_label(song: &Song, family: u32) -> String {
     let (stem, copies) = family_name(song, family);
     if copies <= 1 {
         stem
     } else {
         format!("{stem} (one of {copies} copies)")
+    }
+}
+
+/// How honestly a placement change can name the region family it's about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegionSubject {
+    /// The shortest name among the family's region objects
+    /// ([`family_name`]) — `"<unresolved family N>"`, Wit's own
+    /// placeholder rather than a musician-chosen name, when `resolved` is
+    /// `false`.
+    pub stem: String,
+    /// `false` when the family has no region object at all (measured on
+    /// GarageBand, which writes no `gRuA` records: every placement's
+    /// family is then unresolved). A caller should say nothing about which
+    /// region this is — never show `stem`'s placeholder to a musician —
+    /// rather than guess.
+    pub resolved: bool,
+    /// `true` when the family holds more than one region object, so which
+    /// physical copy this placement is cannot be told apart from its
+    /// siblings. Deliberately not a copy *count*: a family can hold region
+    /// objects that were never placed at all, so "how many copies" would
+    /// overstate how many placements this one could actually be confused
+    /// with.
+    pub ambiguous: bool,
+}
+
+fn subject_of(song: &Song, family: u32) -> RegionSubject {
+    let (stem, copies) = family_name(song, family);
+    RegionSubject {
+        stem,
+        resolved: copies > 0,
+        ambiguous: copies > 1,
     }
 }
 
@@ -503,21 +572,22 @@ pub enum PlacementChange {
     /// moved at once (module doc; `docs/FORMATS.md` "How the diff pairs
     /// placements").
     Moved {
-        /// [`family_label`] resolved against the *new* song, matching the
-        /// frozen script.
-        label: String,
+        /// Resolved against the *new* song, matching the frozen script.
+        subject: RegionSubject,
         from: (u8, u32),
         to: (u8, u32),
     },
     Removed {
-        /// [`family_label`] resolved against the *old* song.
-        label: String,
+        /// Resolved against the *old* song — what the region was called
+        /// (or last known as) at the moment it disappeared, never the
+        /// name it may have taken on since.
+        subject: RegionSubject,
         track: u8,
         position: u32,
     },
     Added {
-        /// [`family_label`] resolved against the *new* song.
-        label: String,
+        /// Resolved against the *new* song.
+        subject: RegionSubject,
         track: u8,
         position: u32,
     },
@@ -550,9 +620,18 @@ fn keyed(placements: &[Placement]) -> BTreeMap<PlacementKey, i64> {
 /// *positive* remainder on each side survives). What's left is grouped by
 /// family: a family with exactly one placement gone and exactly one new is
 /// reported as [`PlacementChange::Moved`]; everything else is reported as
-/// added/removed. Output is in timeline order (position, then track, then
-/// moved-before-removed-before-added at a tied position) — the same
-/// ordering `placement_changes` in the frozen script produces.
+/// added/removed. Output is primarily in timeline order (position, then
+/// track, then moved-before-removed-before-added at a tied position).
+///
+/// **Tie-break note.** The frozen script breaks a tie in that same primary
+/// key by the *rendered line's text* — effectively an alphabetical
+/// secondary sort by region name. Two different families added or removed
+/// at the exact same `(track, position)` in the same category is the only
+/// way to hit that tie (a real but rare shape); this port's secondary
+/// order there is family-id ascending (a `BTreeSet<u32>` iterated in that
+/// order, stable-sorted), not a name comparison — deterministic, but not
+/// guaranteed byte-identical to the frozen script's tie order in that one
+/// rare case.
 pub fn diff_placements(old: &Song, new: &Song) -> Vec<PlacementChange> {
     let before = keyed(&old.placements);
     let after = keyed(&new.placements);
@@ -593,11 +672,11 @@ pub fn diff_placements(old: &Song, new: &Song) -> Vec<PlacementChange> {
         if was.len() == 1 && now.len() == 1 {
             let (t0, p0) = was[0];
             let (t1, p1) = now[0];
-            let label = family_label(new, family);
+            let subject = subject_of(new, family);
             events.push((
                 (p0, t0, 0),
                 PlacementChange::Moved {
-                    label,
+                    subject,
                     from: (t0, p0),
                     to: (t1, p1),
                 },
@@ -605,22 +684,22 @@ pub fn diff_placements(old: &Song, new: &Song) -> Vec<PlacementChange> {
             continue;
         }
         for (track, position) in was {
-            let label = family_label(old, family);
+            let subject = subject_of(old, family);
             events.push((
                 (position, track, 1),
                 PlacementChange::Removed {
-                    label,
+                    subject,
                     track,
                     position,
                 },
             ));
         }
         for (track, position) in now {
-            let label = family_label(new, family);
+            let subject = subject_of(new, family);
             events.push((
                 (position, track, 2),
                 PlacementChange::Added {
-                    label,
+                    subject,
                     track,
                     position,
                 },
@@ -1034,6 +1113,25 @@ mod tests {
         assert!(parse(&data, &recs).unwrap().regions.is_empty());
     }
 
+    /// Found in review: `char::is_control` also rejects DEL (U+007F) and
+    /// the C1 controls (U+0080–U+009F), where the frozen script's
+    /// `ord(ch) < 0x20` rejects only the C0 controls. This is the literal
+    /// port — DEL decodes.
+    #[test]
+    fn a_name_holding_del_still_decodes() {
+        let name = "Ki\u{7f}ck";
+        let song = song_with(&[(name, 100, 1, 0)], &[]);
+        assert_eq!(song.regions.len(), 1);
+        assert_eq!(song.regions[0].name, name);
+    }
+
+    #[test]
+    fn a_name_holding_a_c0_control_character_is_still_skipped() {
+        let name = "Ki\u{07}ck"; // BEL, 0x07 -- below 0x20 on both sides.
+        let song = song_with(&[(name, 100, 1, 0)], &[]);
+        assert!(song.regions.is_empty());
+    }
+
     #[test]
     fn regions_sharing_an_idx_form_one_family() {
         let song = song_with(
@@ -1194,6 +1292,18 @@ mod tests {
         }
     }
 
+    /// Found in review: a byte-length tie-break picks the wrong stem for a
+    /// multi-byte name. "آواز" (Persian, 4 characters) is 8 bytes in UTF-8;
+    /// "ABCDE" is 5 characters in 5 bytes. Python's `len()` counts
+    /// characters, so it picks "آواز" (4 < 5 characters) — a byte-length
+    /// tie-break would wrongly pick "ABCDE" (5 < 8 bytes) instead. Persian
+    /// names are expected input on this field, not an edge case.
+    #[test]
+    fn the_stem_tie_break_counts_characters_not_bytes() {
+        let song = song_with(&[("آواز", 1, 1, 3), ("ABCDE", 1, 2, 3)], &[(1, 1.0, 3, 1)]);
+        assert_eq!(family_name(&song, 3), ("آواز".to_string(), 2));
+    }
+
     #[test]
     fn a_placement_linking_to_no_region_says_so_rather_than_inventing_a_name() {
         let song = song_with(&[], &[(1, 1.0, 4, 1)]);
@@ -1212,7 +1322,8 @@ mod tests {
         assert_eq!(changes.len(), 1);
         assert!(matches!(
             &changes[0],
-            PlacementChange::Moved { label, from: (1, _), to: (1, _) } if label == "Deep Down Shaker"
+            PlacementChange::Moved { subject, from: (1, _), to: (1, _) }
+                if subject.stem == "Deep Down Shaker" && subject.resolved && !subject.ambiguous
         ));
     }
 
@@ -1229,8 +1340,8 @@ mod tests {
         let changes = diff_placements(&old, &new);
         assert_eq!(changes.len(), 1);
         match &changes[0] {
-            PlacementChange::Moved { label, from, to } => {
-                assert_eq!(label, "Kick");
+            PlacementChange::Moved { subject, from, to } => {
+                assert_eq!(subject.stem, "Kick");
                 assert_eq!(*from, (1, REGION_TIME_ORIGIN));
                 assert_eq!(*to, (1, REGION_TIME_ORIGIN + 8 * TICKS_PER_BAR));
             }
@@ -1268,6 +1379,54 @@ mod tests {
         assert_eq!(added.len(), 2);
     }
 
+    /// Found in review: a mutant relaxing the move rule from
+    /// `was.len() == 1 && now.len() == 1` to `was.len() >= 1 && now.len()
+    /// == 1` survived every existing test. Two placements gone, one new,
+    /// for the same family: not a move (which one moved and which one was
+    /// simply removed is exactly the ambiguity `docs/FORMATS.md`'s "How the
+    /// diff pairs placements" refuses to guess at).
+    #[test]
+    fn a_two_gone_one_new_pairing_is_not_a_move() {
+        let old = song_with(&[("Kick", 1000, 1, 1)], &[(1, 1.0, 1, 1), (1, 5.0, 1, 2)]);
+        let new = song_with(&[("Kick", 1000, 1, 1)], &[(1, 9.0, 1, 3)]);
+        let changes = diff_placements(&old, &new);
+        assert_eq!(changes.len(), 3, "{changes:?}");
+        assert!(
+            !changes
+                .iter()
+                .any(|c| matches!(c, PlacementChange::Moved { .. })),
+            "{changes:?}"
+        );
+        let (removed, added): (Vec<_>, Vec<_>) = changes
+            .iter()
+            .partition(|c| matches!(c, PlacementChange::Removed { .. }));
+        assert_eq!(removed.len(), 2);
+        assert_eq!(added.len(), 1);
+    }
+
+    /// The symmetric mutant: relaxing `now.len() == 1` to `now.len() >= 1`
+    /// while leaving `was.len() == 1` alone. One placement gone, two new,
+    /// for the same family: still not a move, for the same reason as
+    /// above.
+    #[test]
+    fn a_one_gone_two_new_pairing_is_not_a_move() {
+        let old = song_with(&[("Kick", 1000, 1, 1)], &[(1, 1.0, 1, 1)]);
+        let new = song_with(&[("Kick", 1000, 1, 1)], &[(1, 9.0, 1, 3), (1, 13.0, 1, 4)]);
+        let changes = diff_placements(&old, &new);
+        assert_eq!(changes.len(), 3, "{changes:?}");
+        assert!(
+            !changes
+                .iter()
+                .any(|c| matches!(c, PlacementChange::Moved { .. })),
+            "{changes:?}"
+        );
+        let (removed, added): (Vec<_>, Vec<_>) = changes
+            .iter()
+            .partition(|c| matches!(c, PlacementChange::Removed { .. }));
+        assert_eq!(removed.len(), 1);
+        assert_eq!(added.len(), 2);
+    }
+
     #[test]
     fn a_region_replaced_by_another_family_is_removed_plus_added_not_moved() {
         let old = song_with(
@@ -1280,8 +1439,32 @@ mod tests {
         );
         let changes = diff_placements(&old, &new);
         assert_eq!(changes.len(), 2);
-        assert!(matches!(&changes[0], PlacementChange::Removed { label, .. } if label == "Snare"));
-        assert!(matches!(&changes[1], PlacementChange::Added { label, .. } if label == "Clap"));
+        assert!(
+            matches!(&changes[0], PlacementChange::Removed { subject, .. } if subject.stem == "Snare")
+        );
+        assert!(
+            matches!(&changes[1], PlacementChange::Added { subject, .. } if subject.stem == "Clap")
+        );
+    }
+
+    /// Found in review: resolving a `Removed` placement's subject against
+    /// the *new* song (rather than the old one) survived every existing
+    /// test, because none of them renamed a region in the same save-pair
+    /// its placement disappeared from. This one does: family 5's only
+    /// region object is renamed from "Take 1" to "Chorus" and its
+    /// placement is removed in the same pair, so a `Removed` naming the
+    /// *new* name would be wrong — the removal happened to the region
+    /// still called "Take 1" at that moment.
+    #[test]
+    fn a_removed_placements_subject_is_resolved_against_the_old_song() {
+        let old = song_with(&[("Take 1", 1000, 1, 5)], &[(1, 1.0, 5, 1)]);
+        let new = song_with(&[("Chorus", 1000, 1, 5)], &[]);
+        let changes = diff_placements(&old, &new);
+        assert_eq!(changes.len(), 1);
+        assert!(matches!(
+            &changes[0],
+            PlacementChange::Removed { subject, .. } if subject.stem == "Take 1"
+        ));
     }
 
     #[test]
@@ -1290,7 +1473,9 @@ mod tests {
         let new = song_with(&[("Loop", 235200, 1, 2)], &[(1, 1.0, 2, 1), (1, 9.0, 2, 2)]);
         let changes = diff_placements(&old, &new);
         assert_eq!(changes.len(), 1);
-        assert!(matches!(&changes[0], PlacementChange::Moved { label, .. } if label == "Loop"));
+        assert!(
+            matches!(&changes[0], PlacementChange::Moved { subject, .. } if subject.stem == "Loop")
+        );
     }
 
     #[test]
@@ -1305,7 +1490,8 @@ mod tests {
         assert_eq!(changes.len(), 1);
         assert!(matches!(
             &changes[0],
-            PlacementChange::Moved { label, .. } if label == "Silky Acid Bass (one of 2 copies)"
+            PlacementChange::Moved { subject, .. }
+                if subject.stem == "Silky Acid Bass" && subject.ambiguous
         ));
     }
 
@@ -1316,7 +1502,67 @@ mod tests {
         let new = song_with(regions, &[(3, 1.0, 2, 1), (3, 9.0, 2, 2)]);
         let changes = diff_placements(&old, &new);
         assert_eq!(changes.len(), 1);
-        assert!(matches!(&changes[0], PlacementChange::Added { label, .. } if label == "Loop"));
+        assert!(
+            matches!(&changes[0], PlacementChange::Added { subject, .. } if subject.stem == "Loop")
+        );
+    }
+
+    #[test]
+    fn a_family_with_no_region_object_is_reported_as_unresolved_not_a_guess() {
+        // GarageBand writes no `gRuA` records at all, so every placement's
+        // family is unresolved there — this is the shape that must never
+        // reach a musician as if `<unresolved family N>` were a real name.
+        let song = song_with(&[], &[(1, 1.0, 4, 1)]);
+        assert_eq!(family_label(&song, 4), "<unresolved family 4>");
+        let old = Song::default();
+        let changes = diff_placements(&old, &song);
+        assert_eq!(changes.len(), 1);
+        assert!(matches!(
+            &changes[0],
+            PlacementChange::Added { subject, .. } if !subject.resolved
+        ));
+    }
+
+    /// Found in review: a duplicate placement (same track/position/family
+    /// twice) only partially cancelling — the surviving copy of the pair
+    /// must still be reported once, not zero times, which a set-based
+    /// dedup (instead of a true multiset) would get wrong.
+    #[test]
+    fn a_duplicate_placement_only_partially_cancels() {
+        let regions: &[(&str, u32, u8, u32)] = &[("Loop", 1, 1, 2)];
+        let old = song_with(regions, &[(1, 1.0, 2, 1), (1, 1.0, 2, 2)]);
+        let new = song_with(regions, &[(1, 1.0, 2, 1)]);
+        let changes = diff_placements(&old, &new);
+        assert_eq!(changes.len(), 1, "{changes:?}");
+        assert!(matches!(
+            &changes[0],
+            PlacementChange::Removed { subject, track: 1, position }
+                if subject.stem == "Loop" && *position == REGION_TIME_ORIGIN
+        ));
+    }
+
+    /// Found in review: a sort key that drops `position` (e.g. sorting only
+    /// by `(track, category)`) would still pass every other test here,
+    /// since none of them puts two events on the same track needing
+    /// position to order them.
+    #[test]
+    fn removed_events_on_one_track_sort_by_position_ascending() {
+        let regions: &[(&str, u32, u8, u32)] = &[("A", 1, 1, 1), ("B", 1, 2, 2)];
+        let old = song_with(regions, &[(1, 9.0, 1, 1), (1, 5.0, 2, 2)]);
+        let new = song_with(regions, &[]);
+        let changes = diff_placements(&old, &new);
+        assert_eq!(changes.len(), 2, "{changes:?}");
+        let positions: Vec<u32> = changes
+            .iter()
+            .map(|c| match c {
+                PlacementChange::Removed { position, .. } => *position,
+                other => panic!("expected Removed, got {other:?}"),
+            })
+            .collect();
+        assert!(
+            positions[0] < positions[1],
+            "must sort ascending by position: {positions:?}"
+        );
     }
 
     #[test]

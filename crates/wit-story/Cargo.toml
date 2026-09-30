@@ -20,5 +20,6 @@ serde_json = "1"
 schemars = "1"
 
 [dev-dependencies]
+plist = "1"
 tempfile = "3"
 wit-demo = { path = "../wit-demo" }

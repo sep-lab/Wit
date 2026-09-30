@@ -27,14 +27,15 @@ pub use extract::{audio_file_names, extract, region_names, tempo_bpm, track_name
 pub use frame::{parse_root_header, walk_records, Record, RootHeader, WalkError};
 pub use metadata::{
     is_newer_than_known, parse_major_version, read_metadata_plist, read_metadata_plist_bytes,
-    read_project_information, MetadataError, ProjectInformation, ProjectMetadata,
-    TimeSignature as MetadataTimeSignature, KNOWN_MAX_MAJOR_VERSION, MAX_PLIST_LEN,
+    read_project_information, read_project_information_bytes, MetadataError, ProjectInformation,
+    ProjectMetadata, TimeSignature as MetadataTimeSignature, KNOWN_MAX_MAJOR_VERSION,
+    MAX_PLIST_LEN,
 };
 pub use regions::{
     diff_placements, family_label, family_name, format_bar, parse as parse_regions,
     parse_bytes as parse_regions_bytes, Placement, PlacementChange, Region, RegionMapError,
-    RegionParseError, RejectReason, Song as RegionSong, MAX_PLACEMENT_BAR, REGION_TIME_ORIGIN,
-    TICKS_PER_BAR, TICKS_PER_QUARTER,
+    RegionParseError, RegionSubject, RejectReason, Song as RegionSong, MAX_PLACEMENT_BAR,
+    REGION_TIME_ORIGIN, TICKS_PER_BAR, TICKS_PER_QUARTER,
 };
 
 /// A fully walked file: its root header, tag census, and extracted names —
