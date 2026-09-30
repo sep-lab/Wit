@@ -11,7 +11,7 @@ workspace = true
 
 [dependencies]
 blake3 = "1.5"
-zstd = "0.13"
+zstd = "0.14"
 rusqlite = { version = "0.40", features = ["bundled"] }
 wit-logic = { path = "../wit-logic" }
 wit-privacy = { path = "../wit-privacy" }
