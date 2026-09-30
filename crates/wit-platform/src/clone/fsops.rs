@@ -469,12 +469,12 @@ mod imp {
             id_of_path(&self.path.join(name))
         }
 
-        /// Hard-link count isn't available from stable std on Windows; the
-        /// staging folder is pinned without FILE_SHARE_DELETE there, which
-        /// already keeps other processes from renaming entries into it.
+        /// How many hard links the file `name` has
+        /// (`BY_HANDLE_FILE_INFORMATION.nNumberOfLinks`).
         pub fn links_of(&self, name: &OsStr) -> io::Result<u64> {
             check_name(name)?;
-            Ok(1)
+            let handle = winapi_util::Handle::from_path_any(self.path.join(name))?;
+            Ok(winapi_util::file::information(&handle)?.number_of_links())
         }
 
         pub fn rename_noreplace(&self, from: &OsStr, to: &OsStr) -> io::Result<Renamed> {
@@ -517,8 +517,16 @@ mod imp {
             };
             match first {
                 Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
-                    make_writable(&path);
-                    fs::remove_file(&path)
+                    // Clear read-only only on a single-link file: every link
+                    // shares one set of attributes, so on a planted hard link
+                    // to a read-only project file this would unprotect the
+                    // project file itself.
+                    if self.links_of(name).ok() == Some(1) {
+                        make_writable(&path);
+                        fs::remove_file(&path)
+                    } else {
+                        Err(e)
+                    }
                 }
                 other => other,
             }
@@ -540,7 +548,9 @@ mod imp {
             let dst = self.path.join(name);
             match reflink_copy::reflink(src_path, &dst) {
                 Ok(()) => {
-                    make_writable(&dst);
+                    if self.links_of(name).ok() == Some(1) {
+                        make_writable(&dst);
+                    }
                     Ok(Cloned::Yes)
                 }
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(e),
@@ -632,6 +642,35 @@ mod tests {
             real.join("target").is_dir(),
             "a symlink is removed as a link"
         );
+    }
+
+    /// Re-review: on Windows a planted hard link was invisible (link count
+    /// always 1) and removing it could clear the project file's read-only
+    /// attribute.
+    #[cfg(windows)]
+    #[test]
+    fn a_planted_hard_link_is_counted_and_never_made_writable() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = std::fs::canonicalize(dir.path()).unwrap();
+        let project = real.join("project.als");
+        std::fs::write(&project, b"project").unwrap();
+        let mut perms = std::fs::metadata(&project).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&project, perms).unwrap();
+        std::fs::create_dir(real.join("R")).unwrap();
+        std::fs::hard_link(&project, real.join("R/planted")).unwrap();
+        let d = Dir::open(&real.join("R")).unwrap();
+        assert_eq!(d.links_of(OsStr::new("planted")).unwrap(), 2);
+        assert!(d.remove_file(OsStr::new("planted")).is_err());
+        assert!(
+            std::fs::metadata(&project)
+                .unwrap()
+                .permissions()
+                .readonly(),
+            "the project file's read-only attribute is untouched"
+        );
+        drop(d);
+        imp::make_writable(&project); // let the temp dir clean up
     }
 
     #[test]

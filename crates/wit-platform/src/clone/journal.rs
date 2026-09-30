@@ -13,21 +13,52 @@
 //! Format, one record per line (staging names are ASCII by construction):
 //! `C <restores-id> <name> <entry-id> <unix-secs>` when created,
 //! `F <restores-id> <name>` when committed, cleaned up or found gone.
+//!
+//! **Liveness.** A journaled, unfinished entry may belong to a restore that
+//! is still running — in this process through another `RestoresDir`
+//! handle, or in another process. So every restore also takes an exclusive
+//! advisory lock (`flock` / `LockFileEx`, via std's `File::try_lock`) on
+//! `restore-locks/<name>.lock` in the same data folder *before* creating
+//! its staging entry, and holds it until it ends; the OS releases it when
+//! the process exits, however it exits. An entry is a leftover only if its
+//! lock file exists **and** its lock can be taken now. A missing lock file
+//! means liveness can't be proven, so the entry is never listed. The lock
+//! file is deleted only when the entry is journaled as finished, so a
+//! restore whose own cleanup failed still leaves a provable leftover.
 
 use super::fsops::FileId;
 use std::collections::BTreeMap;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const JOURNAL_FILE: &str = "restore-staging.journal";
+pub const LOCKS_DIR: &str = "restore-locks";
 
 #[derive(Debug)]
 pub struct Journal {
     path: PathBuf,
+    locks: PathBuf,
     lock: Mutex<()>,
+}
+
+/// Held for the whole life of one restore in progress. Dropping it (or the
+/// process ending) releases the lock; the lock *file* is removed only when
+/// the entry is journaled as finished.
+#[derive(Debug)]
+pub struct StagingLock {
+    _file: File,
+}
+
+fn try_lock_file(file: &File) -> io::Result<()> {
+    file.try_lock().map_err(|e| match e {
+        TryLockError::WouldBlock => {
+            io::Error::new(io::ErrorKind::WouldBlock, "a restore holds this lock")
+        }
+        TryLockError::Error(e) => e,
+    })
 }
 
 /// A journaled staging entry that was never finished.
@@ -44,10 +75,40 @@ impl Journal {
         fs::create_dir_all(data_dir)?;
         let path = data_dir.join(JOURNAL_FILE);
         OpenOptions::new().create(true).append(true).open(&path)?;
+        let locks = data_dir.join(LOCKS_DIR);
+        fs::create_dir_all(&locks)?;
         Ok(Journal {
             path,
+            locks,
             lock: Mutex::new(()),
         })
+    }
+
+    fn lock_path(&self, name: &str) -> PathBuf {
+        self.locks.join(format!("{name}.lock"))
+    }
+
+    /// Take the liveness lock for a staging entry about to be created.
+    pub fn lock_new(&self, name: &str) -> io::Result<StagingLock> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(self.lock_path(name))?;
+        try_lock_file(&file)?;
+        Ok(StagingLock { _file: file })
+    }
+
+    /// Take the liveness lock of an existing entry — succeeds only if no
+    /// live restore holds it (the entry is a crash leftover). A missing
+    /// lock file is an error: liveness can't be proven.
+    pub fn lock_existing(&self, name: &str) -> io::Result<StagingLock> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(self.lock_path(name))?;
+        try_lock_file(&file)?;
+        Ok(StagingLock { _file: file })
     }
 
     fn append(&self, line: &str) -> io::Result<()> {
@@ -69,8 +130,12 @@ impl Journal {
         ))
     }
 
+    /// Record that `name` is done with (committed, cleaned up, or gone),
+    /// and delete its lock file.
     pub fn finished(&self, restores: FileId, name: &str) -> io::Result<()> {
-        self.append(&format!("F\t{}\t{name}\n", restores.encode()))
+        self.append(&format!("F\t{}\t{name}\n", restores.encode()))?;
+        let _ = fs::remove_file(self.lock_path(name));
+        Ok(())
     }
 
     /// Unfinished entries for the Restores folder `restores`.

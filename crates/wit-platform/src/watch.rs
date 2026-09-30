@@ -77,6 +77,13 @@
 //!   their project's baseline untrusted, so those are reported on settle.
 //! - On Windows the change stamp is the creation time, so an in-place
 //!   rewrite that keeps both size and mtime is not seen there.
+//! - The flip side on Unix: a change that touches only metadata also moves
+//!   ctime, so it is reported as a save although no byte changed — e.g. an
+//!   extended attribute Finder writes when a project is opened from it
+//!   (`com.apple.lastuseddate#PS`), a `chmod`, or a Finder tag. That is
+//!   harmless downstream: Wit's store is content-addressed, so an unchanged
+//!   `ProjectData` dedupes to the same object and shows "no changes Wit can
+//!   see".
 //! - On Linux, reads are invisible only because opens/reads are filtered
 //!   ([`is_content_event`]); on macOS, `stat`/`read_dir`/`read` produce no
 //!   FSEvents at all.

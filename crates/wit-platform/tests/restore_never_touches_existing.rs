@@ -301,6 +301,12 @@ enum Swap {
     /// A thread flips the Restores path to a symlink into a package and back
     /// while the restores run (Unix).
     FlipSymlink,
+    /// Move the real Restores folder into a package and leave a *symlink* to
+    /// it at the old path (so the path still resolves to the same folder).
+    SymlinkLeftBehind,
+    /// Move the Restores folder's parent into a package and replace it with
+    /// a symlink to where it went.
+    AncestorSymlink,
 }
 
 #[derive(Debug, Clone)]
@@ -339,6 +345,8 @@ fn scenario_strategy() -> impl Strategy<Value = Scenario> {
         1 => Just(Swap::MoveIntoPackage),
         1 => Just(Swap::ParentBecomesProject),
         2 => Just(Swap::FlipSymlink),
+        1 => Just(Swap::SymlinkLeftBehind),
+        1 => Just(Swap::AncestorSymlink),
     ];
     (
         prop::collection::vec(prop::collection::vec(0..n, 1..=3), 1..8),
@@ -706,6 +714,40 @@ fn apply_swap(s: &Scenario, b: &Built, restores: &RestoresDir) -> bool {
                 let _ = fs::create_dir(parent.join(MARKER));
             }
             false
+        }
+        Swap::SymlinkLeftBehind => {
+            let into = a_package(b).join("moved-restores");
+            if fs::rename(restores.path(), &into).is_ok() {
+                symlink(&into, restores.path());
+                true
+            } else {
+                false
+            }
+        }
+        Swap::AncestorSymlink => {
+            // Only a parent strictly inside the world (never the sandbox's
+            // own scaffolding), and only if it can be moved.
+            let Some(parent) = restores.path().parent() else {
+                return false;
+            };
+            let world = fs::canonicalize(&b.world).unwrap();
+            let inside_world = parent.starts_with(&world) && parent != world;
+            let Some(name) = parent.file_name() else {
+                return false;
+            };
+            if !inside_world {
+                return false;
+            }
+            let holder = b.world.join("Holder.logicx");
+            let _ = fs::create_dir_all(holder.join("Alternatives/000"));
+            let _ = fs::write(holder.join("Alternatives/000/ProjectData"), b"holder bytes");
+            let moved = holder.join(name);
+            if fs::rename(parent, &moved).is_ok() {
+                symlink(&moved, parent);
+                true
+            } else {
+                false
+            }
         }
     }
 }
@@ -1197,6 +1239,8 @@ fn named_tricky_cases() {
     ));
 
     for swap in [
+        Swap::SymlinkLeftBehind,
+        Swap::AncestorSymlink,
         Swap::MoveIntoPackage,
         Swap::ParentBecomesProject,
         Swap::FlipSymlink,

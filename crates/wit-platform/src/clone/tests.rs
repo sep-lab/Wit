@@ -109,6 +109,14 @@ fn refuses_restores_inside_a_project_folder_of_any_daw_and_creates_nothing() {
     ));
     assert!(!w.base.join("FLProj/new/Wit Restores").exists());
 
+    // FL: the same, with the file's case differing from the folder's.
+    fs::create_dir_all(w.base.join("Beat Proj")).unwrap();
+    fs::write(w.base.join("Beat Proj/BEAT PROJ.FLP"), b"flp").unwrap();
+    assert!(matches!(
+        w.restores("Beat Proj/Wit Restores"),
+        Err(CloneError::InsideProject { .. })
+    ));
+
     // FL: a folder holding Backup/ with .flp autosaves.
     fs::create_dir_all(w.base.join("Beats/Backup")).unwrap();
     fs::write(w.base.join("Beats/Backup/Beat (autosave).flp"), b"flp").unwrap();
@@ -398,7 +406,6 @@ fn a_symlink_planted_inside_a_new_restore_is_not_followed() {
     assert!(names_in(restores.path()).is_empty());
 }
 
-#[cfg(unix)]
 #[test]
 fn a_hard_link_planted_inside_a_new_restore_blocks_the_commit() {
     let w = world();
@@ -449,6 +456,57 @@ fn a_restores_folder_moved_into_a_project_mid_restore_stops_the_restore() {
     ));
 }
 
+/// Re-review A07: moved into a package mid-restore, with a symlink left at
+/// the old path (so the path still resolves to the same folder).
+#[cfg(unix)]
+#[test]
+fn a_restores_folder_moved_into_a_project_with_a_symlink_left_behind_stops_the_restore() {
+    let w = world();
+    let restores = w.restores("Restores").unwrap();
+    let mut new = restores.begin_restore("Moved", "d", None).unwrap();
+    let inside = w.base.join("Music/Logic/Song.logicx/Moved");
+    fs::rename(w.base.join("Restores"), &inside).unwrap();
+    std::os::unix::fs::symlink(&inside, w.base.join("Restores")).unwrap();
+    assert!(matches!(
+        new.write_file(Path::new("sub/ProjectData"), b"x"),
+        Err(CloneError::RestoresMoved { .. })
+    ));
+    assert!(matches!(
+        new.commit(),
+        Err(CloneError::RestoresMoved { .. })
+    ));
+    assert!(matches!(
+        restores.fresh_destination("Again", "d", Some("als")),
+        Err(CloneError::RestoresMoved { .. })
+    ));
+    assert!(
+        names_in(&inside).is_empty(),
+        "nothing was created inside the package: {:?}",
+        names_in(&inside)
+    );
+}
+
+/// Re-review A07b: an ancestor of the Restores folder replaced by a symlink
+/// into a package that now holds it.
+#[cfg(unix)]
+#[test]
+fn an_ancestor_swapped_for_a_symlink_into_a_project_is_refused() {
+    let w = world();
+    let restores = w.restores("Parent/Restores").unwrap();
+    let package = w.base.join("Music/Logic/Song.logicx");
+    fs::rename(w.base.join("Parent"), package.join("Parent")).unwrap();
+    std::os::unix::fs::symlink(package.join("Parent"), w.base.join("Parent")).unwrap();
+    assert!(matches!(
+        restores.fresh_destination("Anc", "d", Some("als")),
+        Err(CloneError::RestoresMoved { .. })
+    ));
+    assert!(matches!(
+        restores.begin_restore("Anc", "d", None),
+        Err(CloneError::RestoresMoved { .. })
+    ));
+    assert!(names_in(&package.join("Parent/Restores")).is_empty());
+}
+
 #[test]
 fn bad_extensions_are_refused() {
     let w = world();
@@ -489,8 +547,10 @@ fn a_crash_leftover_is_journaled_listed_and_removable_only_while_unchanged() {
     let staging = {
         let root = restores.pin().unwrap();
         let name = staging_name();
+        let lock = restores.inner.journal.lock_new(&name).unwrap();
         root.mkdir(OsStr::new(&name)).unwrap();
         journal_created(&restores, &root, &name).unwrap();
+        drop(lock); // the process is gone: the OS released its lock
         restores.path().join(name)
     };
     fs::write(staging.join("half"), b"half").unwrap();
@@ -513,6 +573,42 @@ fn a_crash_leftover_is_journaled_listed_and_removable_only_while_unchanged() {
         Err(CloneError::NotAStagingLeftover { .. })
     ));
     assert!(staging.is_dir(), "a non-journaled entry is never removed");
+}
+
+/// Re-review A10: a restore still in progress — seen through the same or a
+/// second `RestoresDir` handle — is never listed as a leftover, never
+/// removed, and commits normally.
+#[test]
+fn a_restore_in_progress_is_never_a_leftover() {
+    let w = world();
+    let a = w.restores("Restores").unwrap();
+    let b = w.restores("Restores").unwrap();
+    let mut new = a.begin_restore("Live", "d", None).unwrap();
+    new.write_file(Path::new("f"), b"x").unwrap();
+    assert!(a.staging_leftovers().unwrap().is_empty());
+    assert!(b.staging_leftovers().unwrap().is_empty());
+    let landed = new.commit().unwrap();
+    assert_eq!(fs::read(landed.path.join("f")).unwrap(), b"x");
+    assert!(b.staging_leftovers().unwrap().is_empty());
+    assert!(
+        fs::read_dir(w.data.join(journal::LOCKS_DIR))
+            .unwrap()
+            .next()
+            .is_none(),
+        "a finished restore leaves no lock file"
+    );
+}
+
+/// Without a lock file, liveness can't be proven: never listed.
+#[test]
+fn a_journaled_entry_without_a_lock_file_is_never_listed() {
+    let w = world();
+    let restores = w.restores("Restores").unwrap();
+    let root = restores.pin().unwrap();
+    let name = staging_name();
+    root.mkdir(OsStr::new(&name)).unwrap();
+    journal_created(&restores, &root, &name).unwrap();
+    assert!(restores.staging_leftovers().unwrap().is_empty());
 }
 
 #[test]

@@ -22,7 +22,7 @@
 //! |---|---|
 //! | Logic Pro / GarageBand | a `.logicx` / `.band` package (the package itself) |
 //! | Ableton Live | a folder containing an `Ableton Project Info` folder (Live creates one in every project folder) |
-//! | FL Studio | a folder `X` containing `X.flp` (a project saved in its own folder), or containing a `Backup/` folder that holds `.flp` autosaves |
+//! | FL Studio | a folder `X` containing `X.flp` (a project saved in its own folder; matched ignoring case and Unicode normal form), or containing a `Backup/` folder that holds `.flp` autosaves |
 //!
 //! The Restores folder is refused if it, or **any** ancestor, is a project
 //! folder. A loose `.als`/`.flp` merely sitting in an ancestor does not make
@@ -52,7 +52,11 @@
 //!    (see `fsops`). Swapping the folder's path for a symlink mid-restore
 //!    can't redirect a write: the handle still names the original folder.
 //!    Before each step the path is re-checked to still name that folder
-//!    (so a folder *moved* into a project is refused from the next step on).
+//!    **by its unchanged canonical form** — re-opened with `O_NOFOLLOW` and
+//!    compared by identity, and resolved with no symlink anywhere on it —
+//!    so a folder moved into a project (even with a symlink left at its old
+//!    path) or an ancestor swapped for a symlink is refused from the next
+//!    step on.
 //! 3. **No write function takes a destination path.** New entries are named
 //!    by a [`RestoreDest`] minted from a sanitised song name, checked free
 //!    through the handle (anything at the name — file, folder, symlink,
@@ -68,7 +72,11 @@
 //!    removes its own new entry (verified by identity), never anything that
 //!    was already there. Leftovers from a *crash* are journaled in Wit's own
 //!    data folder ([`RestoresDir::staging_leftovers`]) and removed only on an
-//!    explicit call, only if they still match the journal.
+//!    explicit call, only if they still match the journal **and** no live
+//!    restore holds their lock (every restore holds an OS advisory lock in
+//!    the data folder for its whole life, released by the OS on exit), so a
+//!    restore still running — here or in another process — is never
+//!    mistaken for a leftover.
 //!
 //! `tests/restore_never_touches_existing.rs` checks the law with proptest:
 //! after any sequence of restores over generated trees (symlinks — including
@@ -301,8 +309,31 @@ fn project_folder(dir: &Path) -> Result<Option<&'static str>, CloneError> {
     if let Some(name) = dir.file_name() {
         let mut flp = name.to_os_string();
         flp.push(".flp");
-        if probe(&dir.join(flp))?.is_some_and(|m| m.is_file()) {
+        if probe(&dir.join(&flp))?.is_some_and(|m| m.is_file()) {
             return Ok(Some("an FL Studio project folder"));
+        }
+        // On a case-insensitive volume the lookup above already ignores case
+        // and normal form. On one that doesn't, compare the folder's entries
+        // by folded name too, so `Proj/PROJ.flp` still counts. (Only where
+        // the folder can be listed; if listing it then fails, fail closed.)
+        let sensitive = probe(dir)?.is_some_and(|m| m.is_dir())
+            && paths::probe_case_sensitivity(dir) == Some(paths::CaseSensitivity::Sensitive);
+        if sensitive {
+            let fold = |n: &OsStr| {
+                paths::component_key(Component::Normal(n), paths::CaseSensitivity::Insensitive)
+            };
+            let want = fold(&flp);
+            let cannot = |source| CloneError::CannotVerifyPlacement {
+                path: dir.to_path_buf(),
+                source,
+            };
+            for entry in fs::read_dir(dir).map_err(cannot)? {
+                let entry = entry.map_err(cannot)?;
+                if fold(&entry.file_name()) == want && entry.file_type().map_err(cannot)?.is_file()
+                {
+                    return Ok(Some("an FL Studio project folder"));
+                }
+            }
         }
     }
     let backup = dir.join("Backup");
@@ -317,9 +348,13 @@ fn project_folder(dir: &Path) -> Result<Option<&'static str>, CloneError> {
                 path: backup.clone(),
                 source,
             })?;
-            if entry.file_type().is_ok_and(|t| t.is_file())
-                && has_extension(&entry.path(), &["flp"])
-            {
+            let kind = entry
+                .file_type()
+                .map_err(|source| CloneError::CannotVerifyPlacement {
+                    path: entry.path(),
+                    source,
+                })?;
+            if kind.is_file() && has_extension(&entry.path(), &["flp"]) {
                 return Ok(Some("an FL Studio project folder (it holds FL autosaves)"));
             }
         }
@@ -590,13 +625,20 @@ impl RestoresDir {
     }
 
     /// Re-prove the placement against the filesystem as it is *now*: the
-    /// path must still name exactly the validated folder, and it must still
-    /// not be inside a project or contain another watched root (as recorded,
-    /// and as those roots resolve today).
+    /// path must still name exactly the validated folder **without passing
+    /// through a symlink anywhere** (its canonical form must be unchanged —
+    /// otherwise a folder moved into a project with a symlink left at its
+    /// old path, or an ancestor swapped for a symlink, would still resolve
+    /// to "the same folder"), and it must still not be inside a project or
+    /// contain another watched root (as recorded, and as those roots resolve
+    /// today).
     pub fn revalidate(&self) -> Result<(), CloneError> {
         let moved = || CloneError::RestoresMoved {
             expected: self.inner.dir.clone(),
         };
+        if fs::canonicalize(&self.inner.dir).map_err(|_| moved())? != self.inner.dir {
+            return Err(moved());
+        }
         if FileId::of_path(&self.inner.dir).map_err(|_| moved())? != self.inner.id {
             return Err(moved());
         }
@@ -624,7 +666,8 @@ impl RestoresDir {
         Ok(dir)
     }
 
-    /// The per-step check during a restore: the path still names the folder
+    /// The per-step check during a restore: the path still names — without
+    /// following a symlink at its last component either — the very folder
     /// the handle pins, and the placement still holds.
     fn check_pinned(&self, dir: &Dir) -> Result<(), CloneError> {
         let moved = || CloneError::RestoresMoved {
@@ -633,6 +676,11 @@ impl RestoresDir {
         if dir.id().map_err(|_| moved())? != self.inner.id {
             return Err(moved());
         }
+        let reopened = Dir::open(&self.inner.dir).map_err(|_| moved())?;
+        if reopened.id().map_err(|_| moved())? != self.inner.id {
+            return Err(moved());
+        }
+        drop(reopened);
         self.revalidate()
     }
 
@@ -706,6 +754,20 @@ impl RestoresDir {
         let mut out = Vec::new();
         for p in pending {
             let name = OsStr::new(&p.name);
+            // Still running (here or in another process), or liveness can't
+            // be proven (no lock file): never a leftover.
+            let _proof = match journal.lock_existing(&p.name) {
+                Ok(proof) => proof,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                    // No lock file: if the entry is gone too there's nothing
+                    // to prove or delete, so close it; otherwise leave it.
+                    if matches!(root.kind(name), Ok(None)) {
+                        let _ = journal.finished(self.inner.id, &p.name);
+                    }
+                    continue;
+                }
+                Err(_) => continue,
+            };
             match root.kind(name) {
                 Ok(None) => {
                     let _ = journal.finished(self.inner.id, &p.name);
@@ -744,6 +806,10 @@ impl RestoresDir {
             .iter()
             .any(|p| p.name == leftover.name && p.entry == leftover.id);
         let name = OsStr::new(&leftover.name);
+        // Proof it is not in progress, held for the whole removal.
+        let Ok(_proof) = journal.lock_existing(&leftover.name) else {
+            return Err(refuse());
+        };
         if !still_pending || !root.id_of(name).is_ok_and(|id| id == leftover.id) {
             return Err(refuse());
         }
@@ -1165,6 +1231,11 @@ pub fn clone_tree(src: &Path, dest: RestoreDest) -> Result<Restored, CloneError>
     let restores = dest.restores.clone();
     let root = restores.pin()?;
     let staging = staging_name();
+    let _lock = restores
+        .inner
+        .journal
+        .lock_new(&staging)
+        .map_err(io_err("lock", &restores.path().join(&staging)))?;
     let mut ctx = CloneCtx {
         mode: CopyMode::TryReflink,
         remaining: meta.len(),
@@ -1199,6 +1270,11 @@ pub fn write_file_in_restores(dest: RestoreDest, bytes: &[u8]) -> Result<Restore
     let root = restores.pin()?;
     let staging = staging_name();
     let path = restores.path().join(&staging);
+    let _lock = restores
+        .inner
+        .journal
+        .lock_new(&staging)
+        .map_err(io_err("lock", &path))?;
     let mut f = root
         .create_file(OsStr::new(&staging))
         .map_err(io_err("create", &path))?;
@@ -1298,6 +1374,8 @@ pub struct NewRestore {
     staging_id: FileId,
     dest: Option<RestoreDest>,
     report: CloneReport,
+    /// Liveness lock (see `journal`): held until this restore ends.
+    _lock: journal::StagingLock,
 }
 
 impl NewRestore {
@@ -1307,6 +1385,11 @@ impl NewRestore {
         let root = restores.pin()?;
         let name = staging_name();
         let path = restores.path().join(&name);
+        let lock = restores
+            .inner
+            .journal
+            .lock_new(&name)
+            .map_err(io_err("lock", &path))?;
         root.mkdir(OsStr::new(&name))
             .map_err(io_err("create staging folder", &path))?;
         let staging_id = journal_created(&restores, &root, &name)?;
@@ -1325,6 +1408,7 @@ impl NewRestore {
             staging_id,
             dest: Some(dest),
             report: CloneReport::default(),
+            _lock: lock,
         })
     }
 

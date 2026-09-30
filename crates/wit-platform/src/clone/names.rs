@@ -3,7 +3,8 @@
 //!
 //! - **Safe:** no separators, `..`, control characters, leading dots,
 //!   Windows-reserved names or characters, or trailing dots/spaces.
-//! - **Honest:** bidirectional overrides and isolates (U+202A–U+202E,
+//! - **Honest:** line/paragraph separators (U+2028/U+2029), bidirectional
+//!   overrides and isolates (U+202A–U+202E,
 //!   U+2066–U+2069, U+200E/F, U+061C) and zero-width/format characters
 //!   (U+200B–U+200D, U+2060–U+2064, U+FEFF, U+00AD, U+180E, U+FFF9–U+FFFB,
 //!   tag characters) are removed, so a name can't display as something it
@@ -30,7 +31,7 @@ fn is_invisible_or_bidi(c: char) -> bool {
             | '\u{061C}'
             | '\u{180E}'
             | '\u{200B}'..='\u{200F}'
-            | '\u{202A}'..='\u{202E}'
+            | '\u{2028}'..='\u{202E}'
             | '\u{2060}'..='\u{2064}'
             | '\u{2066}'..='\u{206F}'
             | '\u{FEFF}'
@@ -152,6 +153,7 @@ mod tests {
             "ABCDE"
         );
         assert_eq!(sanitize_component("\u{200B}\u{202E}", "U"), "U");
+        assert_eq!(sanitize_component("A\u{2028}B\u{2029}C", "U"), "ABC");
     }
 
     #[test]
