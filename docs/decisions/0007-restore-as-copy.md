@@ -45,6 +45,21 @@ existed before it began — not a watched project, not an earlier restore, nothi
    every file and folder that existed before is unchanged, across symlinks, `..`,
    trailing separators, NFC/NFD and case variants, Windows verbatim paths, and a Restores
    folder inside a watched root.
+   **What counts as a DAW project folder** (for decision 2; `wit-platform`
+   implements exactly this table):
+
+   | DAW | Project folder |
+   |---|---|
+   | Logic Pro / GarageBand | the `.logicx` / `.band` package itself |
+   | Ableton Live | a folder containing an `Ableton Project Info` folder (Live creates one in every project folder) |
+   | FL Studio | a folder `X` containing `X.flp`, or a folder containing a `Backup/` folder that holds `.flp` autosaves |
+
+   The Restores folder is refused if it, or any ancestor, is a project folder. A
+   loose `.als`/`.flp` sitting in an ancestor does not make that ancestor a project.
+   Placement checks **fail closed**: if an ancestor can't be inspected, the folder is
+   refused. "Contains a watched root" is decided both by normalised spelling and by
+   file identity (device + inode, volume + file index), so an alias (a macOS
+   firmlink, a bind mount) can't slip past.
 4. **Only bytes a DAW wrote.** A restore is assembled from files the DAW itself wrote
    (the current package, a stored `ProjectData` and `MetaData.plist`, a stored `.als` or
    `.flp`), never from bytes Wit synthesised:
@@ -61,6 +76,12 @@ existed before it began — not a watched project, not an earlier restore, nothi
    watcher sees each new restored copy and tags it "restored from <moment>", so it appears
    in the song's family rather than as an unexplained new project. Later edits the
    musician makes in that copy get history like any other project.
+7. **What a crash leaves behind.** If Wit stops mid-restore, a hidden staging entry
+   remains in the Restores folder. Under decision 3 it now pre-dates the next
+   restore, so Wit never removes it on its own. Wit records every staging entry it
+   creates in a journal in its own data folder; the app lists journaled leftovers,
+   and removes one only when the musician asks, and only if it still matches the
+   journal (same name, same file identity).
 
 ## Consequences
 
